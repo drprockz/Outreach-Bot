@@ -52,59 +52,54 @@ app.get('/api/overview', (req, res) => {
   const db = getDb();
   const d = today();
 
-  // Today's metrics
   const todayMetrics = db.prepare(`SELECT * FROM daily_metrics WHERE date = ?`).get(d) || {};
 
-  // 7-day rolling metrics
   const weekMetrics = db.prepare(`
     SELECT
-      COALESCE(SUM(leads_found), 0) AS leads_found,
+      COALESCE(SUM(leads_discovered), 0) AS leads_discovered,
       COALESCE(SUM(emails_sent), 0) AS emails_sent,
-      COALESCE(SUM(bounces), 0) AS bounces,
-      COALESCE(SUM(replies), 0) AS replies,
-      COALESCE(SUM(hot_replies), 0) AS hot_replies,
-      COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      COALESCE(SUM(emails_hard_bounced), 0) AS emails_hard_bounced,
+      COALESCE(SUM(replies_total), 0) AS replies_total,
+      COALESCE(SUM(replies_hot), 0) AS replies_hot,
+      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd
     FROM daily_metrics
     WHERE date >= date('now', '-7 days')
   `).get();
 
-  // 30-day rolling metrics
   const monthMetrics = db.prepare(`
     SELECT
-      COALESCE(SUM(leads_found), 0) AS leads_found,
+      COALESCE(SUM(leads_discovered), 0) AS leads_discovered,
       COALESCE(SUM(emails_sent), 0) AS emails_sent,
-      COALESCE(SUM(bounces), 0) AS bounces,
-      COALESCE(SUM(replies), 0) AS replies,
-      COALESCE(SUM(hot_replies), 0) AS hot_replies,
-      COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd
+      COALESCE(SUM(emails_hard_bounced), 0) AS emails_hard_bounced,
+      COALESCE(SUM(replies_total), 0) AS replies_total,
+      COALESCE(SUM(replies_hot), 0) AS replies_hot,
+      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd
     FROM daily_metrics
     WHERE date >= date('now', '-30 days')
   `).get();
 
-  // Funnel counts
+  // Funnel counts from leads table
   const funnel = db.prepare(`
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN status != 'new' THEN 1 ELSE 0 END) AS extracted,
-      SUM(CASE WHEN quality_score IS NOT NULL THEN 1 ELSE 0 END) AS judged,
+      SUM(CASE WHEN status != 'discovered' THEN 1 ELSE 0 END) AS extracted,
+      SUM(CASE WHEN website_quality_score IS NOT NULL THEN 1 ELSE 0 END) AS judged,
       SUM(CASE WHEN contact_email IS NOT NULL THEN 1 ELSE 0 END) AS email_found,
+      SUM(CASE WHEN email_status = 'valid' OR email_status = 'catch-all' THEN 1 ELSE 0 END) AS email_valid,
       SUM(CASE WHEN icp_priority IN ('A','B') THEN 1 ELSE 0 END) AS icp_ab,
-      SUM(CASE WHEN status IN ('contacted','replied') THEN 1 ELSE 0 END) AS sent,
+      SUM(CASE WHEN status IN ('sent','replied') THEN 1 ELSE 0 END) AS sent,
       SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied
     FROM leads
   `).get();
 
-  // Active sequences count
   const activeSeq = db.prepare(`SELECT COUNT(*) AS count FROM sequence_state WHERE status = 'active'`).get();
 
-  // 7-day reply rate
   const replyRate = weekMetrics.emails_sent > 0
-    ? (weekMetrics.replies / weekMetrics.emails_sent * 100).toFixed(1)
+    ? (weekMetrics.replies_total / weekMetrics.emails_sent * 100).toFixed(1)
     : '0.0';
 
-  // Today's bounce rate
   const bounceRate = (todayMetrics.emails_sent || 0) > 0
-    ? ((todayMetrics.bounces || 0) / todayMetrics.emails_sent * 100).toFixed(1)
+    ? ((todayMetrics.emails_hard_bounced || 0) / todayMetrics.emails_sent * 100).toFixed(1)
     : '0.0';
 
   // 90-day send activity for heatmap
@@ -135,7 +130,6 @@ app.get('/api/leads', (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
-  // Build WHERE clauses from filters
   const conditions = [];
   const params = [];
 
@@ -147,13 +141,25 @@ app.get('/api/leads', (req, res) => {
     conditions.push('icp_priority = ?');
     params.push(req.query.priority);
   }
-  if (req.query.niche) {
-    conditions.push('niche = ?');
-    params.push(req.query.niche);
+  if (req.query.category) {
+    conditions.push('category = ?');
+    params.push(req.query.category);
   }
   if (req.query.city) {
     conditions.push('city = ?');
     params.push(req.query.city);
+  }
+  if (req.query.tech_stack) {
+    conditions.push('tech_stack LIKE ?');
+    params.push(`%${req.query.tech_stack}%`);
+  }
+  if (req.query.date_from) {
+    conditions.push('discovered_at >= ?');
+    params.push(req.query.date_from);
+  }
+  if (req.query.date_to) {
+    conditions.push('discovered_at <= ?');
+    params.push(req.query.date_to);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -194,7 +200,7 @@ app.patch('/api/leads/:id/status', (req, res) => {
   const lead = db.prepare(`SELECT id FROM leads WHERE id = ?`).get(id);
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-  db.prepare(`UPDATE leads SET status = ?, updated_at = datetime('now') WHERE id = ?`).run(status, id);
+  db.prepare(`UPDATE leads SET status = ? WHERE id = ?`).run(status, id);
   res.json({ ok: true });
 });
 
@@ -213,12 +219,20 @@ app.get('/api/send-log', (req, res) => {
     params.push(req.query.status);
   }
   if (req.query.inbox) {
-    conditions.push('e.inbox = ?');
+    conditions.push('e.inbox_used = ?');
     params.push(req.query.inbox);
   }
   if (req.query.step !== undefined) {
     conditions.push('e.sequence_step = ?');
     params.push(parseInt(req.query.step));
+  }
+  if (req.query.date_from) {
+    conditions.push('e.sent_at >= ?');
+    params.push(req.query.date_from);
+  }
+  if (req.query.date_to) {
+    conditions.push('e.sent_at <= ?');
+    params.push(req.query.date_to);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -226,7 +240,7 @@ app.get('/api/send-log', (req, res) => {
   const total = db.prepare(`SELECT COUNT(*) AS count FROM emails e ${whereClause}`).get(...params).count;
 
   const emails = db.prepare(`
-    SELECT e.*, l.company, l.contact_name
+    SELECT e.*, l.business_name, l.contact_name
     FROM emails e
     LEFT JOIN leads l ON l.id = e.lead_id
     ${whereClause}
@@ -234,14 +248,14 @@ app.get('/api/send-log', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
-  // Aggregates
   const agg = db.prepare(`
     SELECT
       COUNT(*) AS total_sent,
       SUM(CASE WHEN status = 'hard_bounce' THEN 1 ELSE 0 END) AS hard_bounces,
       SUM(CASE WHEN status = 'soft_bounce' THEN 1 ELSE 0 END) AS soft_bounces,
       SUM(CASE WHEN status = 'content_rejected' THEN 1 ELSE 0 END) AS content_rejected,
-      COALESCE(SUM(ai_cost_usd), 0) AS total_cost
+      COALESCE(AVG(send_duration_ms), 0) AS avg_duration_ms,
+      COALESCE(SUM(total_cost_usd), 0) AS total_cost
     FROM emails
   `).get();
 
@@ -253,15 +267,47 @@ app.get('/api/replies', (req, res) => {
   const db = getDb();
 
   const replies = db.prepare(`
-    SELECT r.*, l.company, l.contact_name, l.contact_email
+    SELECT r.*, l.business_name, l.contact_name, l.contact_email
     FROM replies r
     LEFT JOIN leads l ON l.id = r.lead_id
     ORDER BY
-      CASE WHEN r.classification IN ('hot', 'schedule') THEN 0 ELSE 1 END ASC,
+      CASE WHEN r.category IN ('hot', 'schedule') THEN 0 ELSE 1 END ASC,
       r.received_at DESC
   `).all();
 
   res.json({ replies });
+});
+
+// ── PATCH /api/replies/:id/action ─────────────────────────────────────────
+app.patch('/api/replies/:id/action', (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id);
+  const { action } = req.body || {};
+
+  if (!action) return res.status(400).json({ error: 'action is required' });
+
+  const reply = db.prepare(`SELECT id FROM replies WHERE id = ?`).get(id);
+  if (!reply) return res.status(404).json({ error: 'Reply not found' });
+
+  db.prepare(`UPDATE replies SET actioned_at=datetime('now'), action_taken=? WHERE id=?`).run(action, id);
+  res.json({ ok: true });
+});
+
+// ── POST /api/replies/:id/reject ──────────────────────────────────────────
+app.post('/api/replies/:id/reject', (req, res) => {
+  const db = getDb();
+  const id = parseInt(req.params.id);
+
+  const reply = db.prepare(`SELECT r.lead_id, l.contact_email FROM replies r JOIN leads l ON l.id = r.lead_id WHERE r.id = ?`).get(id);
+  if (!reply) return res.status(404).json({ error: 'Reply not found' });
+
+  db.prepare(`INSERT OR IGNORE INTO reject_list (email, domain, reason) VALUES (?, ?, 'manual')`).run(
+    reply.contact_email, reply.contact_email.split('@')[1]
+  );
+  db.prepare(`UPDATE leads SET status='unsubscribed' WHERE id=?`).run(reply.lead_id);
+  db.prepare(`UPDATE sequence_state SET status='unsubscribed', updated_at=datetime('now') WHERE lead_id=?`).run(reply.lead_id);
+
+  res.json({ ok: true });
 });
 
 // ── GET /api/sequences ────────────────────────────────────────────────────
@@ -269,13 +315,12 @@ app.get('/api/sequences', (req, res) => {
   const db = getDb();
 
   const sequences = db.prepare(`
-    SELECT s.*, l.company, l.contact_name, l.contact_email
+    SELECT s.*, l.business_name, l.contact_name, l.contact_email
     FROM sequence_state s
     LEFT JOIN leads l ON l.id = s.lead_id
     ORDER BY s.updated_at DESC
   `).all();
 
-  // Aggregates
   const agg = db.prepare(`
     SELECT
       SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
@@ -294,7 +339,6 @@ app.get('/api/cron-status', (req, res) => {
   const db = getDb();
   const d = today();
 
-  // The 9 scheduled jobs with their scheduled times (IST)
   const jobSchedule = [
     { name: 'findLeads', time: '09:00' },
     { name: 'sendEmails', time: '09:30' },
@@ -307,17 +351,22 @@ app.get('/api/cron-status', (req, res) => {
     { name: 'backup', time: '02:00' }
   ];
 
-  // Get today's cron_log entries
   const todayLogs = db.prepare(`
     SELECT * FROM cron_log
     WHERE date(started_at) = ?
     ORDER BY started_at ASC
   `).all(d);
 
+  // Current IST time for NOT TRIGGERED detection
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(now.getTime() + istOffset);
+  const currentIstHour = ist.getUTCHours();
+  const currentIstMinute = ist.getUTCMinutes();
+  const currentIstTime = currentIstHour * 60 + currentIstMinute;
+
   const jobs = jobSchedule.map((sched, idx) => {
-    // Find matching log entry
     const matching = todayLogs.filter(l => l.job_name === sched.name);
-    // For checkReplies, try to match by pass number (position in matching array)
     let log;
     if (sched.name === 'checkReplies' && sched.pass) {
       log = matching[sched.pass - 1];
@@ -325,11 +374,21 @@ app.get('/api/cron-status', (req, res) => {
       log = matching[0];
     }
 
+    // NOT TRIGGERED detection: if scheduled time was >30 min ago and no log entry
+    let status = log ? log.status : 'not_triggered';
+    if (!log) {
+      const [schedHour, schedMin] = sched.time.split(':').map(Number);
+      const schedTime = schedHour * 60 + schedMin;
+      if (currentIstTime < schedTime + 30) {
+        status = 'pending'; // Not yet time
+      }
+    }
+
     return {
       ...sched,
       id: idx,
       log: log || null,
-      status: log ? log.status : 'not_triggered'
+      status
     };
   });
 
@@ -356,17 +415,16 @@ app.get('/api/health', (req, res) => {
   const db = getDb();
   const d = today();
 
-  // Today's bounce rate
   const todayMetrics = db.prepare(`SELECT * FROM daily_metrics WHERE date = ?`).get(d);
   const emailsSent = todayMetrics?.emails_sent || 0;
-  const bounces = todayMetrics?.bounces || 0;
+  const bounces = todayMetrics?.emails_hard_bounced || 0;
   const bounceRate = emailsSent > 0 ? (bounces / emailsSent * 100).toFixed(2) : '0.00';
 
   // 7-day unsubscribe rate
   const weekReplies = db.prepare(`
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN classification = 'unsubscribe' THEN 1 ELSE 0 END) AS unsubs
+      SUM(CASE WHEN category = 'unsubscribe' THEN 1 ELSE 0 END) AS unsubs
     FROM replies
     WHERE received_at >= date('now', '-7 days')
   `).get();
@@ -376,20 +434,35 @@ app.get('/api/health', (req, res) => {
 
   // Last successful send per inbox
   const lastSendInbox1 = db.prepare(`
-    SELECT sent_at FROM emails WHERE inbox = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
+    SELECT sent_at FROM emails WHERE inbox_used = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
   `).get(process.env.INBOX_1_USER || 'darshan@trysimpleinc.com');
 
   const lastSendInbox2 = db.prepare(`
-    SELECT sent_at FROM emails WHERE inbox = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
+    SELECT sent_at FROM emails WHERE inbox_used = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
   `).get(process.env.INBOX_2_USER || 'hello@trysimpleinc.com');
 
   // Reject list size
   const rejectCount = db.prepare(`SELECT COUNT(*) AS count FROM reject_list`).get();
 
+  // Blacklist status from daily_metrics
+  const blacklistStatus = todayMetrics?.domain_blacklisted || 0;
+  const blacklistZones = todayMetrics?.blacklist_zones || null;
+
+  // Mail-tester score (latest available)
+  const mailTester = db.prepare(`
+    SELECT mail_tester_score, date FROM daily_metrics
+    WHERE mail_tester_score IS NOT NULL
+    ORDER BY date DESC LIMIT 1
+  `).get();
+
   res.json({
     bounceRate: parseFloat(bounceRate),
     unsubscribeRate: parseFloat(unsubRate),
     domain: process.env.OUTREACH_DOMAIN || 'trysimpleinc.com',
+    blacklisted: blacklistStatus === 1,
+    blacklistZones,
+    mailTesterScore: mailTester?.mail_tester_score || null,
+    mailTesterDate: mailTester?.date || null,
     inboxes: {
       inbox1: {
         email: process.env.INBOX_1_USER || 'darshan@trysimpleinc.com',
@@ -404,33 +477,44 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ── PATCH /api/health/mail-tester ─────────────────────────────────────────
+app.patch('/api/health/mail-tester', (req, res) => {
+  const db = getDb();
+  const { score } = req.body || {};
+
+  if (score === undefined || score === null) return res.status(400).json({ error: 'score is required' });
+
+  const d = today();
+  db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
+  db.prepare(`UPDATE daily_metrics SET mail_tester_score = ? WHERE date = ?`).run(parseFloat(score), d);
+  res.json({ ok: true });
+});
+
 // ── GET /api/costs ────────────────────────────────────────────────────────
 app.get('/api/costs', (req, res) => {
   const db = getDb();
 
-  // Daily costs for last 30 days
   const daily = db.prepare(`
-    SELECT date, gemini_cost_usd, sonnet_cost_usd, haiku_cost_usd, total_cost_usd
+    SELECT date, gemini_cost_usd, sonnet_cost_usd, haiku_cost_usd, mev_cost_usd, total_api_cost_usd
     FROM daily_metrics
     WHERE date >= date('now', '-30 days')
     ORDER BY date ASC
   `).all();
 
-  // Monthly totals
   const monthly = db.prepare(`
     SELECT
       COALESCE(SUM(gemini_cost_usd), 0) AS gemini_cost_usd,
       COALESCE(SUM(sonnet_cost_usd), 0) AS sonnet_cost_usd,
       COALESCE(SUM(haiku_cost_usd), 0) AS haiku_cost_usd,
-      COALESCE(SUM(total_cost_usd), 0) AS total_cost_usd,
+      COALESCE(SUM(mev_cost_usd), 0) AS mev_cost_usd,
+      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd,
       COALESCE(SUM(emails_sent), 0) AS emails_sent
     FROM daily_metrics
     WHERE date >= date('now', '-30 days')
   `).get();
 
-  // Per-email average cost
   const perEmailCost = monthly.emails_sent > 0
-    ? (monthly.total_cost_usd / monthly.emails_sent).toFixed(4)
+    ? (monthly.total_api_cost_usd / monthly.emails_sent).toFixed(4)
     : '0.0000';
 
   res.json({
@@ -453,16 +537,28 @@ app.get('/api/errors', (req, res) => {
     conditions.push('source = ?');
     params.push(req.query.source);
   }
+  if (req.query.error_type) {
+    conditions.push('error_type = ?');
+    params.push(req.query.error_type);
+  }
   if (req.query.resolved !== undefined) {
     conditions.push('resolved = ?');
     params.push(parseInt(req.query.resolved));
+  }
+  if (req.query.date_from) {
+    conditions.push('occurred_at >= ?');
+    params.push(req.query.date_from);
+  }
+  if (req.query.date_to) {
+    conditions.push('occurred_at <= ?');
+    params.push(req.query.date_to);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const errors = db.prepare(`
     SELECT * FROM error_log ${whereClause}
-    ORDER BY created_at DESC
+    ORDER BY occurred_at DESC
     LIMIT 200
   `).all(...params);
 
@@ -479,7 +575,7 @@ app.patch('/api/errors/:id/resolve', (req, res) => {
   const err = db.prepare(`SELECT id FROM error_log WHERE id = ?`).get(id);
   if (!err) return res.status(404).json({ error: 'Error not found' });
 
-  db.prepare(`UPDATE error_log SET resolved = 1 WHERE id = ?`).run(id);
+  db.prepare(`UPDATE error_log SET resolved = 1, resolved_at = datetime('now') WHERE id = ?`).run(id);
   res.json({ ok: true });
 });
 
@@ -494,7 +590,7 @@ if (existsSync(distPath)) {
 
 // ── Start server (not in test mode) ───────────────────────────────────────
 if (process.env.NODE_ENV !== 'test') {
-  const port = process.env.DASHBOARD_PORT || 3001;
+  const port = parseInt(process.env.DASHBOARD_PORT || '3001');
   app.listen(port, () => {
     console.log(`Radar dashboard running on port ${port}`);
   });

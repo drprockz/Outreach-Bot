@@ -127,7 +127,7 @@ describe('dashboard API', () => {
   it('PATCH /api/errors/:id/resolve marks error resolved', async () => {
     // Insert an error first
     const { getDb } = await import('../../utils/db.js');
-    getDb().prepare(`INSERT INTO error_log (source, message) VALUES ('test', 'test error')`).run();
+    getDb().prepare(`INSERT INTO error_log (source, error_message) VALUES ('test', 'test error')`).run();
     const err = getDb().prepare(`SELECT id FROM error_log WHERE source='test'`).get();
 
     const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
@@ -233,8 +233,8 @@ describe('dashboard API', () => {
   it('PATCH /api/leads/:id/status updates lead status', async () => {
     // Insert a lead
     const { getDb } = await import('../../utils/db.js');
-    getDb().prepare(`INSERT INTO leads (company, contact_email, status) VALUES ('TestCo', 'test@testco.com', 'new')`).run();
-    const lead = getDb().prepare(`SELECT id FROM leads WHERE company='TestCo'`).get();
+    getDb().prepare(`INSERT INTO leads (business_name, contact_email, status) VALUES ('TestCo', 'test@testco.com', 'discovered')`).run();
+    const lead = getDb().prepare(`SELECT id FROM leads WHERE business_name='TestCo'`).get();
 
     const loginRes = await fetch(`${baseUrl}/api/auth/login`, {
       method: 'POST',

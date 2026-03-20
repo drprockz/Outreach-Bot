@@ -35,6 +35,9 @@ export const api = {
   cronHistory:   (job) => request(`/cron-status/${job}/history`),
   health:        () => request('/health'),
   costs:         () => request('/costs'),
-  errors:        () => request('/errors'),
-  resolveError:  (id) => request(`/errors/${id}/resolve`, { method: 'PATCH' })
+  errors:        (params = '') => request(`/errors${params}`),
+  resolveError:  (id) => request(`/errors/${id}/resolve`, { method: 'PATCH' }),
+  replyAction:   (id, action) => request(`/replies/${id}/action`, { method: 'PATCH', body: JSON.stringify({ action }) }),
+  replyReject:   (id) => request(`/replies/${id}/reject`, { method: 'POST' }),
+  updateMailTester: (score) => request('/health/mail-tester', { method: 'PATCH', body: JSON.stringify({ score }) })
 };

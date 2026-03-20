@@ -122,6 +122,7 @@ const typeColors = {
 export default function ErrorLog() {
   const [data, setData] = useState({ errors: [], unresolvedCount: 0 });
   const [sourceFilter, setSourceFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
   const [resolvedFilter, setResolvedFilter] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -129,6 +130,7 @@ export default function ErrorLog() {
     setLoading(true);
     const params = new URLSearchParams();
     if (sourceFilter) params.set('source', sourceFilter);
+    if (typeFilter) params.set('error_type', typeFilter);
     if (resolvedFilter !== '') params.set('resolved', resolvedFilter);
     const qs = params.toString() ? `?${params.toString()}` : '';
     api.errors(qs).then(d => {
@@ -137,7 +139,7 @@ export default function ErrorLog() {
     }).catch(() => setLoading(false));
   }
 
-  useEffect(() => { fetchErrors(); }, [sourceFilter, resolvedFilter]);
+  useEffect(() => { fetchErrors(); }, [sourceFilter, typeFilter, resolvedFilter]);
 
   async function handleResolve(id) {
     await api.resolveError(id);
@@ -165,6 +167,13 @@ export default function ErrorLog() {
           <option value="healthCheck">healthCheck</option>
           <option value="backup">backup</option>
         </select>
+        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={selectStyle}>
+          <option value="">All Types</option>
+          <option value="smtp_error">SMTP Error</option>
+          <option value="api_error">API Error</option>
+          <option value="db_error">DB Error</option>
+          <option value="validation_error">Validation Error</option>
+        </select>
         <select value={resolvedFilter} onChange={e => setResolvedFilter(e.target.value)} style={selectStyle}>
           <option value="">All</option>
           <option value="0">Unresolved</option>
@@ -181,7 +190,9 @@ export default function ErrorLog() {
             <tr>
               <th style={thStyle}>Time</th>
               <th style={thStyle}>Source</th>
+              <th style={thStyle}>Job</th>
               <th style={thStyle}>Type</th>
+              <th style={thStyle}>Code</th>
               <th style={thStyle}>Message</th>
               <th style={thStyle}>Lead/Email</th>
               <th style={thStyle}>Status</th>
@@ -190,31 +201,45 @@ export default function ErrorLog() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
+              <tr><td colSpan={9} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
             ) : (data.errors || []).length === 0 ? (
-              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No errors found.</td></tr>
+              <tr><td colSpan={9} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No errors found.</td></tr>
             ) : data.errors.map((err, i) => {
-              const sc = sourceColors[err.source || err.job_name] || '#888';
+              const sc = sourceColors[err.source] || '#888';
               const tc = typeColors[err.error_type] || '#888';
               return (
                 <tr key={err.id} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
                   <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
-                    {err.occurred_at || err.created_at
-                      ? new Date(err.occurred_at || err.created_at).toLocaleString()
+                    {err.occurred_at
+                      ? new Date(err.occurred_at).toLocaleString()
                       : '-'}
                   </td>
                   <td style={tdStyle}>
                     <span style={{ ...badgeBase, background: `${sc}20`, color: sc }}>
-                      {err.source || err.job_name || '-'}
+                      {err.source || '-'}
                     </span>
+                  </td>
+                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>
+                    {err.job_name || '-'}
                   </td>
                   <td style={tdStyle}>
                     <span style={{ ...badgeBase, background: `${tc}20`, color: tc }}>
                       {err.error_type || '-'}
                     </span>
                   </td>
+                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>
+                    {err.error_code || '-'}
+                  </td>
                   <td style={{ ...tdStyle, color: '#aaa', maxWidth: '350px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.4 }}>
                     {err.error_message || '-'}
+                    {err.stack_trace && (
+                      <details style={{ marginTop: '4px' }}>
+                        <summary style={{ fontSize: '10px', color: '#555', cursor: 'pointer' }}>Stack trace</summary>
+                        <pre style={{ fontSize: '9px', color: '#555', whiteSpace: 'pre-wrap', marginTop: '4px', maxHeight: '100px', overflow: 'auto' }}>
+                          {err.stack_trace}
+                        </pre>
+                      </details>
+                    )}
                   </td>
                   <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
                     {err.lead_id ? `L:${err.lead_id}` : ''}{err.lead_id && err.email_id ? ' / ' : ''}{err.email_id ? `E:${err.email_id}` : ''}
@@ -222,7 +247,9 @@ export default function ErrorLog() {
                   </td>
                   <td style={tdStyle}>
                     {err.resolved ? (
-                      <span style={{ ...badgeBase, background: '#4ade8020', color: '#4ade80' }}>RESOLVED</span>
+                      <span style={{ ...badgeBase, background: '#4ade8020', color: '#4ade80' }}>
+                        RESOLVED{err.resolved_at ? ` ${new Date(err.resolved_at).toLocaleDateString()}` : ''}
+                      </span>
                     ) : (
                       <span style={{ ...badgeBase, background: '#f8717120', color: '#f87171' }}>OPEN</span>
                     )}

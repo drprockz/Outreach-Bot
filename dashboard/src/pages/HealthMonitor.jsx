@@ -139,16 +139,61 @@ function getGaugeColor(value, warnThreshold, criticalThreshold) {
   return '#4ade80';
 }
 
+const blacklistZoneStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  padding: '8px 0',
+  borderBottom: '1px solid #1f1f1f',
+  fontSize: '12px',
+  fontFamily: 'IBM Plex Mono, monospace',
+};
+
+const inputStyle = {
+  padding: '8px 12px',
+  background: '#1a1a1a',
+  border: '1px solid #333',
+  borderRadius: '6px',
+  color: '#e0e0e0',
+  fontSize: '12px',
+  fontFamily: 'IBM Plex Mono, monospace',
+  outline: 'none',
+  width: '80px',
+};
+
+const saveBtnStyle = {
+  padding: '8px 16px',
+  background: '#4ade8020',
+  border: '1px solid #4ade8050',
+  borderRadius: '4px',
+  color: '#4ade80',
+  fontSize: '11px',
+  fontWeight: 600,
+  fontFamily: 'IBM Plex Mono, monospace',
+  cursor: 'pointer',
+  marginLeft: '8px',
+};
+
 export default function HealthMonitor() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mailTesterInput, setMailTesterInput] = useState('');
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     api.health().then(d => {
       setData(d);
+      if (d?.mailTesterScore != null) setMailTesterInput(String(d.mailTesterScore));
       setLoading(false);
     }).catch(() => setLoading(false));
   }, []);
+
+  async function handleSaveMailTester() {
+    const score = parseFloat(mailTesterInput);
+    if (isNaN(score) || score < 0 || score > 10) return;
+    setSaving(true);
+    await api.updateMailTester(score);
+    setSaving(false);
+  }
 
   if (loading) {
     return (
@@ -248,16 +293,67 @@ export default function HealthMonitor() {
         </div>
       </div>
 
-      <div style={sectionTitle}>External Checks</div>
+      <div style={sectionTitle}>Domain Blacklist Status</div>
+      <div style={cardStyle}>
+        {data.blacklisted ? (
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#f87171', fontFamily: 'IBM Plex Mono, monospace', marginBottom: '12px' }}>
+            BLACKLISTED - Sending should be paused
+          </div>
+        ) : (
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#4ade80', fontFamily: 'IBM Plex Mono, monospace', marginBottom: '12px' }}>
+            CLEAR - Not blacklisted
+          </div>
+        )}
+        {(() => {
+          const zones = ['dbl.spamhaus.org', 'b.barracudacentral.org', 'multi.surbl.org'];
+          const listedZones = data.blacklistZones ? (typeof data.blacklistZones === 'string' ? JSON.parse(data.blacklistZones || '[]') : data.blacklistZones) : [];
+          return zones.map(zone => {
+            const isListed = Array.isArray(listedZones) && listedZones.includes(zone);
+            return (
+              <div key={zone} style={blacklistZoneStyle}>
+                <span style={{ color: '#aaa' }}>{zone}</span>
+                <span style={{ color: isListed ? '#f87171' : '#4ade80', fontWeight: 600 }}>
+                  {isListed ? 'LISTED' : 'CLEAR'}
+                </span>
+              </div>
+            );
+          });
+        })()}
+        <div style={{ ...noteStyle, marginTop: '12px' }}>Checked weekly on Sundays at 2:00 AM via healthCheck.js</div>
+      </div>
+
+      <div style={sectionTitle}>mail-tester.com Score</div>
+      <div style={cardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+          <span style={{ fontSize: '12px', color: '#888', fontFamily: 'IBM Plex Mono, monospace' }}>Score (0-10):</span>
+          <input
+            type="number"
+            min="0"
+            max="10"
+            step="0.1"
+            value={mailTesterInput}
+            onChange={e => setMailTesterInput(e.target.value)}
+            style={inputStyle}
+          />
+          <button onClick={handleSaveMailTester} disabled={saving} style={saveBtnStyle}>
+            {saving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+        {data.mailTesterScore != null && (
+          <div style={{ fontSize: '13px', fontFamily: 'IBM Plex Mono, monospace', color: data.mailTesterScore >= 9 ? '#4ade80' : data.mailTesterScore >= 7 ? '#facc15' : '#f87171' }}>
+            Current: {data.mailTesterScore}/10
+            {data.mailTesterDate && <span style={{ color: '#555', marginLeft: '12px' }}>({data.mailTesterDate})</span>}
+          </div>
+        )}
+        <div style={noteStyle}>Manual weekly check every Monday. Target: 9-10/10</div>
+      </div>
+
+      <div style={sectionTitle}>Postmaster Tools</div>
       <div style={cardStyle}>
         <div style={{ fontSize: '12px', color: '#888', fontFamily: 'IBM Plex Mono, monospace', marginBottom: '8px' }}>
-          <strong>mail-tester.com:</strong> Manual weekly check every Monday. Target: 9-10/10
-        </div>
-        <div style={{ fontSize: '12px', color: '#888', fontFamily: 'IBM Plex Mono, monospace', marginBottom: '8px' }}>
-          <strong>Postmaster Tools:</strong> Phase 2 (needs 100+ Gmail recipients/day)
-        </div>
-        <div style={noteStyle}>
-          Blacklist DNS zones checked weekly: dbl.spamhaus.org, b.barracudacentral.org, multi.surbl.org
+          {data.postmaster_reputation
+            ? <span>Reputation: <strong style={{ color: data.postmaster_reputation === 'HIGH' ? '#4ade80' : data.postmaster_reputation === 'LOW' || data.postmaster_reputation === 'BAD' ? '#f87171' : '#facc15' }}>{data.postmaster_reputation}</strong></span>
+            : 'Phase 2 (needs 100+ Gmail recipients/day) - insufficient volume'}
         </div>
       </div>
     </div>

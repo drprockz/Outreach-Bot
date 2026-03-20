@@ -6,11 +6,11 @@ import { join } from 'path';
 // Mock all external dependencies before any imports that use them
 vi.mock('../utils/gemini.js', () => ({
   callGemini: vi.fn(async (prompt) => {
-    if (prompt.includes('discover')) {
+    if (prompt.toLowerCase().includes('discover')) {
       return {
         text: JSON.stringify([
-          { company: 'Acme Restaurant', website: 'https://acme-restaurant.com', city: 'Mumbai', niche: 'restaurant' },
-          { company: 'Beta Salon', website: 'https://betasalon.in', city: 'Pune', niche: 'salon' }
+          { business_name: 'Acme Restaurant', website_url: 'https://acme-restaurant.com', city: 'Mumbai', category: 'restaurant' },
+          { business_name: 'Beta Salon', website_url: 'https://betasalon.in', city: 'Pune', category: 'salon' }
         ]),
         costUsd: 0.001,
         inputTokens: 100,
@@ -21,13 +21,22 @@ vi.mock('../utils/gemini.js', () => ({
       // Stages 2-6 extraction response
       return {
         text: JSON.stringify({
-          contact_name: 'John Doe',
+          owner_name: 'John Doe',
+          owner_role: 'Founder',
           contact_email: prompt.includes('acme-restaurant')
             ? 'john@acme-restaurant.com'
             : 'info@betasalon.in',
-          cms: 'WordPress',
-          business_signals: 'low reviews,no booking,dated design',
-          quality_score: 8
+          contact_confidence: 'medium',
+          contact_source: 'pattern guess',
+          tech_stack: ['WordPress', 'jQuery'],
+          website_problems: ['outdated design', 'no online booking'],
+          last_updated: '2022',
+          has_ssl: 1,
+          has_analytics: 0,
+          business_signals: ['low reviews', 'no booking', 'dated design'],
+          social_active: 1,
+          website_quality_score: 4,
+          judge_reason: 'Outdated WordPress site with no booking system'
         }),
         costUsd: 0.001,
         inputTokens: 100,
@@ -103,12 +112,16 @@ describe('findLeads', () => {
     const leads = getDb().prepare(`SELECT * FROM leads WHERE status='ready'`).all();
 
     expect(leads.length).toBeGreaterThan(0);
-    expect(leads[0].hook).toBeTruthy();
-    expect(leads[0].email_body).toBeTruthy();
-    expect(leads[0].email_subject).toBeTruthy();
     expect(leads[0].icp_priority).toBe('A');
     expect(leads[0].contact_email).toBeTruthy();
-    expect(leads[0].company).toBeTruthy();
+    expect(leads[0].business_name).toBeTruthy();
+
+    // Hook, subject, body are now on the emails table, not leads
+    const emails = getDb().prepare(`SELECT * FROM emails WHERE lead_id=?`).all(leads[0].id);
+    expect(emails.length).toBeGreaterThan(0);
+    expect(emails[0].hook).toBeTruthy();
+    expect(emails[0].body).toBeTruthy();
+    expect(emails[0].subject).toBeTruthy();
   });
 
   it('skips leads with invalid emails', async () => {
@@ -120,8 +133,12 @@ describe('findLeads', () => {
     await findLeads();
 
     const { getDb } = await import('../utils/db.js');
-    const leads = getDb().prepare(`SELECT * FROM leads`).all();
-    expect(leads.length).toBe(0);
+    // Invalid email leads are still inserted with status='email_invalid' for tracking
+    const readyLeads = getDb().prepare(`SELECT * FROM leads WHERE status='ready'`).all();
+    expect(readyLeads.length).toBe(0);
+    // All leads should be marked as email_invalid
+    const allLeads = getDb().prepare(`SELECT * FROM leads`).all();
+    expect(allLeads.every(l => l.status === 'email_invalid')).toBe(true);
   });
 
   it('sets C-priority leads to nurture status', async () => {
@@ -148,15 +165,15 @@ describe('findLeads', () => {
     const { getDb } = await import('../utils/db.js');
     const nurtureLeads = getDb().prepare(`SELECT * FROM leads WHERE status='nurture'`).all();
     expect(nurtureLeads.length).toBeGreaterThan(0);
-    // C-priority leads should NOT have hook or email_body (skipped stages 10-11)
-    expect(nurtureLeads[0].hook).toBeNull();
-    expect(nurtureLeads[0].email_body).toBeNull();
+    // C-priority leads should NOT have emails generated (skipped stages 10-11)
+    const emails = getDb().prepare(`SELECT * FROM emails WHERE lead_id=?`).all(nurtureLeads[0].id);
+    expect(emails.length).toBe(0);
   });
 
   it('deduplicates leads already in database', async () => {
     // Insert a lead with the same email first
     const { getDb } = await import('../utils/db.js');
-    getDb().prepare(`INSERT INTO leads (company, contact_email, status) VALUES (?, ?, ?)`).run(
+    getDb().prepare(`INSERT INTO leads (business_name, contact_email, status) VALUES (?, ?, ?)`).run(
       'Existing Company', 'john@acme-restaurant.com', 'sent'
     );
 
@@ -187,7 +204,7 @@ describe('findLeads', () => {
     const { getDb } = await import('../utils/db.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='findLeads'`).all();
     expect(cronEntries.length).toBe(1);
-    expect(cronEntries[0].status).toBe('ok');
+    expect(cronEntries[0].status).toBe('success');
   });
 
   it('sends telegram alert on completion', async () => {
@@ -208,6 +225,6 @@ describe('findLeads', () => {
     const { getDb, today } = await import('../utils/db.js');
     const metrics = getDb().prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(today());
     expect(metrics).toBeTruthy();
-    expect(metrics.leads_found).toBeGreaterThan(0);
+    expect(metrics.leads_discovered).toBeGreaterThan(0);
   });
 });

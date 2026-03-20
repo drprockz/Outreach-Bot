@@ -98,6 +98,7 @@ export default function Overview() {
     { label: 'Extracted', value: funnel?.extracted || 0, color: '#60a5fa' },
     { label: 'Judged', value: funnel?.judged || 0, color: '#facc15' },
     { label: 'Email Found', value: funnel?.email_found || 0, color: '#facc15' },
+    { label: 'Email Valid', value: funnel?.email_valid || 0, color: '#facc15' },
     { label: 'ICP A/B', value: funnel?.icp_ab || 0, color: '#4ade80' },
     { label: 'Sent', value: funnel?.sent || 0, color: '#4ade80' },
     { label: 'Replied', value: funnel?.replied || 0, color: '#f87171' },
@@ -110,17 +111,17 @@ export default function Overview() {
       <h1 style={pageTitle}>Overview</h1>
 
       <div style={gridStyle}>
-        <StatCard label="Leads Found (7d)" value={metrics.week?.leads_found || 0} sub="This week" color="#60a5fa" />
+        <StatCard label="Leads Discovered (7d)" value={metrics.week?.leads_discovered || 0} sub="This week" color="#60a5fa" />
         <StatCard label="Emails Sent (7d)" value={metrics.week?.emails_sent || 0} sub="This week" color="#4ade80" />
-        <StatCard label="Replies (7d)" value={metrics.week?.replies || 0} sub="This week" color="#facc15" />
-        <StatCard label="Hot Leads (7d)" value={metrics.week?.hot_replies || 0} sub="Interested" color="#f87171" />
+        <StatCard label="Replies (7d)" value={metrics.week?.replies_total || 0} sub="This week" color="#facc15" />
+        <StatCard label="Hot Leads (7d)" value={metrics.week?.replies_hot || 0} sub="Interested" color="#f87171" />
         <StatCard label="Reply Rate (7d)" value={`${metrics.replyRate7d || 0}%`} sub="7-day rolling" color="#4ade80" />
         <StatCard label="Bounce Rate" value={`${metrics.bounceRateToday || 0}%`} sub="Today" color={metrics.bounceRateToday > 2 ? '#f87171' : '#4ade80'} />
         <StatCard label="Active Sequences" value={metrics.activeSequences || 0} sub="In progress" color="#60a5fa" />
         <StatCard
           label="API Cost (30d)"
-          value={`$${(metrics.month?.total_cost_usd || 0).toFixed(2)}`}
-          sub={`~INR ${((metrics.month?.total_cost_usd || 0) * usdToInr).toFixed(0)}`}
+          value={`$${(metrics.month?.total_api_cost_usd || 0).toFixed(2)}`}
+          sub={`~INR ${((metrics.month?.total_api_cost_usd || 0) * usdToInr).toFixed(0)}`}
           color="#facc15"
         />
       </div>

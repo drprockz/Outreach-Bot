@@ -102,25 +102,26 @@ export default function SequenceTracker() {
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thStyle}>Company</th>
+              <th style={thStyle}>Business</th>
               <th style={thStyle}>Contact</th>
               <th style={thStyle}>Step</th>
               <th style={thStyle}>Next Send</th>
               <th style={thStyle}>Last Sent</th>
               <th style={thStyle}>Subject</th>
               <th style={thStyle}>Status</th>
+              <th style={thStyle}>Paused Reason</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
+              <tr><td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
             ) : (data.sequences || []).length === 0 ? (
-              <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No sequences found.</td></tr>
+              <tr><td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No sequences found.</td></tr>
             ) : data.sequences.map((seq, i) => {
               const sc = seqStatusColors[seq.status] || { bg: '#88888820', color: '#888' };
               return (
                 <tr key={seq.id} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
-                  <td style={tdStyle}>{seq.company || '-'}</td>
+                  <td style={tdStyle}>{seq.business_name || '-'}</td>
                   <td style={{ ...tdStyle, color: '#888' }}>{seq.contact_email || seq.contact_name || '-'}</td>
                   <td style={tdStyle}>
                     <span style={{ ...badgeBase, background: '#60a5fa20', color: '#60a5fa' }}>
@@ -138,6 +139,9 @@ export default function SequenceTracker() {
                   </td>
                   <td style={tdStyle}>
                     <span style={{ ...badgeBase, background: sc.bg, color: sc.color }}>{seq.status}</span>
+                  </td>
+                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
+                    {seq.paused_reason || '-'}
                   </td>
                 </tr>
               );

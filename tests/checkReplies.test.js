@@ -28,11 +28,15 @@ beforeEach(async () => {
   resetDb();
   initSchema();
   getDb().prepare(`
-    INSERT INTO leads (id, company, contact_email, status) VALUES (1, 'Acme', 'john@acme.com', 'contacted')
+    INSERT INTO leads (id, business_name, contact_email, status) VALUES (1, 'Acme', 'john@acme.com', 'sent')
   `).run();
   getDb().prepare(`
-    INSERT INTO sequence_state (lead_id, current_step, next_send_at, last_message_id, status)
-    VALUES (1, 0, date('now', '+3 days'), '<cold@test.com>', 'active')
+    INSERT INTO emails (lead_id, sequence_step, subject, body, status, message_id, inbox_used)
+    VALUES (1, 0, 'Quick question', 'Hi John...', 'sent', '<cold@test.com>', 'darshan@trysimpleinc.com')
+  `).run();
+  getDb().prepare(`
+    INSERT INTO sequence_state (lead_id, current_step, next_send_date, last_message_id, last_subject, status)
+    VALUES (1, 0, date('now', '+3 days'), '<cold@test.com>', 'Quick question', 'active')
   `).run();
 });
 
@@ -50,7 +54,7 @@ describe('checkReplies', () => {
     const lead = getDb().prepare(`SELECT status FROM leads WHERE contact_email='john@acme.com'`).get();
     expect(lead.status).toBe('replied');
     const reply = getDb().prepare(`SELECT * FROM replies`).get();
-    expect(reply.classification).toBe('hot');
+    expect(reply.category).toBe('hot');
   });
 
   it('pauses sequence on reply', async () => {
@@ -113,7 +117,7 @@ describe('checkReplies', () => {
     const { getDb, today } = await import('../utils/db.js');
     const metrics = getDb().prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(today());
     expect(metrics).toBeTruthy();
-    expect(metrics.replies).toBeGreaterThanOrEqual(1);
+    expect(metrics.replies_total).toBeGreaterThanOrEqual(1);
   });
 
   it('logs to cron_log', async () => {
@@ -122,6 +126,6 @@ describe('checkReplies', () => {
     const { getDb } = await import('../utils/db.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='checkReplies'`).all();
     expect(cronEntries.length).toBe(1);
-    expect(cronEntries[0].status).toBe('ok');
+    expect(cronEntries[0].status).toBe('success');
   });
 });

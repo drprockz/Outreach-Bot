@@ -96,16 +96,41 @@ const metaRow = {
   marginTop: '8px',
 };
 
+const actionBtnStyle = {
+  padding: '4px 10px',
+  border: '1px solid',
+  borderRadius: '4px',
+  fontSize: '10px',
+  fontWeight: 600,
+  fontFamily: 'IBM Plex Mono, monospace',
+  cursor: 'pointer',
+  transition: 'background 0.15s',
+  marginRight: '6px',
+};
+
 export default function ReplyFeed() {
   const [replies, setReplies] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  function fetchReplies() {
     api.replies().then(d => {
       setReplies(d?.replies || []);
       setLoading(false);
     }).catch(() => setLoading(false));
-  }, []);
+  }
+
+  useEffect(() => { fetchReplies(); }, []);
+
+  async function handleAction(id, action) {
+    await api.replyAction(id, action);
+    fetchReplies();
+  }
+
+  async function handleReject(id) {
+    if (!window.confirm('Add this sender to the reject list permanently?')) return;
+    await api.replyReject(id);
+    fetchReplies();
+  }
 
   if (loading) {
     return (
@@ -116,9 +141,9 @@ export default function ReplyFeed() {
     );
   }
 
-  function getHighlightStyle(classification) {
-    if (classification === 'hot') return { borderLeft: '3px solid #f87171', background: '#f8717108' };
-    if (classification === 'schedule') return { borderLeft: '3px solid #60a5fa', background: '#60a5fa08' };
+  function getHighlightStyle(cat) {
+    if (cat === 'hot') return { borderLeft: '3px solid #f87171', background: '#f8717108' };
+    if (cat === 'schedule') return { borderLeft: '3px solid #60a5fa', background: '#60a5fa08' };
     return { borderLeft: '3px solid transparent' };
   }
 
@@ -147,23 +172,23 @@ export default function ReplyFeed() {
         <div style={emptyState}>No replies received yet.</div>
       ) : (
         replies.map((reply) => {
-          const cc = classificationColors[reply.category || reply.classification] || classificationColors.other;
+          const cc = classificationColors[reply.category] || classificationColors.other;
           return (
-            <div key={reply.id} style={{ ...cardStyle, ...getHighlightStyle(reply.category || reply.classification) }}>
+            <div key={reply.id} style={{ ...cardStyle, ...getHighlightStyle(reply.category) }}>
               <div style={headerRow}>
                 <div>
-                  <span style={nameStyle}>{reply.contact_name || reply.company || 'Unknown'}</span>
+                  <span style={nameStyle}>{reply.contact_name || reply.business_name || 'Unknown'}</span>
                   <span style={{ ...emailStyle, marginLeft: '12px' }}>{reply.contact_email || ''}</span>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                   <span style={{ ...badgeBase, background: cc.bg, color: cc.color }}>
-                    {reply.category || reply.classification || 'other'}
+                    {reply.category || 'other'}
                   </span>
                   {renderSentiment(reply.sentiment_score)}
                 </div>
               </div>
               <div style={previewStyle}>
-                {reply.raw_text || reply.body_preview || '(no content)'}
+                {reply.raw_text || '(no content)'}
               </div>
               <div style={metaRow}>
                 <span style={timeStyle}>
@@ -173,11 +198,41 @@ export default function ReplyFeed() {
                   <span style={timeStyle}>Inbox: {reply.inbox_received_at}</span>
                 )}
                 {reply.actioned_at ? (
-                  <span style={{ ...badgeBase, background: '#4ade8020', color: '#4ade80', fontSize: '9px' }}>ACTIONED</span>
+                  <span style={{ ...badgeBase, background: '#4ade8020', color: '#4ade80', fontSize: '9px' }}>
+                    {reply.action_taken || 'ACTIONED'}
+                  </span>
                 ) : (
                   <span style={{ ...badgeBase, background: '#facc1520', color: '#facc15', fontSize: '9px' }}>PENDING</span>
                 )}
               </div>
+              {!reply.actioned_at && (
+                <div style={{ display: 'flex', gap: '6px', marginTop: '10px' }}>
+                  <button
+                    onClick={() => handleAction(reply.id, 'booked_call')}
+                    style={{ ...actionBtnStyle, background: '#4ade8015', borderColor: '#4ade8050', color: '#4ade80' }}
+                  >
+                    Booked Call
+                  </button>
+                  <button
+                    onClick={() => handleAction(reply.id, 'replied')}
+                    style={{ ...actionBtnStyle, background: '#60a5fa15', borderColor: '#60a5fa50', color: '#60a5fa' }}
+                  >
+                    Replied
+                  </button>
+                  <button
+                    onClick={() => handleAction(reply.id, 'ignored')}
+                    style={{ ...actionBtnStyle, background: '#88888815', borderColor: '#88888850', color: '#888' }}
+                  >
+                    Ignore
+                  </button>
+                  <button
+                    onClick={() => handleReject(reply.id)}
+                    style={{ ...actionBtnStyle, background: '#f8717115', borderColor: '#f8717150', color: '#f87171' }}
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
             </div>
           );
         })

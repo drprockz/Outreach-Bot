@@ -64,7 +64,7 @@ export async function callClaude(model, prompt, { systemPrompt, maxTokens = 1024
   const d = today();
   db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
   const col = model === 'sonnet' ? 'sonnet_cost_usd' : 'haiku_cost_usd';
-  db.prepare(`UPDATE daily_metrics SET ${col}=${col}+?, total_cost_usd=total_cost_usd+? WHERE date=?`)
+  db.prepare(`UPDATE daily_metrics SET ${col}=${col}+?, total_api_cost_usd=total_api_cost_usd+? WHERE date=?`)
     .run(costUsd, costUsd, d);
 
   return { text, costUsd, inputTokens, outputTokens };

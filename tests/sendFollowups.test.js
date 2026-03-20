@@ -26,19 +26,27 @@ beforeEach(async () => {
   process.env.DAILY_SEND_LIMIT = '10';
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
   process.env.BOUNCE_RATE_HARD_STOP = '0.02';
+  process.env.SEND_WINDOW_START_IST = '0';
+  process.env.SEND_WINDOW_END_IST = '23';
+  process.env.SEND_DELAY_MIN_MS = '1000';
+  process.env.SEND_DELAY_MAX_MS = '2000';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_2_USER = 'hello@trysimpleinc.com';
   const { resetDb, initSchema, getDb } = await import('../utils/db.js');
   resetDb();
   initSchema();
-  // Insert a contacted lead with active sequence due today
+  // Insert a sent lead with active sequence due today
   getDb().prepare(`
-    INSERT INTO leads (id, company, contact_email, contact_name, niche, icp_priority, icp_score, email_subject, email_body, hook, status)
-    VALUES (1, 'Acme', 'john@acme.com', 'John', 'restaurant', 'A', 8, 'Quick question', 'Hi John...', 'Your site looks dated.', 'contacted')
+    INSERT INTO leads (id, business_name, contact_email, contact_name, category, icp_priority, icp_score, status)
+    VALUES (1, 'Acme', 'john@acme.com', 'John', 'restaurant', 'A', 8, 'sent')
   `).run();
   getDb().prepare(`
-    INSERT INTO sequence_state (lead_id, current_step, next_send_at, last_message_id, status)
-    VALUES (1, 0, date('now'), '<original@test.com>', 'active')
+    INSERT INTO emails (lead_id, sequence_step, subject, body, hook, status, message_id, inbox_used)
+    VALUES (1, 0, 'Quick question', 'Hi John...', 'Your site looks dated.', 'sent', '<original@test.com>', 'darshan@trysimpleinc.com')
+  `).run();
+  getDb().prepare(`
+    INSERT INTO sequence_state (lead_id, current_step, next_send_date, last_message_id, last_subject, status)
+    VALUES (1, 0, date('now'), '<original@test.com>', 'Quick question', 'active')
   `).run();
 });
 
@@ -73,8 +81,9 @@ describe('sendFollowups', () => {
     const sendFollowups = (await import('../sendFollowups.js')).default;
     await sendFollowups();
     const { getDb } = await import('../utils/db.js');
-    const emails = getDb().prepare(`SELECT * FROM emails`).all();
-    expect(emails.length).toBe(0);
+    // Only the pre-seeded step-0 email should exist — no follow-ups sent
+    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    expect(followups.length).toBe(0);
   });
 
   it('skips rejected leads and marks sequence as unsubscribed', async () => {
@@ -85,17 +94,19 @@ describe('sendFollowups', () => {
     const { getDb } = await import('../utils/db.js');
     const seq = getDb().prepare(`SELECT * FROM sequence_state WHERE lead_id=1`).get();
     expect(seq.status).toBe('unsubscribed');
-    const emails = getDb().prepare(`SELECT * FROM emails`).all();
-    expect(emails.length).toBe(0);
+    // Only the pre-seeded step-0 email should exist — no follow-ups sent
+    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    expect(followups.length).toBe(0);
   });
 
   it('does not send follow-ups for future sequences', async () => {
     const { getDb } = await import('../utils/db.js');
-    getDb().prepare(`UPDATE sequence_state SET next_send_at = date('now', '+10 days') WHERE lead_id=1`).run();
+    getDb().prepare(`UPDATE sequence_state SET next_send_date = date('now', '+10 days') WHERE lead_id=1`).run();
     const sendFollowups = (await import('../sendFollowups.js')).default;
     await sendFollowups();
-    const emails = getDb().prepare(`SELECT * FROM emails`).all();
-    expect(emails.length).toBe(0);
+    // Only the pre-seeded step-0 email should exist — no follow-ups sent
+    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    expect(followups.length).toBe(0);
   });
 
   it('uses threading headers for steps 1-3', async () => {
@@ -117,6 +128,6 @@ describe('sendFollowups', () => {
     const { getDb } = await import('../utils/db.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='sendFollowups'`).all();
     expect(cronEntries.length).toBe(1);
-    expect(cronEntries[0].status).toBe('ok');
+    expect(cronEntries[0].status).toBe('success');
   });
 });

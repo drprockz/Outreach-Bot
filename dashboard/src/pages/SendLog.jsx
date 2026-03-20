@@ -153,6 +153,7 @@ export default function SendLog() {
         <StatCard label="Hard Bounces" value={agg.hard_bounces || 0} color="#f87171" />
         <StatCard label="Soft Bounces" value={agg.soft_bounces || 0} color="#fb923c" />
         <StatCard label="Content Rejected" value={agg.content_rejected || 0} color="#888" />
+        <StatCard label="Avg Duration" value={agg.avg_duration_ms ? `${(agg.avg_duration_ms / 1000).toFixed(1)}s` : '-'} color="#60a5fa" />
         <StatCard label="Total Cost" value={`$${(agg.total_cost || 0).toFixed(2)}`} sub={`~INR ${((agg.total_cost || 0) * usdToInr).toFixed(0)}`} color="#facc15" />
       </div>
 
@@ -177,36 +178,42 @@ export default function SendLog() {
         <table style={tableStyle}>
           <thead>
             <tr>
-              <th style={thStyle}>Company</th>
+              <th style={thStyle}>Business</th>
               <th style={thStyle}>Subject</th>
               <th style={thStyle}>Inbox</th>
+              <th style={thStyle}>Domain</th>
               <th style={thStyle}>Step</th>
               <th style={thStyle}>Status</th>
               <th style={thStyle}>Words</th>
+              <th style={thStyle}>Duration</th>
               <th style={thStyle}>Cost</th>
               <th style={thStyle}>Sent At</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
+              <tr><td colSpan={10} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
             ) : (data.emails || []).length === 0 ? (
-              <tr><td colSpan={8} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No emails found.</td></tr>
+              <tr><td colSpan={10} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No emails found.</td></tr>
             ) : data.emails.map((email, i) => {
               const dc = deliveryColors[email.status] || { bg: '#88888820', color: '#888' };
               return (
                 <tr key={email.id} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
-                  <td style={tdStyle}>{email.company || email.contact_name || '-'}</td>
+                  <td style={tdStyle}>{email.business_name || '-'}</td>
                   <td style={{ ...tdStyle, maxWidth: '250px' }}>{email.subject || '-'}</td>
-                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>{email.inbox_used || email.inbox || '-'}</td>
+                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>{email.inbox_used || '-'}</td>
+                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>{email.from_domain || '-'}</td>
                   <td style={{ ...tdStyle, textAlign: 'center' }}>{email.sequence_step ?? 0}</td>
                   <td style={tdStyle}>
                     <span style={{ ...badgeBase, background: dc.bg, color: dc.color }}>{email.status}</span>
                   </td>
                   <td style={{ ...tdStyle, textAlign: 'center', color: '#888' }}>{email.word_count || '-'}</td>
+                  <td style={{ ...tdStyle, textAlign: 'center', color: '#888', fontSize: '10px' }}>
+                    {email.send_duration_ms ? `${(email.send_duration_ms / 1000).toFixed(1)}s` : '-'}
+                  </td>
                   <td style={{ ...tdStyle, color: '#facc15', fontSize: '10px' }}>
-                    {email.total_cost_usd != null || email.ai_cost_usd != null
-                      ? `$${(email.total_cost_usd || email.ai_cost_usd || 0).toFixed(4)}`
+                    {email.total_cost_usd != null
+                      ? `$${(email.total_cost_usd || 0).toFixed(4)}`
                       : '-'}
                   </td>
                   <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>

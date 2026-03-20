@@ -15,13 +15,13 @@ import { sleep } from './utils/sleep.js';
 
 const STEP_PROMPTS = {
   1: (lead) =>
-    `Write a very short follow-up email (2-3 sentences, under 50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.company}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
+    `Write a very short follow-up email (2-3 sentences, under 50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
   2: (lead) =>
-    `Write a follow-up email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.company}. Share a brief value angle — mention a relevant result like "helped a ${lead.niche || 'similar'} business increase bookings by 40% after redesigning their site." Make it conversational, not salesy. Plain text only. A single relevant link is OK if natural.`,
+    `Write a follow-up email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. Share a brief value angle — mention a relevant result like "helped a ${lead.category || 'similar'} business increase bookings by 40% after redesigning their site." Make it conversational, not salesy. Plain text only. A single relevant link is OK if natural.`,
   3: (lead) =>
-    `Write a final breakup email (30-50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.company}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
+    `Write a final breakup email (30-50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
   4: (lead) =>
-    `Write a quarterly check-in email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.company}. It has been ~3 months since last contact. Reference something seasonal or timely. Reintroduce yourself briefly. Plain text only. No links.`
+    `Write a quarterly check-in email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. It has been ~3 months since last contact. Reference something seasonal or timely. Reintroduce yourself briefly. Plain text only. No links.`
 };
 
 // Days until next step after current step
@@ -32,6 +32,23 @@ const NEXT_STEP_DAYS = {
   4: null         // step 4 is the final step — sequence complete
 };
 
+// Non-negotiable Rule 6: Send window enforced
+function inSendWindow() {
+  const now = new Date();
+  const istOffset = 5.5 * 60 * 60 * 1000;
+  const ist = new Date(now.getTime() + istOffset);
+  const day = ist.getUTCDay();
+  if (day === 0) return false; // No Sunday sends
+  const hour = ist.getUTCHours();
+  const minute = ist.getUTCMinutes();
+  const currentTime = hour + minute / 60;
+  const startEnv = process.env.SEND_WINDOW_START_IST;
+  const endEnv = process.env.SEND_WINDOW_END_IST;
+  const windowStart = startEnv !== undefined ? parseFloat(startEnv) : 9.5; // default 9:30 AM
+  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM
+  return currentTime >= windowStart && currentTime < windowEnd;
+}
+
 export default async function sendFollowups() {
   const cronId = logCron('sendFollowups');
   let emailsSent = 0;
@@ -40,28 +57,34 @@ export default async function sendFollowups() {
   try {
     const dailyLimit = parseInt(process.env.DAILY_SEND_LIMIT || '0');
     if (dailyLimit === 0) {
-      finishCron(cronId, { status: 'ok', emailsSent: 0 });
+      finishCron(cronId, { status: 'skipped' });
+      return;
+    }
+
+    // Non-negotiable Rule 6: enforce send window for follow-ups too
+    if (!inSendWindow()) {
+      finishCron(cronId, { status: 'skipped' });
       return;
     }
 
     const bounceThreshold = parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02');
     if (todayBounceRate() > bounceThreshold) {
       await sendAlert('sendFollowups: bounce rate exceeded — skipping');
-      finishCron(cronId, { status: 'ok', emailsSent: 0 });
+      finishCron(cronId, { status: 'skipped' });
       return;
     }
 
     const db = getDb();
 
-    // Pull sequences that are due today
+    // Pull sequences that are due today — use correct column names
     const dueSequences = db.prepare(`
-      SELECT ss.*, l.company, l.contact_name, l.contact_email, l.niche, l.email_subject, l.hook
+      SELECT ss.*, l.business_name, l.contact_name, l.contact_email, l.category
       FROM sequence_state ss
       JOIN leads l ON l.id = ss.lead_id
       WHERE ss.status = 'active'
-        AND ss.next_send_at <= date('now')
+        AND ss.next_send_date <= date('now')
         AND ss.current_step < 4
-      ORDER BY ss.next_send_at ASC
+      ORDER BY ss.next_send_date ASC
     `).all();
 
     const delayMin = parseInt(process.env.SEND_DELAY_MIN_MS || '180000');
@@ -88,34 +111,40 @@ export default async function sendFollowups() {
 
         const { text: body, costUsd } = await callClaude('haiku', promptFn(seq), { maxTokens: 200 });
         totalCost += costUsd;
+        bumpMetric('haiku_cost_usd', costUsd);
 
-        // Determine subject and threading
+        // Determine subject and threading (Non-negotiable Rule 9)
         let subject;
         let inReplyTo = null;
-        let references = null;
+        let referencesHeader = null;
 
         if (nextStep <= 3) {
           // Steps 1-3: thread reply — "Re: {original subject}"
-          subject = `Re: ${seq.email_subject}`;
+          subject = `Re: ${seq.last_subject}`;
           inReplyTo = seq.last_message_id;
-          references = seq.last_references
-            ? `${seq.last_references} ${seq.last_message_id}`
-            : seq.last_message_id;
+          // Build references chain from previous emails
+          const prevEmails = db.prepare(`
+            SELECT message_id FROM emails
+            WHERE lead_id = ? AND sequence_step < ? AND message_id IS NOT NULL
+            ORDER BY sequence_step ASC
+          `).all(seq.lead_id, nextStep);
+          referencesHeader = prevEmails.map(e => e.message_id).join(' ');
         } else {
           // Step 4: new thread — fresh subject
-          subject = `Checking in — ${seq.company}`;
+          subject = `Checking in — ${seq.business_name}`;
         }
 
-        // Validate content before send
+        // Non-negotiable Rule 4: validate content before send
         let finalBody = body;
         const validation = validate(subject, body, nextStep);
         if (!validation.valid) {
           // Try regenerating once
           const { text: retryBody, costUsd: retryCost } = await callClaude('haiku', promptFn(seq), { maxTokens: 200 });
           totalCost += retryCost;
+          bumpMetric('haiku_cost_usd', retryCost);
           const retryValidation = validate(subject, retryBody, nextStep);
           if (!retryValidation.valid) {
-            logError('sendFollowups.validation', new Error(`Content rejected for lead ${seq.lead_id} step ${nextStep}: ${retryValidation.reason}`));
+            logError('sendFollowups.validation', new Error(`Content rejected for lead ${seq.lead_id} step ${nextStep}: ${retryValidation.reason}`), { jobName: 'sendFollowups', errorType: 'validation_error', leadId: seq.lead_id });
             continue;
           }
           finalBody = retryBody;
@@ -124,42 +153,56 @@ export default async function sendFollowups() {
         // Round-robin inbox
         const currentSent = todaySentCount();
         const inboxNumber = (currentSent % 2) + 1;
+        const inboxUser = inboxNumber === 1 ? process.env.INBOX_1_USER : process.env.INBOX_2_USER;
+        const domain = process.env.OUTREACH_DOMAIN || 'trysimpleinc.com';
 
+        const sendStart = Date.now();
         const { messageId } = await sendMail(inboxNumber, {
           to: seq.contact_email,
           subject,
           text: finalBody,
-          ...(inReplyTo ? { inReplyTo, references } : {})
+          ...(inReplyTo ? { inReplyTo, references: referencesHeader } : {})
         });
+        const sendDuration = Date.now() - sendStart;
 
-        const inboxUser = inboxNumber === 1 ? process.env.INBOX_1_USER : process.env.INBOX_2_USER;
-
-        // Insert email record
+        // Insert email record with full spec columns
         db.prepare(`
-          INSERT INTO emails (lead_id, sequence_step, inbox, subject, body, message_id, status, sent_at, ai_cost_usd)
-          VALUES (?, ?, ?, ?, ?, ?, 'sent', datetime('now'), ?)
-        `).run(seq.lead_id, nextStep, inboxUser, subject, finalBody, messageId, costUsd);
+          INSERT INTO emails (
+            lead_id, sequence_step, inbox_used, from_domain, from_name,
+            subject, body, word_count, contains_link, is_html, is_plain_text,
+            content_valid, status, sent_at, message_id, send_duration_ms,
+            in_reply_to, references_header,
+            body_model, body_cost_usd, total_cost_usd
+          ) VALUES (?, ?, ?, ?, 'Darshan Parmar', ?, ?, ?, ?, 0, 1, 1, 'sent', datetime('now'), ?, ?, ?, ?, 'claude-haiku-4-5', ?, ?)
+        `).run(
+          seq.lead_id, nextStep, inboxUser, domain,
+          subject, finalBody, finalBody.trim().split(/\s+/).filter(Boolean).length,
+          /https?:\/\//i.test(finalBody) ? 1 : 0,
+          messageId, sendDuration, inReplyTo, referencesHeader,
+          costUsd, costUsd
+        );
 
-        // Update sequence_state
+        // Update sequence_state with correct column names
         const nextDays = NEXT_STEP_DAYS[nextStep];
         if (nextDays) {
-          // More steps to come
-          const newReferences = references ? `${references} ${messageId}` : messageId;
           db.prepare(`
             UPDATE sequence_state
-            SET current_step = ?, next_send_at = date('now', ?), last_message_id = ?, last_references = ?, updated_at = datetime('now')
-            WHERE id = ?
-          `).run(nextStep, nextDays, messageId, newReferences, seq.id);
+            SET current_step=?, next_send_date=date('now', ?), last_sent_at=datetime('now'), last_message_id=?, last_subject=?, updated_at=datetime('now')
+            WHERE id=?
+          `).run(nextStep, nextDays, messageId, nextStep <= 3 ? seq.last_subject : subject, seq.id);
         } else {
-          // Sequence complete (step 4 was the last)
+          // Sequence complete
           db.prepare(`
             UPDATE sequence_state
-            SET current_step = ?, status = 'completed', updated_at = datetime('now')
-            WHERE id = ?
+            SET current_step=?, status='completed', last_sent_at=datetime('now'), updated_at=datetime('now')
+            WHERE id=?
           `).run(nextStep, seq.id);
         }
 
         bumpMetric('emails_sent');
+        bumpMetric('followups_sent');
+        if (inboxNumber === 1) bumpMetric('sent_inbox_1');
+        else bumpMetric('sent_inbox_2');
         emailsSent++;
 
         // Delay between sends
@@ -167,17 +210,17 @@ export default async function sendFollowups() {
           await sleep(delayMin, delayMax);
         }
       } catch (sendErr) {
-        logError('sendFollowups.send', sendErr);
+        logError('sendFollowups.send', sendErr, { jobName: 'sendFollowups', errorType: 'smtp_error', leadId: seq.lead_id });
       }
     }
 
-    finishCron(cronId, { status: 'ok', emailsSent, costUsd: totalCost });
+    finishCron(cronId, { status: 'success', recordsProcessed: emailsSent, costUsd: totalCost });
     if (emailsSent > 0) {
       await sendAlert(`sendFollowups: ${emailsSent} follow-ups sent (cost $${totalCost.toFixed(4)})`);
     }
   } catch (err) {
-    logError('sendFollowups', err);
-    finishCron(cronId, { status: 'error', error: err.message });
+    logError('sendFollowups', err, { jobName: 'sendFollowups' });
+    finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`sendFollowups failed: ${err.message}`);
   }
 }

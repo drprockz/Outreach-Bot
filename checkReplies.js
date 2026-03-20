@@ -6,7 +6,7 @@ import { sendAlert } from './utils/telegram.js';
 
 // ── Classification prompt ────────────────────────────────
 function classifyPrompt(text, subject) {
-  return `Classify this email reply into exactly one category. Reply with ONLY the category word, nothing else.
+  return `Classify this email reply into exactly one category and rate sentiment 1-5 (1=very negative, 5=very positive). Reply with JSON only: {"category": "...", "sentiment": N}
 
 Categories:
 - hot (interested, wants to learn more, asks about pricing/services)
@@ -20,51 +20,65 @@ Subject: ${subject}
 Reply text:
 ${text}
 
-Category:`;
+JSON:`;
 }
 
 // ── Actions per classification ───────────────────────────
-async function handleClassification(db, classification, lead, reply) {
-  switch (classification) {
-    case 'hot':
-    case 'schedule': {
-      // Update lead status
-      db.prepare(`UPDATE leads SET status='replied', updated_at=datetime('now') WHERE id=?`).run(lead.id);
-      // Stop sequence
+async function handleClassification(db, category, lead, replyId) {
+  let alerted = false;
+
+  switch (category) {
+    case 'hot': {
+      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
       db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      // Telegram alert
-      const emoji = classification === 'hot' ? 'Hot lead' : 'Wants to schedule';
-      await sendAlert(`${emoji}: ${lead.contact_name || lead.company} — ${lead.company} (${lead.contact_email})`);
-      bumpMetric('hot_replies');
+      await sendAlert(`Hot lead: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      alerted = true;
+      bumpMetric('replies_hot');
+      break;
+    }
+    case 'schedule': {
+      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
+      db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
+      await sendAlert(`Wants to schedule: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      alerted = true;
+      bumpMetric('replies_schedule');
       break;
     }
     case 'soft_no': {
-      // Pause sequence, re-queue +14 days
-      db.prepare(`UPDATE leads SET status='replied', updated_at=datetime('now') WHERE id=?`).run(lead.id);
+      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
       db.prepare(`
-        UPDATE sequence_state SET status='paused', next_send_at=date('now', '+14 days'), updated_at=datetime('now') WHERE lead_id=?
+        UPDATE sequence_state SET status='paused', next_send_date=date('now', '+14 days'), updated_at=datetime('now') WHERE lead_id=?
       `).run(lead.id);
+      db.prepare(`UPDATE replies SET requeue_date=date('now', '+14 days') WHERE id=?`).run(replyId);
+      bumpMetric('replies_soft_no');
       break;
     }
     case 'unsubscribe': {
-      // Add to reject list permanently
       addToRejectList(lead.contact_email, 'unsubscribe');
-      db.prepare(`UPDATE leads SET status='unsubscribed', updated_at=datetime('now') WHERE id=?`).run(lead.id);
+      db.prepare(`UPDATE leads SET status='unsubscribed' WHERE id=?`).run(lead.id);
       db.prepare(`UPDATE sequence_state SET status='unsubscribed', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`Unsubscribed: ${lead.contact_email} (${lead.company})`);
+      await sendAlert(`Unsubscribed: ${lead.contact_email} (${lead.business_name})`);
+      alerted = true;
+      bumpMetric('replies_unsubscribe');
       break;
     }
     case 'ooo': {
-      // Re-queue +5 days
       db.prepare(`
-        UPDATE sequence_state SET next_send_at=date('now', '+5 days'), updated_at=datetime('now') WHERE lead_id=?
+        UPDATE sequence_state SET next_send_date=date('now', '+5 days'), updated_at=datetime('now') WHERE lead_id=?
       `).run(lead.id);
+      db.prepare(`UPDATE replies SET requeue_date=date('now', '+5 days') WHERE id=?`).run(replyId);
+      bumpMetric('replies_ooo');
       break;
     }
     default: {
-      // 'other' — log only, no action
+      bumpMetric('replies_other');
       break;
     }
+  }
+
+  // Set telegram_alerted flag on the reply
+  if (alerted) {
+    db.prepare(`UPDATE replies SET telegram_alerted=1 WHERE id=?`).run(replyId);
   }
 }
 
@@ -82,7 +96,7 @@ export default async function checkReplies() {
       try {
         messages = await fetchUnseen(inboxNumber);
       } catch (imapErr) {
-        logError(`checkReplies.imap.inbox${inboxNumber}`, imapErr);
+        logError(`checkReplies.imap.inbox${inboxNumber}`, imapErr, { jobName: 'checkReplies', errorType: 'api_error' });
         continue;
       }
 
@@ -94,45 +108,67 @@ export default async function checkReplies() {
           const lead = db.prepare(`SELECT * FROM leads WHERE contact_email = ?`).get(msg.from);
           if (!lead) continue; // Not from a known lead — skip
 
-          // Skip already-processed replies (by messageId)
-          const existing = db.prepare(`SELECT id FROM replies WHERE lead_id=? AND subject=? AND body=?`).get(lead.id, msg.subject, msg.text);
+          // Find matching email we sent (for email_id reference)
+          const sentEmail = db.prepare(`
+            SELECT id FROM emails WHERE lead_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
+          `).get(lead.id);
+
+          // Skip already-processed replies (dedup by lead_id + raw_text)
+          const existing = db.prepare(`SELECT id FROM replies WHERE lead_id=? AND raw_text=?`).get(lead.id, msg.text);
           if (existing) continue;
 
           // Classify via Claude Haiku
-          const { text: rawCategory, costUsd } = await callClaude('haiku', classifyPrompt(msg.text, msg.subject), { maxTokens: 10 });
+          const { text: rawJson, costUsd, model } = await callClaude('haiku', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
           totalCost += costUsd;
+          bumpMetric('haiku_cost_usd', costUsd);
 
-          // Normalize classification
-          const classification = rawCategory.trim().toLowerCase().replace(/[^a-z_]/g, '');
-          const validCategories = ['hot', 'schedule', 'soft_no', 'unsubscribe', 'ooo', 'other'];
-          const finalClassification = validCategories.includes(classification) ? classification : 'other';
+          // Parse classification result
+          let category = 'other';
+          let sentimentScore = 3;
+          try {
+            const parsed = JSON.parse(rawJson.trim());
+            category = parsed.category || 'other';
+            sentimentScore = parsed.sentiment || 3;
+          } catch {
+            // Fallback: try to extract just the category word
+            const cleaned = rawJson.trim().toLowerCase().replace(/[^a-z_]/g, '');
+            const validCategories = ['hot', 'schedule', 'soft_no', 'unsubscribe', 'ooo', 'other'];
+            category = validCategories.includes(cleaned) ? cleaned : 'other';
+          }
 
-          // Insert reply record
-          db.prepare(`
-            INSERT INTO replies (lead_id, inbox, subject, body, classification, classify_cost_usd, received_at)
-            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
-          `).run(lead.id, inboxUser, msg.subject, msg.text, finalClassification, costUsd);
+          // Insert reply record with full spec columns
+          const replyRow = db.prepare(`
+            INSERT INTO replies (
+              lead_id, email_id, inbox_received_at, received_at,
+              category, raw_text, classification_model, classification_cost_usd,
+              sentiment_score, telegram_alerted
+            ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, 0) RETURNING id
+          `).get(
+            lead.id, sentEmail?.id || null, inboxUser,
+            category, msg.text, model || 'claude-haiku-4-5', costUsd,
+            sentimentScore
+          );
 
           // Bump metrics
-          bumpMetric('replies');
+          bumpMetric('replies_total');
 
-          // Handle classification actions
-          await handleClassification(db, finalClassification, lead, msg);
+          // Handle classification actions (includes telegram_alerted update)
+          await handleClassification(db, category, lead, replyRow.id);
 
           repliesProcessed++;
         } catch (msgErr) {
-          logError('checkReplies.message', msgErr);
+          logError('checkReplies.message', msgErr, { jobName: 'checkReplies' });
         }
       }
     }
 
-    finishCron(cronId, { status: 'ok', emailsSent: repliesProcessed, costUsd: totalCost });
+    finishCron(cronId, { status: 'success', recordsProcessed: repliesProcessed, costUsd: totalCost });
     if (repliesProcessed > 0) {
       await sendAlert(`checkReplies: ${repliesProcessed} replies processed (cost $${totalCost.toFixed(4)})`);
     }
   } catch (err) {
-    logError('checkReplies', err);
-    finishCron(cronId, { status: 'error', error: err.message });
+    logError('checkReplies', err, { jobName: 'checkReplies' });
+    finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`checkReplies failed: ${err.message}`);
   }
 }

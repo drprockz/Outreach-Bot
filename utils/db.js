@@ -38,23 +38,29 @@ export function bumpMetric(field, amount = 1) {
   db.prepare(`UPDATE daily_metrics SET ${field} = ${field} + ? WHERE date = ?`).run(amount, d);
 }
 
-export function logError(source, err) {
+export function logError(source, err, { jobName, errorType, errorCode, leadId, emailId } = {}) {
   getDb().prepare(
-    `INSERT INTO error_log (source, message, stack) VALUES (?, ?, ?)`
-  ).run(source, err.message || String(err), err.stack || null);
+    `INSERT INTO error_log (source, job_name, error_type, error_code, error_message, stack_trace, lead_id, email_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(source, jobName || null, errorType || null, errorCode || null,
+        err.message || String(err), err.stack || null, leadId || null, emailId || null);
 }
 
 export function logCron(jobName) {
   const info = getDb().prepare(
-    `INSERT INTO cron_log (job_name, started_at, status) VALUES (?, datetime('now'), 'running') RETURNING id`
+    `INSERT INTO cron_log (job_name, scheduled_at, started_at, status) VALUES (?, datetime('now'), datetime('now'), 'running') RETURNING id`
   ).get(jobName);
   return info.id;
 }
 
-export function finishCron(id, { status = 'ok', leadsFound = 0, emailsSent = 0, costUsd = 0, error = null } = {}) {
+export function finishCron(id, { status = 'success', recordsProcessed = 0, recordsSkipped = 0, costUsd = 0, error = null } = {}) {
+  const row = getDb().prepare(`SELECT started_at FROM cron_log WHERE id = ?`).get(id);
+  const durationMs = row?.started_at
+    ? Date.now() - new Date(row.started_at).getTime()
+    : null;
   getDb().prepare(
-    `UPDATE cron_log SET finished_at=datetime('now'), status=?, leads_found=?, emails_sent=?, cost_usd=?, error=? WHERE id=?`
-  ).run(status, leadsFound, emailsSent, costUsd, error, id);
+    `UPDATE cron_log SET completed_at=datetime('now'), duration_ms=?, status=?, records_processed=?, records_skipped=?, cost_usd=?, error_message=? WHERE id=?`
+  ).run(durationMs, status, recordsProcessed, recordsSkipped, costUsd, error, id);
 }
 
 export function isRejected(email) {
@@ -81,8 +87,8 @@ export function todaySentCount() {
 
 export function todayBounceRate() {
   const row = getDb().prepare(
-    `SELECT emails_sent, bounces FROM daily_metrics WHERE date=?`
+    `SELECT emails_sent, emails_hard_bounced FROM daily_metrics WHERE date=?`
   ).get(today());
   if (!row || row.emails_sent === 0) return 0;
-  return row.bounces / row.emails_sent;
+  return row.emails_hard_bounced / row.emails_sent;
 }

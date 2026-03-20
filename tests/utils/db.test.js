@@ -30,7 +30,7 @@ describe('db helpers', () => {
     logError('test-source', new Error('boom'));
     const row = getDb().prepare('SELECT * FROM error_log WHERE source=?').get('test-source');
     expect(row).toBeTruthy();
-    expect(row.message).toBe('boom');
+    expect(row.error_message).toBe('boom');
   });
 
   it('isRejected returns false for unknown email', async () => {

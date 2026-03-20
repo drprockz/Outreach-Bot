@@ -2,10 +2,10 @@ import 'dotenv/config';
 import { getDb, logCron, finishCron, logError, bumpMetric, today } from './utils/db.js';
 import { sendAlert } from './utils/telegram.js';
 import { sendMail } from './utils/mailer.js';
+import nodemailer from 'nodemailer';
 
 function getMetrics(db) {
   const d = today();
-  // Ensure daily_metrics row exists
   db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
   return db.prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(d);
 }
@@ -13,15 +13,15 @@ function getMetrics(db) {
 function getReplyBreakdown(db) {
   const d = today();
   const rows = db.prepare(`
-    SELECT classification, COUNT(*) as cnt
+    SELECT category, COUNT(*) as cnt
     FROM replies
     WHERE received_at >= date(?)
-    GROUP BY classification
+    GROUP BY category
   `).all(d);
   const breakdown = { hot: 0, schedule: 0, soft_no: 0, unsubscribe: 0, ooo: 0, other: 0 };
   for (const row of rows) {
-    if (breakdown.hasOwnProperty(row.classification)) {
-      breakdown[row.classification] = row.cnt;
+    if (breakdown.hasOwnProperty(row.category)) {
+      breakdown[row.category] = row.cnt;
     }
   }
   return breakdown;
@@ -31,7 +31,7 @@ function get7dReplyRate(db) {
   const row = db.prepare(`
     SELECT
       COALESCE(SUM(emails_sent), 0) as sent,
-      COALESCE(SUM(replies), 0) as replied
+      COALESCE(SUM(replies_total), 0) as replied
     FROM daily_metrics
     WHERE date >= date('now', '-7 days')
   `).get();
@@ -42,7 +42,7 @@ function get7dReplyRate(db) {
 function getCronStatus(db) {
   const d = today();
   return db.prepare(`
-    SELECT job_name, status, started_at, finished_at, error
+    SELECT job_name, status, started_at, completed_at, duration_ms, error_message
     FROM cron_log
     WHERE started_at >= date(?)
     ORDER BY started_at DESC
@@ -51,7 +51,7 @@ function getCronStatus(db) {
 
 function getErrorCount(db) {
   const d = today();
-  const row = db.prepare(`SELECT COUNT(*) as cnt FROM error_log WHERE created_at >= date(?) AND resolved=0`).get(d);
+  const row = db.prepare(`SELECT COUNT(*) as cnt FROM error_log WHERE occurred_at >= date(?) AND resolved=0`).get(d);
   return row?.cnt || 0;
 }
 
@@ -61,19 +61,19 @@ function formatInr(usd) {
 
 function buildTelegramSummary(metrics, replyBreakdown) {
   const bounceRate = metrics.emails_sent > 0
-    ? ((metrics.bounces / metrics.emails_sent) * 100).toFixed(1)
+    ? ((metrics.emails_hard_bounced / metrics.emails_sent) * 100).toFixed(1)
     : '0.0';
   const replyRate = metrics.emails_sent > 0
-    ? ((metrics.replies / metrics.emails_sent) * 100).toFixed(1)
+    ? ((metrics.replies_total / metrics.emails_sent) * 100).toFixed(1)
     : '0.0';
-  const costInr = formatInr(metrics.total_cost_usd || 0);
+  const costInr = formatInr(metrics.total_api_cost_usd || 0);
 
   const d = today();
   const dateStr = new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 
   return [
     `Radar -- ${dateStr}`,
-    `Found: ${metrics.leads_found} | Sent: ${metrics.emails_sent} | Replied: ${metrics.replies}`,
+    `Found: ${metrics.leads_discovered} | Sent: ${metrics.emails_sent} | Replied: ${metrics.replies_total}`,
     `Hot: ${replyBreakdown.hot} | Schedule: ${replyBreakdown.schedule} | Unsub: ${replyBreakdown.unsubscribe}`,
     `Reply rate: ${replyRate}% | Bounce: ${bounceRate}% | Cost: Rs ${costInr}`
   ].join('\n');
@@ -81,7 +81,7 @@ function buildTelegramSummary(metrics, replyBreakdown) {
 
 function buildHtmlReport(metrics, replyBreakdown, cronJobs, errorCount, replyRate7d) {
   const bounceRate = metrics.emails_sent > 0
-    ? ((metrics.bounces / metrics.emails_sent) * 100).toFixed(2)
+    ? ((metrics.emails_hard_bounced / metrics.emails_sent) * 100).toFixed(2)
     : '0.00';
 
   return `<!DOCTYPE html>
@@ -102,13 +102,33 @@ th{background:#f5f5f5;font-weight:600}
 <body>
 <h1>Radar Daily Report &mdash; ${today()}</h1>
 
-<h2>Funnel</h2>
+<h2>Lead Funnel</h2>
 <div>
-  <div class="card"><label>Leads Found</label><div class="metric">${metrics.leads_found}</div></div>
-  <div class="card"><label>Emails Sent</label><div class="metric">${metrics.emails_sent}</div></div>
-  <div class="card"><label>Replies</label><div class="metric">${metrics.replies}</div></div>
-  <div class="card"><label>Hot Leads</label><div class="metric ${replyBreakdown.hot > 0 ? 'green' : ''}">${replyBreakdown.hot}</div></div>
+  <div class="card"><label>Discovered</label><div class="metric">${metrics.leads_discovered}</div></div>
+  <div class="card"><label>Extracted</label><div class="metric">${metrics.leads_extracted}</div></div>
+  <div class="card"><label>Judge Passed</label><div class="metric">${metrics.leads_judge_passed}</div></div>
+  <div class="card"><label>Email Found</label><div class="metric">${metrics.leads_email_found}</div></div>
+  <div class="card"><label>Email Valid</label><div class="metric">${metrics.leads_email_valid}</div></div>
+  <div class="card"><label>ICP A+B</label><div class="metric">${metrics.leads_icp_ab}</div></div>
+  <div class="card"><label>Ready</label><div class="metric">${metrics.leads_ready}</div></div>
 </div>
+
+<h2>Send Funnel</h2>
+<div>
+  <div class="card"><label>Attempted</label><div class="metric">${metrics.emails_attempted}</div></div>
+  <div class="card"><label>Sent</label><div class="metric">${metrics.emails_sent}</div></div>
+  <div class="card"><label>Hard Bounced</label><div class="metric ${metrics.emails_hard_bounced > 0 ? 'red' : ''}">${metrics.emails_hard_bounced}</div></div>
+  <div class="card"><label>Soft Bounced</label><div class="metric ${metrics.emails_soft_bounced > 0 ? 'amber' : ''}">${metrics.emails_soft_bounced}</div></div>
+  <div class="card"><label>Rejected</label><div class="metric">${metrics.emails_content_rejected}</div></div>
+  <div class="card"><label>Follow-ups</label><div class="metric">${metrics.followups_sent}</div></div>
+</div>
+
+<h2>Inbox Breakdown</h2>
+<table>
+<tr><th>Inbox</th><th>Sent</th></tr>
+<tr><td>darshan@trysimpleinc.com</td><td>${metrics.sent_inbox_1}</td></tr>
+<tr><td>hello@trysimpleinc.com</td><td>${metrics.sent_inbox_2}</td></tr>
+</table>
 
 <h2>Reply Breakdown</h2>
 <table>
@@ -119,6 +139,7 @@ th{background:#f5f5f5;font-weight:600}
 <tr><td>Unsubscribe</td><td>${replyBreakdown.unsubscribe}</td></tr>
 <tr><td>OOO</td><td>${replyBreakdown.ooo}</td></tr>
 <tr><td>Other</td><td>${replyBreakdown.other}</td></tr>
+<tr><th>Total</th><th>${metrics.replies_total}</th></tr>
 </table>
 
 <h2>Health</h2>
@@ -135,13 +156,17 @@ th{background:#f5f5f5;font-weight:600}
 <tr><td>Gemini Flash</td><td>$${(metrics.gemini_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.gemini_cost_usd || 0)}</td></tr>
 <tr><td>Claude Sonnet</td><td>$${(metrics.sonnet_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.sonnet_cost_usd || 0)}</td></tr>
 <tr><td>Claude Haiku</td><td>$${(metrics.haiku_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.haiku_cost_usd || 0)}</td></tr>
-<tr><th>Total</th><th>$${(metrics.total_cost_usd || 0).toFixed(4)}</th><th>Rs ${formatInr(metrics.total_cost_usd || 0)}</th></tr>
+<tr><td>MEV</td><td>$${(metrics.mev_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.mev_cost_usd || 0)}</td></tr>
+<tr><th>Total</th><th>$${(metrics.total_api_cost_usd || 0).toFixed(4)}</th><th>Rs ${formatInr(metrics.total_api_cost_usd || 0)}</th></tr>
 </table>
 
 <h2>Cron Jobs Today</h2>
 <table>
-<tr><th>Job</th><th>Status</th><th>Started</th><th>Finished</th><th>Error</th></tr>
-${cronJobs.map(j => `<tr><td>${j.job_name}</td><td>${j.status}</td><td>${j.started_at || '-'}</td><td>${j.finished_at || '-'}</td><td>${j.error || '-'}</td></tr>`).join('\n')}
+<tr><th>Job</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th>Error</th></tr>
+${cronJobs.map(j => {
+  const dur = j.duration_ms ? `${(j.duration_ms / 1000).toFixed(1)}s` : '-';
+  return `<tr><td>${j.job_name}</td><td>${j.status}</td><td>${j.started_at || '-'}</td><td>${j.completed_at || '-'}</td><td>${dur}</td><td>${j.error_message || '-'}</td></tr>`;
+}).join('\n')}
 </table>
 
 <p style="color:#999;font-size:12px;margin-top:24px">Generated by Radar &mdash; Simple Inc</p>
@@ -159,27 +184,46 @@ export default async function dailyReport() {
     const cronJobs = getCronStatus(db);
     const errorCount = getErrorCount(db);
 
-    // Send Telegram one-liner
+    // Update rolling rates in daily_metrics
+    const bounceRate = metrics.emails_sent > 0 ? metrics.emails_hard_bounced / metrics.emails_sent : 0;
+    const unsubRate = metrics.emails_sent > 0 ? metrics.replies_unsubscribe / metrics.emails_sent : 0;
+    db.prepare(`UPDATE daily_metrics SET bounce_rate=?, reply_rate=?, unsubscribe_rate=?, total_api_cost_inr=total_api_cost_usd*85 WHERE date=?`).run(
+      bounceRate, replyRate7d / 100, unsubRate, today()
+    );
+
+    // Send Telegram one-liner (spec §10)
     const telegramMsg = buildTelegramSummary(metrics, replyBreakdown);
     await sendAlert(telegramMsg);
 
     // Send HTML email digest to darshan@simpleinc.in
     const htmlReport = buildHtmlReport(metrics, replyBreakdown, cronJobs, errorCount, replyRate7d);
     try {
-      await sendMail(1, {
+      // Use nodemailer directly for HTML report (not via sendMail which is outreach-only)
+      const transport = nodemailer.createTransport({
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: false,
+        auth: {
+          user: process.env.INBOX_1_USER,
+          pass: process.env.INBOX_1_PASS
+        }
+      });
+
+      await transport.sendMail({
+        from: `Radar <${process.env.INBOX_1_USER}>`,
         to: 'darshan@simpleinc.in',
         subject: `Radar Report — ${today()}`,
-        text: telegramMsg, // plain text fallback
+        text: telegramMsg,
+        html: htmlReport
       });
     } catch (mailErr) {
-      // Email sending for report is not critical — log and continue
-      logError('dailyReport.email', mailErr);
+      logError('dailyReport.email', mailErr, { jobName: 'dailyReport' });
     }
 
-    finishCron(cronId, { status: 'ok' });
+    finishCron(cronId, { status: 'success' });
   } catch (err) {
-    logError('dailyReport', err);
-    finishCron(cronId, { status: 'error', error: err.message });
+    logError('dailyReport', err, { jobName: 'dailyReport' });
+    finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`dailyReport failed: ${err.message}`);
   }
 }

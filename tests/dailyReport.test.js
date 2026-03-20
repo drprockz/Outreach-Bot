@@ -8,6 +8,15 @@ vi.mock('../utils/mailer.js', () => ({
 }));
 vi.mock('../utils/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
 
+const mockSendMail = vi.fn(async () => ({ messageId: '<report@test.com>' }));
+vi.mock('nodemailer', () => ({
+  default: {
+    createTransport: vi.fn(() => ({
+      sendMail: mockSendMail
+    }))
+  }
+}));
+
 let tmpDir;
 beforeEach(async () => {
   vi.clearAllMocks();
@@ -21,7 +30,7 @@ beforeEach(async () => {
   initSchema();
   // Seed some metrics
   const d = today();
-  getDb().prepare(`INSERT INTO daily_metrics (date, leads_found, emails_sent, replies, hot_replies, bounces, total_cost_usd) VALUES (?, 25, 10, 3, 1, 0, 0.15)`).run(d);
+  getDb().prepare(`INSERT INTO daily_metrics (date, leads_discovered, emails_sent, replies_total, replies_hot, emails_hard_bounced, total_api_cost_usd) VALUES (?, 25, 10, 3, 1, 0, 0.15)`).run(d);
 });
 
 afterEach(async () => {
@@ -43,10 +52,9 @@ describe('dailyReport', () => {
   });
 
   it('attempts to send email digest', async () => {
-    const { sendMail } = await import('../utils/mailer.js');
     const dailyReport = (await import('../dailyReport.js')).default;
     await dailyReport();
-    expect(sendMail).toHaveBeenCalledWith(1, expect.objectContaining({
+    expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'darshan@simpleinc.in',
       subject: expect.stringContaining('Radar Report')
     }));
@@ -58,7 +66,7 @@ describe('dailyReport', () => {
     const { getDb } = await import('../utils/db.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='dailyReport'`).all();
     expect(cronEntries.length).toBe(1);
-    expect(cronEntries[0].status).toBe('ok');
+    expect(cronEntries[0].status).toBe('success');
   });
 
   it('handles missing metrics gracefully', async () => {

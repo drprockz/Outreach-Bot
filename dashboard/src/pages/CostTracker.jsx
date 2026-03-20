@@ -103,18 +103,21 @@ export default function CostTracker() {
   }
 
   const monthly = data.monthly || {};
+  const totalCost = monthly.total_api_cost_usd || monthly.total_cost_usd || 0;
   const daily = (data.daily || []).map(d => ({
     ...d,
     date: d.date ? d.date.slice(5) : '',
     gemini: d.gemini_cost_usd || 0,
     sonnet: d.sonnet_cost_usd || 0,
     haiku: d.haiku_cost_usd || 0,
+    mev: d.mev_cost_usd || 0,
   }));
 
   const costTable = [
     { service: 'Gemini Flash', cost: monthly.gemini_cost_usd || 0, color: '#60a5fa' },
     { service: 'Claude Sonnet', cost: monthly.sonnet_cost_usd || 0, color: '#f87171' },
     { service: 'Claude Haiku', cost: monthly.haiku_cost_usd || 0, color: '#facc15' },
+    { service: 'MyEmailVerifier', cost: monthly.mev_cost_usd || 0, color: '#a78bfa' },
   ];
 
   return (
@@ -124,8 +127,8 @@ export default function CostTracker() {
       <div style={gridStyle}>
         <StatCard
           label="Monthly Total"
-          value={`$${(monthly.total_cost_usd || 0).toFixed(2)}`}
-          sub={`~INR ${((monthly.total_cost_usd || 0) * usdToInr).toFixed(0)}`}
+          value={`$${totalCost.toFixed(2)}`}
+          sub={`~INR ${(totalCost * usdToInr).toFixed(0)}`}
           color="#facc15"
         />
         <StatCard
@@ -166,6 +169,7 @@ export default function CostTracker() {
               <Bar dataKey="gemini" name="Gemini" stackId="costs" fill="#60a5fa" />
               <Bar dataKey="sonnet" name="Sonnet" stackId="costs" fill="#f87171" />
               <Bar dataKey="haiku" name="Haiku" stackId="costs" fill="#facc15" />
+              <Bar dataKey="mev" name="MEV" stackId="costs" fill="#a78bfa" />
             </BarChart>
           </ResponsiveContainer>
         ) : (
@@ -188,8 +192,8 @@ export default function CostTracker() {
           </thead>
           <tbody>
             {costTable.map((item, i) => {
-              const pct = (monthly.total_cost_usd || 0) > 0
-                ? ((item.cost / monthly.total_cost_usd) * 100).toFixed(1)
+              const pct = totalCost > 0
+                ? ((item.cost / totalCost) * 100).toFixed(1)
                 : '0.0';
               return (
                 <tr key={item.service} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
@@ -205,8 +209,8 @@ export default function CostTracker() {
             })}
             <tr style={{ borderTop: '1px solid #333' }}>
               <td style={{ ...tdStyle, fontWeight: 600 }}>Total</td>
-              <td style={{ ...tdStyle, fontWeight: 600, color: '#facc15' }}>${(monthly.total_cost_usd || 0).toFixed(4)}</td>
-              <td style={{ ...tdStyle, fontWeight: 600, color: '#888' }}>INR {((monthly.total_cost_usd || 0) * usdToInr).toFixed(2)}</td>
+              <td style={{ ...tdStyle, fontWeight: 600, color: '#facc15' }}>${totalCost.toFixed(4)}</td>
+              <td style={{ ...tdStyle, fontWeight: 600, color: '#888' }}>INR {(totalCost * usdToInr).toFixed(2)}</td>
               <td style={{ ...tdStyle, color: '#888' }}>100%</td>
             </tr>
           </tbody>
