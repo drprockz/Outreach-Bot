@@ -115,6 +115,9 @@ DB_PATH=/home/radar/db/radar.sqlite
 # ── DASHBOARD ───────────────────────────────────────────────
 DASHBOARD_PORT=3001
 DASHBOARD_URL=https://radar.simpleinc.cloud
+DASHBOARD_PASSWORD=your_strong_password_here
+JWT_SECRET=your_random_64char_secret_here
+JWT_EXPIRES_IN=7d
 ```
 
 ---
@@ -437,7 +440,7 @@ module.exports = {
 **Purpose:** 150 raw leads/day → ~34 qualified, verified, scored, email-ready leads.
 
 **Model assignment:**
-- Stages 1–5, 9: Gemini 2.5 Flash (search grounding free tier — 150 < 1,500/day limit)
+- Stages 1–6, 9: Gemini 2.5 Flash (search grounding free tier — 150 < 1,500/day limit)
 - Stage 10 (hook): Claude Sonnet 4.6
 - Stage 11 (email body): Claude Haiku 4.5
 
