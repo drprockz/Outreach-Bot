@@ -67,5 +67,5 @@ export async function callClaude(model, prompt, { systemPrompt, maxTokens = 1024
   db.prepare(`UPDATE daily_metrics SET ${col}=${col}+?, total_api_cost_usd=total_api_cost_usd+? WHERE date=?`)
     .run(costUsd, costUsd, d);
 
-  return { text, costUsd, inputTokens, outputTokens };
+  return { text, costUsd, inputTokens, outputTokens, model: MODEL_IDS[model] };
 }
