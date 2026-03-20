@@ -1,5 +1,7 @@
 # .env
-db/
+db/*.sqlite
+db/*.sqlite-wal
+db/*.sqlite-shm
 node_modules/
 dashboard/node_modules/
 dashboard/dist/
