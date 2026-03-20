@@ -4,8 +4,8 @@ import { initSchema } from './utils/db.js';
 
 initSchema();
 
-// 8:00 AM IST Mon-Sat — Find leads
-cron.schedule('0 8 * * 1-6', () => {
+// 9:00 AM IST Mon-Sat — Find leads
+cron.schedule('0 9 * * 1-6', () => {
   import('./findLeads.js').then(m => m.default()).catch(console.error);
 }, { timezone: 'Asia/Kolkata' });
 
@@ -44,8 +44,8 @@ cron.schedule('0 2 * * 0', () => {
   import('./healthCheck.js').then(m => m.default()).catch(console.error);
 }, { timezone: 'Asia/Kolkata' });
 
-// Midnight IST daily — Backup
-cron.schedule('0 0 * * *', () => {
+// 2:00 AM IST daily — Backup
+cron.schedule('0 2 * * *', () => {
   import('child_process').then(({ exec }) => {
     exec('./backup.sh', (err) => {
       if (err) {
