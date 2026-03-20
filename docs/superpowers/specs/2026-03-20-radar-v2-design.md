@@ -68,7 +68,7 @@ Nginx proxies `radar.simpleinc.cloud` → port 3001 for `/api/*`, serves React S
 
 ---
 
-## 3. Database Schema (10 tables)
+## 3. Database Schema (9 tables)
 
 Full DDL in CLAUDE.md §4. Summary of tables:
 
@@ -94,7 +94,7 @@ Database singleton in `utils/db.js` — initialises schema on first run, WAL mod
 
 ### 11-stage pipeline (150 raw → 34 email-ready)
 
-**Stages 1–9 use Gemini 2.5 Flash (free grounding, 150/day << 1,500/day limit):**
+**Stages 1–6, 9 use Gemini 2.5 Flash (free grounding, 150/day << 1,500/day limit). Stage 7 uses MEV REST API. Stage 8 is SQLite-only (dedup check).**
 
 | Stage | Action | Gate |
 |---|---|---|
@@ -151,7 +151,9 @@ On fail: regenerate once. Second fail → skip lead, log `content_rejected` to `
 ### Layer 4: Health monitor (`healthCheck.js`, runs Sunday 2AM)
 - DNS blacklist check: `dbl.spamhaus.org`, `b.barracudacentral.org`, `multi.surbl.org`
 - If listed → `DAILY_SEND_LIMIT=0` + Telegram 🚨
-- Bounce rate >2% → auto-pause + Telegram 🚨 (checked before each send in `sendEmails.js`)
+- Bounce rate >2% (`BOUNCE_RATE_HARD_STOP`) → auto-pause + Telegram 🚨 (checked before each send in `sendEmails.js`)
+- Unsub rate >1.0% rolling 7d → Telegram ⚠️ warning
+- Spam rate >0.1% (`SPAM_RATE_HARD_STOP`) → `DAILY_SEND_LIMIT=0` + Telegram 🚨
 
 ---
 
@@ -206,7 +208,7 @@ Runs 8:30 PM IST.
 2. Send Telegram one-liner (format in CLAUDE.md §10)
 3. Generate HTML email report via Claude Haiku
 4. Send HTML digest to `darshan@simpleinc.in` via GWS SMTP
-5. Store HTML + metrics in `daily_metrics` table
+5. Store aggregated metrics in `daily_metrics` table (no HTML column — HTML is sent via email only)
 
 ---
 
@@ -216,7 +218,7 @@ Runs 8:30 PM IST.
 |---|---|
 | `utils/db.js` | `better-sqlite3` singleton, `initSchema()`, WAL mode, named query helpers |
 | `utils/gemini.js` | `@google/generative-ai` client, all Gemini calls, INR cost tracker |
-| `utils/claude.js` | `@anthropic-ai/sdk` client, Sonnet + Haiku calls, USD/INR cost tracker |
+| `utils/claude.js` | `@anthropic-ai/sdk` client, Sonnet + Haiku calls, USD/INR cost tracker. Before every call, check today's `sonnet_cost_usd + haiku_cost_usd` from `daily_metrics` against `CLAUDE_DAILY_SPEND_CAP`. If exceeded, throw and log to `error_log` — do not make the call. |
 | `utils/mailer.js` | Two Nodemailer transporters (inbox1, inbox2), `sendMail(inbox, opts)` |
 | `utils/imap.js` | imapflow, `fetchUnseen(inbox)` → message array |
 | `utils/telegram.js` | `node-telegram-bot-api`, `sendAlert(msg)` — stubs to console.log if no token |
@@ -230,6 +232,8 @@ Runs 8:30 PM IST.
 ## 10. Dashboard API (`dashboard/server.js`)
 
 Express on port 3001. JWT auth (single password). All routes except `/api/auth/login` require `Authorization: Bearer <token>`.
+
+Env vars: `DASHBOARD_PASSWORD` (bcrypt-compared on login), `JWT_SECRET` (signing key), `JWT_EXPIRES_IN` (default `7d`). These must be in `.env.example` and set in Phase 1.
 
 ### API routes
 
@@ -300,5 +304,6 @@ Express on port 3001. JWT auth (single password). All routes except `/api/auth/l
 ## 13. Open Items
 
 - **Telegram bot:** `TELEGRAM_BOT_TOKEN` not yet configured. `utils/telegram.js` must stub gracefully (console.log) when token absent — no errors thrown.
-- **Warmup period:** `DAILY_SEND_LIMIT=0` in `.env` until Week 5. Instantly Growth warmup runs independently on both inboxes.
+- **Warmup period:** `DAILY_SEND_LIMIT=0` in `.env` until Week 5. Instantly Growth warmup runs independently on both inboxes. Deployment ramp: Weeks 1–4 = 0 (warmup only), Week 5 = 20/day, Week 6 = 28/day, Week 7+ = 34/day (17/inbox).
+- **Blocked holidays:** Diwali week, Holi, Republic Day (26 Jan), Independence Day (15 Aug). Hardcoded in `sendEmails.js` send-window check.
 - **Backblaze B2:** `backup.sh` uses `rclone` — credentials configured separately on VPS, not in this repo.
