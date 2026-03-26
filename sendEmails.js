@@ -7,7 +7,15 @@ import { sendAlert } from './utils/telegram.js';
 import { sleep } from './utils/sleep.js';
 
 // ── Indian holidays (MM-DD) ──────────────────────────────
-const HOLIDAYS = ['01-26', '08-15', '10-02'];
+// Includes Republic Day, Holi (~mid-Mar), Independence Day, Gandhi Jayanti, Diwali week (~late Oct/Nov)
+const HOLIDAYS = [
+  '01-26',                                          // Republic Day
+  '03-14', '03-15',                                 // Holi (approx — update yearly)
+  '08-15',                                          // Independence Day
+  '10-02',                                          // Gandhi Jayanti
+  '10-20', '10-21', '10-22', '10-23', '10-24',     // Diwali week (approx — update yearly)
+  '10-25', '10-26'
+];
 
 function isHoliday(istDate) {
   const mmdd = String(istDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
@@ -27,8 +35,8 @@ function inSendWindow() {
   const currentTime = hour + minute / 60;
   const startEnv = process.env.SEND_WINDOW_START_IST;
   const endEnv = process.env.SEND_WINDOW_END_IST;
-  const windowStart = startEnv !== undefined ? parseFloat(startEnv) : 9.5; // default 9:30 AM
-  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM
+  const windowStart = startEnv !== undefined ? parseFloat(startEnv) + 0.5 : 9.5; // default 9:30 AM (env=9 → 9.5)
+  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM (env=17 → 17.5)
   return currentTime >= windowStart && currentTime < windowEnd;
 }
 
@@ -133,7 +141,7 @@ Return only the email body, no subject line.`,
             { maxTokens: 200 }
           );
           totalCost += costUsd;
-          bumpMetric('haiku_cost_usd', costUsd);
+          // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
           const retryValidation = validate(emailSubject, newBody, 0);
           if (!retryValidation.valid) {
@@ -188,8 +196,8 @@ Return only the email body, no subject line.`,
           regenerated, messageId, sendDuration, item.email_id
         );
 
-        // Update lead status
-        db.prepare(`UPDATE leads SET status='sent' WHERE id=?`).run(item.id);
+        // Update lead status + domain_last_contacted
+        db.prepare(`UPDATE leads SET status='sent', domain_last_contacted=datetime('now') WHERE id=?`).run(item.id);
 
         // Initialise sequence_state for follow-ups
         db.prepare(`

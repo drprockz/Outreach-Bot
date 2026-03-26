@@ -14,13 +14,11 @@ import ErrorLog from './pages/ErrorLog';
 
 function ProtectedLayout() {
   const token = localStorage.getItem('radar_token');
-  if (!token) {
-    return <Navigate to="/login" replace />;
-  }
+  if (!token) return <Navigate to="/login" replace />;
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#0f0f0f' }}>
+    <div className="app-shell">
       <Sidebar />
-      <main style={{ flex: 1, padding: '24px 32px', overflowY: 'auto', maxHeight: '100vh' }}>
+      <main className="main-content">
         <Outlet />
       </main>
     </div>

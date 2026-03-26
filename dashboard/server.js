@@ -4,13 +4,16 @@ import jwt from 'jsonwebtoken';
 import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { getDb, today } from '../utils/db.js';
+import { getDb, today, initSchema } from '../utils/db.js';
 import 'dotenv/config';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 app.use(express.json());
+
+// Ensure all tables exist (safe to run on existing DB — uses CREATE TABLE IF NOT EXISTS)
+initSchema();
 
 // ── Password hash (computed once at startup) ──────────────────────────────
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'radar';
@@ -82,7 +85,7 @@ app.get('/api/overview', (req, res) => {
   const funnel = db.prepare(`
     SELECT
       COUNT(*) AS total,
-      SUM(CASE WHEN status != 'discovered' THEN 1 ELSE 0 END) AS extracted,
+      SUM(CASE WHEN status NOT IN ('discovered', 'extraction_failed') THEN 1 ELSE 0 END) AS extracted,
       SUM(CASE WHEN website_quality_score IS NOT NULL THEN 1 ELSE 0 END) AS judged,
       SUM(CASE WHEN contact_email IS NOT NULL THEN 1 ELSE 0 END) AS email_found,
       SUM(CASE WHEN email_status = 'valid' OR email_status = 'catch-all' THEN 1 ELSE 0 END) AS email_valid,
@@ -248,16 +251,18 @@ app.get('/api/send-log', (req, res) => {
     LIMIT ? OFFSET ?
   `).all(...params, limit, offset);
 
+  // Aggregates respect the same filters as the main query
   const agg = db.prepare(`
     SELECT
       COUNT(*) AS total_sent,
-      SUM(CASE WHEN status = 'hard_bounce' THEN 1 ELSE 0 END) AS hard_bounces,
-      SUM(CASE WHEN status = 'soft_bounce' THEN 1 ELSE 0 END) AS soft_bounces,
-      SUM(CASE WHEN status = 'content_rejected' THEN 1 ELSE 0 END) AS content_rejected,
-      COALESCE(AVG(send_duration_ms), 0) AS avg_duration_ms,
-      COALESCE(SUM(total_cost_usd), 0) AS total_cost
-    FROM emails
-  `).get();
+      SUM(CASE WHEN e.status = 'hard_bounce' THEN 1 ELSE 0 END) AS hard_bounces,
+      SUM(CASE WHEN e.status = 'soft_bounce' THEN 1 ELSE 0 END) AS soft_bounces,
+      SUM(CASE WHEN e.status = 'content_rejected' THEN 1 ELSE 0 END) AS content_rejected,
+      COALESCE(AVG(e.send_duration_ms), 0) AS avg_duration_ms,
+      COALESCE(SUM(e.total_cost_usd), 0) AS total_cost
+    FROM emails e
+    ${whereClause}
+  `).get(...params);
 
   res.json({ emails, total, page, limit, aggregates: agg });
 });
@@ -379,7 +384,11 @@ app.get('/api/cron-status', (req, res) => {
     if (!log) {
       const [schedHour, schedMin] = sched.time.split(':').map(Number);
       const schedTime = schedHour * 60 + schedMin;
-      if (currentIstTime < schedTime + 30) {
+      // Check day-of-week for Sunday-only jobs (e.g., healthCheck)
+      const istDay = ist.getUTCDay(); // 0=Sunday
+      if (sched.day === 'sunday' && istDay !== 0) {
+        status = 'pending'; // Not a Sunday — don't flag as NOT TRIGGERED
+      } else if (currentIstTime < schedTime + 30) {
         status = 'pending'; // Not yet time
       }
     }
@@ -461,6 +470,7 @@ app.get('/api/health', (req, res) => {
     domain: process.env.OUTREACH_DOMAIN || 'trysimpleinc.com',
     blacklisted: blacklistStatus === 1,
     blacklistZones,
+    postmasterReputation: todayMetrics?.postmaster_reputation || null,
     mailTesterScore: mailTester?.mail_tester_score || null,
     mailTesterDate: mailTester?.date || null,
     inboxes: {

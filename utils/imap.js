@@ -28,7 +28,7 @@ export async function fetchUnseen(inboxNumber) {
     await client.connect();
     await client.mailboxOpen('INBOX');
 
-    for await (const msg of client.fetch({ seen: false }, { source: true })) {
+    for await (const msg of client.fetch({ seen: false }, { source: true, uid: true })) {
       const parsed = await simpleParser(msg.source);
       messages.push({
         uid: msg.uid,
@@ -38,6 +38,9 @@ export async function fetchUnseen(inboxNumber) {
         date: parsed.date,
         messageId: parsed.messageId || ''
       });
+
+      // Mark as seen so we don't re-process on next run (prevents 3x Haiku calls/day)
+      await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
     }
   } finally {
     await client.logout();

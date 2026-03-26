@@ -10,10 +10,15 @@ function getBot() {
 }
 
 export async function sendAlert(message) {
-  const bot = getBot();
-  if (!bot || !process.env.TELEGRAM_CHAT_ID) {
-    console.log('[Telegram stub]', message);
-    return;
+  try {
+    const bot = getBot();
+    if (!bot || !process.env.TELEGRAM_CHAT_ID) {
+      console.log('[Telegram stub]', message);
+      return;
+    }
+    await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, message);
+  } catch (err) {
+    // Never let Telegram failures crash the calling engine
+    console.error('[Telegram error]', err.message);
   }
-  await bot.sendMessage(process.env.TELEGRAM_CHAT_ID, message);
 }

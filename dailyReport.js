@@ -59,23 +59,21 @@ function formatInr(usd) {
   return (usd * 85).toFixed(0);
 }
 
-function buildTelegramSummary(metrics, replyBreakdown) {
+function buildTelegramSummary(metrics, replyBreakdown, replyRate7d) {
   const bounceRate = metrics.emails_sent > 0
     ? ((metrics.emails_hard_bounced / metrics.emails_sent) * 100).toFixed(1)
     : '0.0';
-  const replyRate = metrics.emails_sent > 0
-    ? ((metrics.replies_total / metrics.emails_sent) * 100).toFixed(1)
-    : '0.0';
+  const replyRate = replyRate7d.toFixed(1);
   const costInr = formatInr(metrics.total_api_cost_usd || 0);
 
   const d = today();
   const dateStr = new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 
   return [
-    `Radar -- ${dateStr}`,
-    `Found: ${metrics.leads_discovered} | Sent: ${metrics.emails_sent} | Replied: ${metrics.replies_total}`,
-    `Hot: ${replyBreakdown.hot} | Schedule: ${replyBreakdown.schedule} | Unsub: ${replyBreakdown.unsubscribe}`,
-    `Reply rate: ${replyRate}% | Bounce: ${bounceRate}% | Cost: Rs ${costInr}`
+    `📊 Radar — ${dateStr}`,
+    `🔍 Found: ${metrics.leads_discovered} → ✉️ Sent: ${metrics.emails_sent} → 💬 Replied: ${metrics.replies_total}`,
+    `🔥 Hot: ${replyBreakdown.hot} | 📅 Schedule: ${replyBreakdown.schedule} | 🚫 Unsub: ${replyBreakdown.unsubscribe}`,
+    `📈 Reply rate: ${replyRate}% | Bounce: ${bounceRate}% | Cost: ₹${costInr}`
   ].join('\n');
 }
 
@@ -192,7 +190,7 @@ export default async function dailyReport() {
     );
 
     // Send Telegram one-liner (spec §10)
-    const telegramMsg = buildTelegramSummary(metrics, replyBreakdown);
+    const telegramMsg = buildTelegramSummary(metrics, replyBreakdown, replyRate7d);
     await sendAlert(telegramMsg);
 
     // Send HTML email digest to darshan@simpleinc.in

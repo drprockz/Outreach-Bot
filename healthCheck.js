@@ -26,7 +26,7 @@ export default async function healthCheck() {
     );
 
     if (!clean) {
-      await sendAlert(`BLACKLIST: ${DOMAIN} listed on: ${zones.join(', ')} — sending paused`);
+      await sendAlert(`🚨 BLACKLIST: ${DOMAIN} listed on: ${zones.join(', ')} — sending paused`);
       // Persist DAILY_SEND_LIMIT=0 by writing to .env file so it survives PM2 restarts
       try {
         const envPath = process.env.ENV_PATH || '.env';
@@ -48,7 +48,7 @@ export default async function healthCheck() {
     `).get();
     const bounceRate = rows?.sent > 0 ? (rows.bounced / rows.sent) : 0;
     if (bounceRate > parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02')) {
-      await sendAlert(`BOUNCE RATE ${(bounceRate * 100).toFixed(2)}% exceeds threshold — sending paused`);
+      await sendAlert(`🚨 BOUNCE RATE ${(bounceRate * 100).toFixed(2)}% exceeds threshold — sending paused`);
       try {
         const envPath = process.env.ENV_PATH || '.env';
         let envContent = readFileSync(envPath, 'utf8');
@@ -67,7 +67,7 @@ export default async function healthCheck() {
     `).get();
     const unsubRate = rows?.sent > 0 ? ((replyRows?.unsubs || 0) / rows.sent) : 0;
     if (unsubRate > 0.01) {
-      await sendAlert(`UNSUB RATE ${(unsubRate * 100).toFixed(2)}% exceeds 1.0% — monitor closely`);
+      await sendAlert(`⚠️ UNSUB RATE ${(unsubRate * 100).toFixed(2)}% exceeds 1.0% — monitor closely`);
     }
 
     const summary = `healthCheck: blacklist=${clean ? 'clean' : 'LISTED'}, bounce=${(bounceRate * 100).toFixed(2)}%, unsub=${(unsubRate * 100).toFixed(2)}%`;

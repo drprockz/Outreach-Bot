@@ -2,15 +2,17 @@ import Anthropic from '@anthropic-ai/sdk';
 import 'dotenv/config';
 import { getDb, today, logError } from './db.js';
 
-// Pricing per 1M tokens
+// Pricing per 1M tokens (Haiku 4.5: $1.00/$5.00, Sonnet 4: $3.00/$15.00)
 const PRICING = {
-  sonnet: { input: 3.00, output: 15.00 },
-  haiku:  { input: 0.80, output: 4.00  }
+  sonnet:   { input: 3.00, output: 15.00 },
+  haiku:    { input: 1.00, output: 5.00  },
+  classify: { input: 1.00, output: 5.00  }  // same as haiku; independently switchable via MODEL_CLASSIFY
 };
 
 const MODEL_IDS = {
-  sonnet: 'claude-sonnet-4-20250514',
-  haiku:  'claude-haiku-4-5-20251001'
+  sonnet:   process.env.MODEL_HOOK     || 'claude-sonnet-4-20250514',
+  haiku:    process.env.MODEL_BODY     || 'claude-haiku-4-5-20251001',
+  classify: process.env.MODEL_CLASSIFY || 'claude-haiku-4-5-20251001'
 };
 
 let _client;
@@ -63,7 +65,7 @@ export async function callClaude(model, prompt, { systemPrompt, maxTokens = 1024
   const db = getDb();
   const d = today();
   db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-  const col = model === 'sonnet' ? 'sonnet_cost_usd' : 'haiku_cost_usd';
+  const col = model === 'sonnet' ? 'sonnet_cost_usd' : 'haiku_cost_usd'; // classify uses haiku pricing
   db.prepare(`UPDATE daily_metrics SET ${col}=${col}+?, total_api_cost_usd=total_api_cost_usd+? WHERE date=?`)
     .run(costUsd, costUsd, d);
 

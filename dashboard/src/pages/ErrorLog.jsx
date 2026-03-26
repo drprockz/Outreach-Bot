@@ -1,122 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 
-const pageTitle = {
-  fontSize: '20px',
-  fontWeight: 600,
-  color: '#e0e0e0',
-  marginBottom: '24px',
-  fontFamily: 'IBM Plex Mono, monospace',
+const sourceBadge = {
+  findLeads: 'badge-blue', sendEmails: 'badge-green', sendFollowups: 'badge-amber',
+  checkReplies: 'badge-orange', dailyReport: 'badge-purple', healthCheck: 'badge-red', backup: 'badge-muted',
 };
 
-const filterRow = {
-  display: 'flex',
-  gap: '12px',
-  marginBottom: '16px',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-};
-
-const selectStyle = {
-  padding: '8px 12px',
-  background: '#1a1a1a',
-  border: '1px solid #333',
-  borderRadius: '6px',
-  color: '#e0e0e0',
-  fontSize: '12px',
-  fontFamily: 'IBM Plex Mono, monospace',
-  outline: 'none',
-};
-
-const unresolvedBadge = {
-  display: 'inline-block',
-  padding: '4px 12px',
-  borderRadius: '4px',
-  fontSize: '11px',
-  fontWeight: 600,
-  fontFamily: 'IBM Plex Mono, monospace',
-  background: '#f8717120',
-  color: '#f87171',
-  marginBottom: '20px',
-};
-
-const tableContainer = {
-  background: '#1a1a1a',
-  border: '1px solid #2a2a2a',
-  borderRadius: '8px',
-  overflow: 'auto',
-  maxHeight: 'calc(100vh - 260px)',
-};
-
-const tableStyle = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: '12px',
-  fontFamily: 'IBM Plex Mono, monospace',
-};
-
-const thStyle = {
-  padding: '12px 14px',
-  textAlign: 'left',
-  background: '#222',
-  color: '#888',
-  fontWeight: 600,
-  fontSize: '10px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.5px',
-  borderBottom: '1px solid #333',
-  position: 'sticky',
-  top: 0,
-  zIndex: 1,
-};
-
-const tdStyle = {
-  padding: '10px 14px',
-  borderBottom: '1px solid #1f1f1f',
-  color: '#e0e0e0',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  maxWidth: '300px',
-};
-
-const badgeBase = {
-  display: 'inline-block',
-  padding: '2px 8px',
-  borderRadius: '4px',
-  fontSize: '10px',
-  fontWeight: 600,
-  fontFamily: 'IBM Plex Mono, monospace',
-};
-
-const resolveBtn = {
-  padding: '4px 10px',
-  background: '#4ade8020',
-  border: '1px solid #4ade8050',
-  borderRadius: '4px',
-  color: '#4ade80',
-  fontSize: '10px',
-  fontWeight: 600,
-  fontFamily: 'IBM Plex Mono, monospace',
-  cursor: 'pointer',
-  transition: 'background 0.15s',
-};
-
-const sourceColors = {
-  findLeads: '#60a5fa',
-  sendEmails: '#4ade80',
-  sendFollowups: '#facc15',
-  checkReplies: '#fb923c',
-  dailyReport: '#a78bfa',
-  healthCheck: '#f87171',
-  backup: '#888',
-};
-
-const typeColors = {
-  smtp_error: '#f87171',
-  api_error: '#fb923c',
-  db_error: '#facc15',
-  validation_error: '#60a5fa',
+const typeBadge = {
+  smtp_error: 'badge-red', api_error: 'badge-orange', db_error: 'badge-amber', validation_error: 'badge-blue',
 };
 
 export default function ErrorLog() {
@@ -124,6 +15,8 @@ export default function ErrorLog() {
   const [sourceFilter, setSourceFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [resolvedFilter, setResolvedFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
 
   function fetchErrors() {
@@ -132,6 +25,8 @@ export default function ErrorLog() {
     if (sourceFilter) params.set('source', sourceFilter);
     if (typeFilter) params.set('error_type', typeFilter);
     if (resolvedFilter !== '') params.set('resolved', resolvedFilter);
+    if (dateFrom) params.set('date_from', dateFrom);
+    if (dateTo) params.set('date_to', dateTo);
     const qs = params.toString() ? `?${params.toString()}` : '';
     api.errors(qs).then(d => {
       setData(d || { errors: [], unresolvedCount: 0 });
@@ -139,7 +34,7 @@ export default function ErrorLog() {
     }).catch(() => setLoading(false));
   }
 
-  useEffect(() => { fetchErrors(); }, [sourceFilter, typeFilter, resolvedFilter]);
+  useEffect(() => { fetchErrors(); }, [sourceFilter, typeFilter, resolvedFilter, dateFrom, dateTo]);
 
   async function handleResolve(id) {
     await api.resolveError(id);
@@ -148,16 +43,16 @@ export default function ErrorLog() {
 
   return (
     <div>
-      <h1 style={pageTitle}>Error Log</h1>
+      <h1 className="page-title">Error Log</h1>
 
       {data.unresolvedCount > 0 && (
-        <div style={unresolvedBadge}>
+        <div className="alert alert-red mb-md">
           {data.unresolvedCount} unresolved error{data.unresolvedCount !== 1 ? 's' : ''}
         </div>
       )}
 
-      <div style={filterRow}>
-        <select value={sourceFilter} onChange={e => setSourceFilter(e.target.value)} style={selectStyle}>
+      <div className="filter-row">
+        <select className="select" value={sourceFilter} onChange={e => setSourceFilter(e.target.value)}>
           <option value="">All Sources</option>
           <option value="findLeads">findLeads</option>
           <option value="sendEmails">sendEmails</option>
@@ -167,106 +62,79 @@ export default function ErrorLog() {
           <option value="healthCheck">healthCheck</option>
           <option value="backup">backup</option>
         </select>
-        <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} style={selectStyle}>
+        <select className="select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
           <option value="">All Types</option>
           <option value="smtp_error">SMTP Error</option>
           <option value="api_error">API Error</option>
           <option value="db_error">DB Error</option>
           <option value="validation_error">Validation Error</option>
         </select>
-        <select value={resolvedFilter} onChange={e => setResolvedFilter(e.target.value)} style={selectStyle}>
+        <select className="select" value={resolvedFilter} onChange={e => setResolvedFilter(e.target.value)}>
           <option value="">All</option>
           <option value="0">Unresolved</option>
           <option value="1">Resolved</option>
         </select>
-        <span style={{ color: '#555', fontSize: '11px', fontFamily: 'IBM Plex Mono, monospace' }}>
-          {(data.errors || []).length} errors shown
-        </span>
+        <input className="input" type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)} title="From date" style={{ width: '140px' }} />
+        <input className="input" type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" style={{ width: '140px' }} />
+        <span className="filter-count">{(data.errors || []).length} errors shown</span>
       </div>
 
-      <div style={tableContainer}>
-        <table style={tableStyle}>
+      <div className="table-wrap">
+        <table>
           <thead>
             <tr>
-              <th style={thStyle}>Time</th>
-              <th style={thStyle}>Source</th>
-              <th style={thStyle}>Job</th>
-              <th style={thStyle}>Type</th>
-              <th style={thStyle}>Code</th>
-              <th style={thStyle}>Message</th>
-              <th style={thStyle}>Lead/Email</th>
-              <th style={thStyle}>Status</th>
-              <th style={thStyle}>Action</th>
+              <th>Time</th>
+              <th>Source</th>
+              <th>Job</th>
+              <th>Type</th>
+              <th>Code</th>
+              <th>Message</th>
+              <th>Lead/Email</th>
+              <th>Status</th>
+              <th>Action</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={9} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
+              <tr><td colSpan={9} className="td-muted text-center" style={{ padding: '40px' }}>Loading...</td></tr>
             ) : (data.errors || []).length === 0 ? (
-              <tr><td colSpan={9} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No errors found.</td></tr>
-            ) : data.errors.map((err, i) => {
-              const sc = sourceColors[err.source] || '#888';
-              const tc = typeColors[err.error_type] || '#888';
-              return (
-                <tr key={err.id} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
-                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
-                    {err.occurred_at
-                      ? new Date(err.occurred_at).toLocaleString()
-                      : '-'}
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{ ...badgeBase, background: `${sc}20`, color: sc }}>
-                      {err.source || '-'}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>
-                    {err.job_name || '-'}
-                  </td>
-                  <td style={tdStyle}>
-                    <span style={{ ...badgeBase, background: `${tc}20`, color: tc }}>
-                      {err.error_type || '-'}
-                    </span>
-                  </td>
-                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>
-                    {err.error_code || '-'}
-                  </td>
-                  <td style={{ ...tdStyle, color: '#aaa', maxWidth: '350px', whiteSpace: 'normal', wordBreak: 'break-word', lineHeight: 1.4 }}>
-                    {err.error_message || '-'}
-                    {err.stack_trace && (
-                      <details style={{ marginTop: '4px' }}>
-                        <summary style={{ fontSize: '10px', color: '#555', cursor: 'pointer' }}>Stack trace</summary>
-                        <pre style={{ fontSize: '9px', color: '#555', whiteSpace: 'pre-wrap', marginTop: '4px', maxHeight: '100px', overflow: 'auto' }}>
-                          {err.stack_trace}
-                        </pre>
-                      </details>
-                    )}
-                  </td>
-                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
-                    {err.lead_id ? `L:${err.lead_id}` : ''}{err.lead_id && err.email_id ? ' / ' : ''}{err.email_id ? `E:${err.email_id}` : ''}
-                    {!err.lead_id && !err.email_id ? '-' : ''}
-                  </td>
-                  <td style={tdStyle}>
-                    {err.resolved ? (
-                      <span style={{ ...badgeBase, background: '#4ade8020', color: '#4ade80' }}>
-                        RESOLVED{err.resolved_at ? ` ${new Date(err.resolved_at).toLocaleDateString()}` : ''}
-                      </span>
-                    ) : (
-                      <span style={{ ...badgeBase, background: '#f8717120', color: '#f87171' }}>OPEN</span>
-                    )}
-                  </td>
-                  <td style={tdStyle}>
-                    {!err.resolved && (
-                      <button
-                        onClick={() => handleResolve(err.id)}
-                        style={resolveBtn}
-                      >
-                        Resolve
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
+              <tr><td colSpan={9} className="td-muted text-center" style={{ padding: '40px' }}>No errors found.</td></tr>
+            ) : data.errors.map((err) => (
+              <tr key={err.id}>
+                <td className="td-dim">{err.occurred_at ? new Date(err.occurred_at).toLocaleString() : '-'}</td>
+                <td><span className={`badge ${sourceBadge[err.source] || 'badge-muted'}`}>{err.source || '-'}</span></td>
+                <td className="td-dim">{err.job_name || '-'}</td>
+                <td><span className={`badge ${typeBadge[err.error_type] || 'badge-muted'}`}>{err.error_type || '-'}</span></td>
+                <td className="td-dim">{err.error_code || '-'}</td>
+                <td className="td-wide" style={{ lineHeight: 1.4 }}>
+                  {err.error_message || '-'}
+                  {err.stack_trace && (
+                    <details style={{ marginTop: '4px' }}>
+                      <summary className="td-dim cursor-pointer" style={{ fontSize: '10px' }}>Stack trace</summary>
+                      <pre className="td-dim" style={{ fontSize: '9px', whiteSpace: 'pre-wrap', marginTop: '4px', maxHeight: '100px', overflow: 'auto' }}>
+                        {err.stack_trace}
+                      </pre>
+                    </details>
+                  )}
+                </td>
+                <td className="td-dim">
+                  {err.lead_id ? `L:${err.lead_id}` : ''}{err.lead_id && err.email_id ? ' / ' : ''}{err.email_id ? `E:${err.email_id}` : ''}
+                  {!err.lead_id && !err.email_id ? '-' : ''}
+                </td>
+                <td>
+                  {err.resolved ? (
+                    <span className="badge badge-green">RESOLVED{err.resolved_at ? ` ${new Date(err.resolved_at).toLocaleDateString()}` : ''}</span>
+                  ) : (
+                    <span className="badge badge-red">OPEN</span>
+                  )}
+                </td>
+                <td>
+                  {!err.resolved && (
+                    <button className="btn btn-green" onClick={() => handleResolve(err.id)}>Resolve</button>
+                  )}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>

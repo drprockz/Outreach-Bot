@@ -15,11 +15,11 @@ import { sleep } from './utils/sleep.js';
 
 const STEP_PROMPTS = {
   1: (lead) =>
-    `Write a very short follow-up email (2-3 sentences, under 50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
+    `Write a very short follow-up email (2-3 sentences, 40-60 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
   2: (lead) =>
     `Write a follow-up email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. Share a brief value angle — mention a relevant result like "helped a ${lead.category || 'similar'} business increase bookings by 40% after redesigning their site." Make it conversational, not salesy. Plain text only. A single relevant link is OK if natural.`,
   3: (lead) =>
-    `Write a final breakup email (30-50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
+    `Write a final breakup email (40-50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
   4: (lead) =>
     `Write a quarterly check-in email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. It has been ~3 months since last contact. Reference something seasonal or timely. Reintroduce yourself briefly. Plain text only. No links.`
 };
@@ -32,6 +32,18 @@ const NEXT_STEP_DAYS = {
   4: null         // step 4 is the final step — sequence complete
 };
 
+// ── Indian holidays (MM-DD) ──────────────────────────────
+const HOLIDAYS = [
+  '01-26', '03-14', '03-15', '08-15', '10-02',
+  '10-20', '10-21', '10-22', '10-23', '10-24', '10-25', '10-26'
+];
+
+function isHoliday(istDate) {
+  const mmdd = String(istDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
+               String(istDate.getUTCDate()).padStart(2, '0');
+  return HOLIDAYS.includes(mmdd);
+}
+
 // Non-negotiable Rule 6: Send window enforced
 function inSendWindow() {
   const now = new Date();
@@ -39,13 +51,14 @@ function inSendWindow() {
   const ist = new Date(now.getTime() + istOffset);
   const day = ist.getUTCDay();
   if (day === 0) return false; // No Sunday sends
+  if (isHoliday(ist)) return false;
   const hour = ist.getUTCHours();
   const minute = ist.getUTCMinutes();
   const currentTime = hour + minute / 60;
   const startEnv = process.env.SEND_WINDOW_START_IST;
   const endEnv = process.env.SEND_WINDOW_END_IST;
-  const windowStart = startEnv !== undefined ? parseFloat(startEnv) : 9.5; // default 9:30 AM
-  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM
+  const windowStart = startEnv !== undefined ? parseFloat(startEnv) + 0.5 : 9.5; // default 9:30 AM (env=9 → 9.5)
+  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM (env=17 → 17.5)
   return currentTime >= windowStart && currentTime < windowEnd;
 }
 
@@ -104,14 +117,28 @@ export default async function sendFollowups() {
         continue;
       }
 
+      // Stop condition: 2+ hard bounces from this domain
+      const bounceDomain = seq.contact_email?.split('@')[1];
+      if (bounceDomain) {
+        const domainBounces = db.prepare(`
+          SELECT COUNT(*) AS cnt FROM bounces b
+          JOIN leads l ON l.id = b.lead_id
+          WHERE b.bounce_type = 'hard' AND l.contact_email LIKE ?
+        `).get(`%@${bounceDomain}`);
+        if (domainBounces.cnt >= 2) {
+          db.prepare(`UPDATE sequence_state SET status='paused', paused_reason='domain_bounces', updated_at=datetime('now') WHERE id=?`).run(seq.id);
+          continue;
+        }
+      }
+
       try {
         // Generate follow-up body via Claude Haiku
         const promptFn = STEP_PROMPTS[nextStep];
         if (!promptFn) continue;
 
-        const { text: body, costUsd } = await callClaude('haiku', promptFn(seq), { maxTokens: 200 });
+        const { text: body, costUsd, model: bodyModelId } = await callClaude('haiku', promptFn(seq), { maxTokens: 200 });
         totalCost += costUsd;
-        bumpMetric('haiku_cost_usd', costUsd);
+        // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
         // Determine subject and threading (Non-negotiable Rule 9)
         let subject;
@@ -141,7 +168,7 @@ export default async function sendFollowups() {
           // Try regenerating once
           const { text: retryBody, costUsd: retryCost } = await callClaude('haiku', promptFn(seq), { maxTokens: 200 });
           totalCost += retryCost;
-          bumpMetric('haiku_cost_usd', retryCost);
+          // Note: callClaude already writes haiku_cost_usd to daily_metrics
           const retryValidation = validate(subject, retryBody, nextStep);
           if (!retryValidation.valid) {
             logError('sendFollowups.validation', new Error(`Content rejected for lead ${seq.lead_id} step ${nextStep}: ${retryValidation.reason}`), { jobName: 'sendFollowups', errorType: 'validation_error', leadId: seq.lead_id });
@@ -155,6 +182,12 @@ export default async function sendFollowups() {
         const inboxNumber = (currentSent % 2) + 1;
         const inboxUser = inboxNumber === 1 ? process.env.INBOX_1_USER : process.env.INBOX_2_USER;
         const domain = process.env.OUTREACH_DOMAIN || 'trysimpleinc.com';
+
+        // Non-negotiable Rule 13: assert outreach domain before send
+        if (!inboxUser?.endsWith(`@${domain}`)) {
+          logError('sendFollowups.domainAssert', new Error(`Inbox ${inboxNumber} not on ${domain}`), { jobName: 'sendFollowups', errorType: 'validation_error' });
+          break;
+        }
 
         const sendStart = Date.now();
         const { messageId } = await sendMail(inboxNumber, {
@@ -173,13 +206,13 @@ export default async function sendFollowups() {
             content_valid, status, sent_at, message_id, send_duration_ms,
             in_reply_to, references_header,
             body_model, body_cost_usd, total_cost_usd
-          ) VALUES (?, ?, ?, ?, 'Darshan Parmar', ?, ?, ?, ?, 0, 1, 1, 'sent', datetime('now'), ?, ?, ?, ?, 'claude-haiku-4-5', ?, ?)
+          ) VALUES (?, ?, ?, ?, 'Darshan Parmar', ?, ?, ?, ?, 0, 1, 1, 'sent', datetime('now'), ?, ?, ?, ?, ?, ?, ?)
         `).run(
           seq.lead_id, nextStep, inboxUser, domain,
           subject, finalBody, finalBody.trim().split(/\s+/).filter(Boolean).length,
           /https?:\/\//i.test(finalBody) ? 1 : 0,
           messageId, sendDuration, inReplyTo, referencesHeader,
-          costUsd, costUsd
+          bodyModelId, costUsd, costUsd
         );
 
         // Update sequence_state with correct column names

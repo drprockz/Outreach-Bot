@@ -31,7 +31,7 @@ async function handleClassification(db, category, lead, replyId) {
     case 'hot': {
       db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
       db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`Hot lead: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      await sendAlert(`🔥 Hot lead: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
       alerted = true;
       bumpMetric('replies_hot');
       break;
@@ -39,15 +39,16 @@ async function handleClassification(db, category, lead, replyId) {
     case 'schedule': {
       db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
       db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`Wants to schedule: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      await sendAlert(`📅 Wants to schedule: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
       alerted = true;
       bumpMetric('replies_schedule');
       break;
     }
     case 'soft_no': {
-      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
+      // Do NOT set lead status='replied' — keep current status so lead remains actionable
+      // Keep status='active' but push next_send_date +14 days — sendFollowups date gate handles delay naturally
       db.prepare(`
-        UPDATE sequence_state SET status='paused', next_send_date=date('now', '+14 days'), updated_at=datetime('now') WHERE lead_id=?
+        UPDATE sequence_state SET status='active', next_send_date=date('now', '+14 days'), updated_at=datetime('now') WHERE lead_id=?
       `).run(lead.id);
       db.prepare(`UPDATE replies SET requeue_date=date('now', '+14 days') WHERE id=?`).run(replyId);
       bumpMetric('replies_soft_no');
@@ -57,7 +58,7 @@ async function handleClassification(db, category, lead, replyId) {
       addToRejectList(lead.contact_email, 'unsubscribe');
       db.prepare(`UPDATE leads SET status='unsubscribed' WHERE id=?`).run(lead.id);
       db.prepare(`UPDATE sequence_state SET status='unsubscribed', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`Unsubscribed: ${lead.contact_email} (${lead.business_name})`);
+      await sendAlert(`🚫 Unsubscribed: ${lead.contact_email} (${lead.business_name})`);
       alerted = true;
       bumpMetric('replies_unsubscribe');
       break;
@@ -118,9 +119,9 @@ export default async function checkReplies() {
           if (existing) continue;
 
           // Classify via Claude Haiku
-          const { text: rawJson, costUsd, model } = await callClaude('haiku', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
+          const { text: rawJson, costUsd, model } = await callClaude('classify', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
           totalCost += costUsd;
-          bumpMetric('haiku_cost_usd', costUsd);
+          // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
           // Parse classification result
           let category = 'other';
@@ -137,6 +138,7 @@ export default async function checkReplies() {
           }
 
           // Insert reply record with full spec columns
+          // inbox_received_at = timestamp from the email, not the inbox user address
           const replyRow = db.prepare(`
             INSERT INTO replies (
               lead_id, email_id, inbox_received_at, received_at,
@@ -144,7 +146,8 @@ export default async function checkReplies() {
               sentiment_score, telegram_alerted
             ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, 0) RETURNING id
           `).get(
-            lead.id, sentEmail?.id || null, inboxUser,
+            lead.id, sentEmail?.id || null,
+            msg.date ? msg.date.toISOString() : new Date().toISOString(),
             category, msg.text, model || 'claude-haiku-4-5', costUsd,
             sentimentScore
           );

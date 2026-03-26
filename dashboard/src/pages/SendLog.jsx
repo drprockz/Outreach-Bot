@@ -2,132 +2,34 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import StatCard from '../components/StatCard';
 
-const pageTitle = {
-  fontSize: '20px',
-  fontWeight: 600,
-  color: '#e0e0e0',
-  marginBottom: '24px',
-  fontFamily: 'IBM Plex Mono, monospace',
+const deliveryBadge = {
+  sent: 'badge-green', pending: 'badge-amber', hard_bounce: 'badge-red',
+  soft_bounce: 'badge-orange', content_rejected: 'badge-muted',
 };
 
-const gridStyle = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  gap: '12px',
-  marginBottom: '24px',
-};
-
-const filterRow = {
-  display: 'flex',
-  gap: '12px',
-  marginBottom: '16px',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-};
-
-const selectStyle = {
-  padding: '8px 12px',
-  background: '#1a1a1a',
-  border: '1px solid #333',
-  borderRadius: '6px',
-  color: '#e0e0e0',
-  fontSize: '12px',
-  fontFamily: 'IBM Plex Mono, monospace',
-  outline: 'none',
-};
-
-const tableContainer = {
-  background: '#1a1a1a',
-  border: '1px solid #2a2a2a',
-  borderRadius: '8px',
-  overflow: 'auto',
-  maxHeight: 'calc(100vh - 340px)',
-};
-
-const tableStyle = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  fontSize: '12px',
-  fontFamily: 'IBM Plex Mono, monospace',
-};
-
-const thStyle = {
-  padding: '12px 14px',
-  textAlign: 'left',
-  background: '#222',
-  color: '#888',
-  fontWeight: 600,
-  fontSize: '10px',
-  textTransform: 'uppercase',
-  letterSpacing: '0.5px',
-  borderBottom: '1px solid #333',
-  position: 'sticky',
-  top: 0,
-  zIndex: 1,
-};
-
-const tdStyle = {
-  padding: '10px 14px',
-  borderBottom: '1px solid #1f1f1f',
-  color: '#e0e0e0',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  maxWidth: '200px',
-};
-
-const badgeBase = {
-  display: 'inline-block',
-  padding: '2px 8px',
-  borderRadius: '4px',
-  fontSize: '10px',
-  fontWeight: 600,
-  fontFamily: 'IBM Plex Mono, monospace',
-};
-
-const deliveryColors = {
-  sent: { bg: '#4ade8020', color: '#4ade80' },
-  pending: { bg: '#facc1520', color: '#facc15' },
-  hard_bounce: { bg: '#f8717120', color: '#f87171' },
-  soft_bounce: { bg: '#fb923c20', color: '#fb923c' },
-  content_rejected: { bg: '#88888820', color: '#888' },
-};
-
-const paginationStyle = {
-  display: 'flex',
-  gap: '8px',
-  justifyContent: 'center',
-  alignItems: 'center',
-  padding: '16px',
-  fontFamily: 'IBM Plex Mono, monospace',
-  fontSize: '12px',
-  color: '#888',
-};
-
-const pageBtnStyle = {
-  padding: '6px 14px',
-  background: '#1a1a1a',
-  border: '1px solid #333',
-  borderRadius: '4px',
-  color: '#e0e0e0',
-  fontSize: '12px',
-  fontFamily: 'IBM Plex Mono, monospace',
-  cursor: 'pointer',
-};
+const USD_TO_INR = 85;
 
 export default function SendLog() {
   const [data, setData] = useState({ emails: [], total: 0, aggregates: {} });
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');
   const [inboxFilter, setInboxFilter] = useState('');
+  const [stepFilter, setStepFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
   const limit = 25;
 
   function buildParams() {
-    const parts = [`?page=${page}&limit=${limit}`];
-    if (statusFilter) parts.push(`status=${statusFilter}`);
-    if (inboxFilter) parts.push(`inbox=${inboxFilter}`);
-    return parts.join('&');
+    const p = new URLSearchParams();
+    p.set('page', page);
+    p.set('limit', limit);
+    if (statusFilter) p.set('status', statusFilter);
+    if (inboxFilter) p.set('inbox', inboxFilter);
+    if (stepFilter !== '') p.set('step', stepFilter);
+    if (dateFrom) p.set('date_from', dateFrom);
+    if (dateTo) p.set('date_to', dateTo);
+    return `?${p.toString()}`;
   }
 
   function fetchData() {
@@ -138,27 +40,26 @@ export default function SendLog() {
     }).catch(() => setLoading(false));
   }
 
-  useEffect(() => { fetchData(); }, [page, statusFilter, inboxFilter]);
+  useEffect(() => { fetchData(); }, [page, statusFilter, inboxFilter, stepFilter, dateFrom, dateTo]);
 
   const totalPages = Math.ceil((data.total || 0) / limit) || 1;
   const agg = data.aggregates || {};
-  const usdToInr = 85;
 
   return (
     <div>
-      <h1 style={pageTitle}>Send Log</h1>
+      <h1 className="page-title">Send Log</h1>
 
-      <div style={gridStyle}>
-        <StatCard label="Total Sent" value={agg.total_sent || 0} color="#4ade80" />
-        <StatCard label="Hard Bounces" value={agg.hard_bounces || 0} color="#f87171" />
-        <StatCard label="Soft Bounces" value={agg.soft_bounces || 0} color="#fb923c" />
-        <StatCard label="Content Rejected" value={agg.content_rejected || 0} color="#888" />
-        <StatCard label="Avg Duration" value={agg.avg_duration_ms ? `${(agg.avg_duration_ms / 1000).toFixed(1)}s` : '-'} color="#60a5fa" />
-        <StatCard label="Total Cost" value={`$${(agg.total_cost || 0).toFixed(2)}`} sub={`~INR ${((agg.total_cost || 0) * usdToInr).toFixed(0)}`} color="#facc15" />
+      <div className="stat-grid">
+        <StatCard label="Total Sent" value={agg.total_sent || 0} color="var(--green)" className="fade-in stagger-1" />
+        <StatCard label="Hard Bounces" value={agg.hard_bounces || 0} color="var(--red)" className="fade-in stagger-2" />
+        <StatCard label="Soft Bounces" value={agg.soft_bounces || 0} color="var(--orange)" className="fade-in stagger-3" />
+        <StatCard label="Content Rejected" value={agg.content_rejected || 0} color="var(--text-3)" className="fade-in stagger-4" />
+        <StatCard label="Avg Duration" value={agg.avg_duration_ms ? `${(agg.avg_duration_ms / 1000).toFixed(1)}s` : '-'} color="var(--blue)" className="fade-in stagger-5" />
+        <StatCard label="Total Cost" value={`$${(agg.total_cost || 0).toFixed(2)}`} sub={`~INR ${((agg.total_cost || 0) * USD_TO_INR).toFixed(0)}`} color="var(--amber)" className="fade-in stagger-6" />
       </div>
 
-      <div style={filterRow}>
-        <select value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }} style={selectStyle}>
+      <div className="filter-row">
+        <select className="select" value={statusFilter} onChange={e => { setStatusFilter(e.target.value); setPage(1); }}>
           <option value="">All Statuses</option>
           <option value="sent">Sent</option>
           <option value="pending">Pending</option>
@@ -166,71 +67,74 @@ export default function SendLog() {
           <option value="soft_bounce">Soft Bounce</option>
           <option value="content_rejected">Content Rejected</option>
         </select>
-        <select value={inboxFilter} onChange={e => { setInboxFilter(e.target.value); setPage(1); }} style={selectStyle}>
+        <select className="select" value={inboxFilter} onChange={e => { setInboxFilter(e.target.value); setPage(1); }}>
           <option value="">All Inboxes</option>
           <option value="darshan@trysimpleinc.com">darshan@</option>
           <option value="hello@trysimpleinc.com">hello@</option>
         </select>
-        <span style={{ color: '#555', fontSize: '11px', fontFamily: 'IBM Plex Mono, monospace' }}>{data.total || 0} emails</span>
+        <select className="select" value={stepFilter} onChange={e => { setStepFilter(e.target.value); setPage(1); }}>
+          <option value="">All Steps</option>
+          <option value="0">Cold (Step 0)</option>
+          <option value="1">Day 3 (Step 1)</option>
+          <option value="2">Day 7 (Step 2)</option>
+          <option value="3">Day 14 (Step 3)</option>
+          <option value="4">Day 90 (Step 4)</option>
+        </select>
+        <input type="date" className="input" value={dateFrom} onChange={e => { setDateFrom(e.target.value); setPage(1); }} style={{ width: '130px' }} />
+        <input type="date" className="input" value={dateTo} onChange={e => { setDateTo(e.target.value); setPage(1); }} style={{ width: '130px' }} />
+        <span className="filter-count">{data.total || 0} emails</span>
       </div>
 
-      <div style={tableContainer}>
-        <table style={tableStyle}>
+      <div className="table-wrap table-wrap-short">
+        <table>
           <thead>
             <tr>
-              <th style={thStyle}>Business</th>
-              <th style={thStyle}>Subject</th>
-              <th style={thStyle}>Inbox</th>
-              <th style={thStyle}>Domain</th>
-              <th style={thStyle}>Step</th>
-              <th style={thStyle}>Status</th>
-              <th style={thStyle}>Words</th>
-              <th style={thStyle}>Duration</th>
-              <th style={thStyle}>Cost</th>
-              <th style={thStyle}>Sent At</th>
+              <th>Business</th>
+              <th>Subject</th>
+              <th>Inbox</th>
+              <th>Domain</th>
+              <th>Step</th>
+              <th>Status</th>
+              <th>SMTP</th>
+              <th>Words</th>
+              <th>Duration</th>
+              <th>Hook Model</th>
+              <th>Body Model</th>
+              <th>Cost</th>
+              <th>Sent At</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={10} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>Loading...</td></tr>
+              <tr><td colSpan={13} className="td-muted text-center" style={{ padding: '40px' }}>Loading...</td></tr>
             ) : (data.emails || []).length === 0 ? (
-              <tr><td colSpan={10} style={{ ...tdStyle, textAlign: 'center', color: '#555' }}>No emails found.</td></tr>
-            ) : data.emails.map((email, i) => {
-              const dc = deliveryColors[email.status] || { bg: '#88888820', color: '#888' };
-              return (
-                <tr key={email.id} style={{ background: i % 2 === 0 ? 'transparent' : '#1f1f1f' }}>
-                  <td style={tdStyle}>{email.business_name || '-'}</td>
-                  <td style={{ ...tdStyle, maxWidth: '250px' }}>{email.subject || '-'}</td>
-                  <td style={{ ...tdStyle, color: '#888', fontSize: '10px' }}>{email.inbox_used || '-'}</td>
-                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>{email.from_domain || '-'}</td>
-                  <td style={{ ...tdStyle, textAlign: 'center' }}>{email.sequence_step ?? 0}</td>
-                  <td style={tdStyle}>
-                    <span style={{ ...badgeBase, background: dc.bg, color: dc.color }}>{email.status}</span>
-                  </td>
-                  <td style={{ ...tdStyle, textAlign: 'center', color: '#888' }}>{email.word_count || '-'}</td>
-                  <td style={{ ...tdStyle, textAlign: 'center', color: '#888', fontSize: '10px' }}>
-                    {email.send_duration_ms ? `${(email.send_duration_ms / 1000).toFixed(1)}s` : '-'}
-                  </td>
-                  <td style={{ ...tdStyle, color: '#facc15', fontSize: '10px' }}>
-                    {email.total_cost_usd != null
-                      ? `$${(email.total_cost_usd || 0).toFixed(4)}`
-                      : '-'}
-                  </td>
-                  <td style={{ ...tdStyle, color: '#555', fontSize: '10px' }}>
-                    {email.sent_at ? new Date(email.sent_at).toLocaleString() : '-'}
-                  </td>
-                </tr>
-              );
-            })}
+              <tr><td colSpan={13} className="td-muted text-center" style={{ padding: '40px' }}>No emails found.</td></tr>
+            ) : data.emails.map((email) => (
+              <tr key={email.id}>
+                <td>{email.business_name || '-'}</td>
+                <td style={{ maxWidth: '220px' }}>{email.subject || '-'}</td>
+                <td className="td-dim">{email.inbox_used || '-'}</td>
+                <td className="td-dim">{email.from_domain || '-'}</td>
+                <td className="td-center">{email.sequence_step ?? 0}</td>
+                <td><span className={`badge ${deliveryBadge[email.status] || 'badge-muted'}`}>{email.status}</span></td>
+                <td className="td-dim td-center">{email.smtp_code || '-'}</td>
+                <td className="td-muted td-center">{email.word_count || '-'}</td>
+                <td className="td-dim td-center">{email.send_duration_ms ? `${(email.send_duration_ms / 1000).toFixed(1)}s` : '-'}</td>
+                <td className="td-dim">{email.hook_model ? email.hook_model.split('-').slice(0, 2).join('-') : '-'}</td>
+                <td className="td-dim">{email.body_model ? email.body_model.split('-').slice(0, 2).join('-') : '-'}</td>
+                <td style={{ color: 'var(--amber)', fontSize: '10px' }}>{email.total_cost_usd != null ? `$${(email.total_cost_usd || 0).toFixed(4)}` : '-'}</td>
+                <td className="td-dim">{email.sent_at ? new Date(email.sent_at).toLocaleString() : '-'}</td>
+              </tr>
+            ))}
           </tbody>
         </table>
       </div>
 
       {totalPages > 1 && (
-        <div style={paginationStyle}>
-          <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} style={{ ...pageBtnStyle, opacity: page <= 1 ? 0.3 : 1 }}>Prev</button>
+        <div className="pagination">
+          <button className="page-btn" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>Prev</button>
           <span>Page {page} of {totalPages}</span>
-          <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} style={{ ...pageBtnStyle, opacity: page >= totalPages ? 0.3 : 1 }}>Next</button>
+          <button className="page-btn" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>Next</button>
         </div>
       )}
     </div>

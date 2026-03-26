@@ -151,6 +151,7 @@ export default async function findLeads() {
       const { leads: batchLeads, costUsd: discoverCost } = await stage1_discover(niche, batch);
       totalCost += discoverCost;
       bumpMetric('gemini_cost_usd', discoverCost);
+      bumpMetric('total_api_cost_usd', discoverCost);
       rawLeads = rawLeads.concat(batchLeads);
     }
 
@@ -164,6 +165,7 @@ export default async function findLeads() {
         const { data: extracted, costUsd: extractCost } = await stages2to6_extract(raw);
         totalCost += extractCost;
         bumpMetric('gemini_cost_usd', extractCost);
+        bumpMetric('total_api_cost_usd', extractCost);
 
         if (!extracted) {
           // Extraction failed — mark and skip
@@ -239,7 +241,7 @@ export default async function findLeads() {
         const recentDomain = db.prepare(`
           SELECT 1 FROM leads
           WHERE contact_email LIKE ? AND status IN ('sent', 'replied', 'contacted')
-            AND discovered_at >= datetime('now', '-90 days')
+            AND domain_last_contacted >= datetime('now', '-90 days')
           LIMIT 1
         `).get(`%@${emailDomain}`);
         if (recentDomain) {
@@ -251,6 +253,7 @@ export default async function findLeads() {
         const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead);
         totalCost += icpCost;
         bumpMetric('gemini_cost_usd', icpCost);
+        bumpMetric('total_api_cost_usd', icpCost);
 
         lead.icp_score = icp.icp_score;
         lead.icp_priority = icp.icp_priority;
@@ -289,7 +292,7 @@ export default async function findLeads() {
         const hookResult = await stage10_hook(lead);
         const hook = hookResult.hook;
         totalCost += hookResult.costUsd;
-        bumpMetric('sonnet_cost_usd', hookResult.costUsd);
+        // Note: callClaude already writes sonnet_cost_usd + total_api_cost_usd to daily_metrics
 
         // Stage 11: Email body + subject (only for A/B priority with hook)
         const [bodyResult, subjectResult] = await Promise.all([
@@ -300,7 +303,7 @@ export default async function findLeads() {
         const emailSubject = subjectResult.subject;
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
-        bumpMetric('haiku_cost_usd', bodyCost);
+        // Note: callClaude already writes haiku_cost_usd + total_api_cost_usd to daily_metrics
 
         const geminiCost = extractCost + icpCost;
 

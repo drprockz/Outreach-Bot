@@ -100,7 +100,7 @@ describe('checkReplies', () => {
     expect(seq.status).toBe('unsubscribed');
   });
 
-  it('handles soft_no by pausing sequence', async () => {
+  it('handles soft_no by keeping sequence active with delayed next_send_date', async () => {
     const { callClaude } = await import('../utils/claude.js');
     callClaude.mockResolvedValueOnce({ text: 'soft_no', costUsd: 0.001, inputTokens: 50, outputTokens: 5 });
 
@@ -108,7 +108,7 @@ describe('checkReplies', () => {
     await checkReplies();
     const { getDb } = await import('../utils/db.js');
     const seq = getDb().prepare(`SELECT * FROM sequence_state WHERE lead_id=1`).get();
-    expect(seq.status).toBe('paused');
+    expect(seq.status).toBe('active');
   });
 
   it('bumps daily_metrics replies count', async () => {
