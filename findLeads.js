@@ -23,10 +23,29 @@ function stripJson(text) {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 }
 
+// ── Size constraint prompt fragments ──────────────────────
+const SIZE_PROMPTS = {
+  msme: 'Target ONLY micro/small owner-operated businesses — 1–10 employees, turnover under ₹5cr. EXCLUDE listed companies, national brands, unicorns, VC-backed startups, companies with 50+ employees.',
+  sme:  'Target ONLY small/medium regional businesses — 10–200 employees, ₹5cr–₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
+  both: 'Target MSME/SME businesses only — owner-operated to regional scale, up to 200 employees, under ₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
+};
+
+// Exported for unit testing
+export function buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize) {
+  return `You are a B2B lead researcher. Discover ${perBatch} real Indian businesses in the "${niche.label}" niche that likely have outdated websites.
+
+Search query context: "${niche.query}". Batch ${batchIndex + 1} — find DIFFERENT businesses than previous batches.
+
+Geographic target: Target businesses located in: ${cities.join(', ')}. Do not return businesses from other cities.
+
+Business size: ${SIZE_PROMPTS[businessSize] || SIZE_PROMPTS.msme}
+
+Return a JSON array of objects: [{business_name, website_url, city, category}]. Return only valid JSON, no markdown.`;
+}
+
 // ── Stage 1: Discovery — Gemini with grounding ───────────
-// Run in batches of perBatch to get leads total
-async function stage1_discover(niche, batchIndex, perBatch) {
-  const prompt = `You are a B2B lead researcher. Discover ${perBatch} real Indian businesses in the "${niche.label}" niche that likely have outdated websites. Search query context: "${niche.query}". Batch ${batchIndex + 1} — find DIFFERENT businesses than previous batches. Return a JSON array of objects: [{business_name, website_url, city, category}]. Return only valid JSON, no markdown.`;
+async function stage1_discover(niche, batchIndex, perBatch, cities, businessSize) {
+  const prompt = buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize);
   const result = await callGemini(prompt, { useGrounding: true });
   try {
     return { leads: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
@@ -90,19 +109,22 @@ Return only valid JSON.`;
   }
 }
 
-// ── Stage 10: Hook generation — Claude Sonnet ────────────
+const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
+
+// ── Stage 10: Hook generation — Claude Sonnet (or Gemini fallback) ──
 async function stage10_hook(lead, persona) {
-  const result = await callClaude('sonnet',
-    `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`,
-    { maxTokens: 60 }
-  );
+  const prompt = `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`;
+  if (ANTHROPIC_DISABLED) {
+    const result = await callGemini(prompt);
+    return { hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
+  }
+  const result = await callClaude('sonnet', prompt, { maxTokens: 60 });
   return { hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
 }
 
-// ── Stage 11: Email body — Claude Haiku ──────────────────
+// ── Stage 11: Email body — Claude Haiku (or Gemini fallback) ─────────
 async function stage11_body(lead, hook, persona) {
-  const result = await callClaude('haiku',
-    `Write a cold email from ${persona.name} (${persona.role}, ${persona.company}) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
+  const prompt = `Write a cold email from ${persona.name} (${persona.role}, ${persona.company}) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
 
 Hook to open with: "${hook}"
 
@@ -116,18 +138,23 @@ Rules:
 - Tone: ${persona.tone}
 - Do not mention price
 
-Return only the email body, no subject line.`,
-    { maxTokens: 200 }
-  );
+Return only the email body, no subject line.`;
+  if (ANTHROPIC_DISABLED) {
+    const result = await callGemini(prompt);
+    return { body: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
+  }
+  const result = await callClaude('haiku', prompt, { maxTokens: 200 });
   return { body: result.text.trim(), costUsd: result.costUsd, model: result.model };
 }
 
-// ── Stage 11b: Subject line — Claude Haiku ───────────────
+// ── Stage 11b: Subject line — Claude Haiku (or Gemini fallback) ──────
 async function stage11_subject(lead) {
-  const result = await callClaude('haiku',
-    `Write a cold email subject line for ${lead.business_name}. Max 7 words. No ! or ? or ALL CAPS. Make it sound like a human colleague writing, not marketing. Return only the subject line text.`,
-    { maxTokens: 30 }
-  );
+  const prompt = `Write a cold email subject line for ${lead.business_name}. Max 7 words. No ! or ? or ALL CAPS. Make it sound like a human colleague writing, not marketing. Return only the subject line text.`;
+  if (ANTHROPIC_DISABLED) {
+    const result = await callGemini(prompt);
+    return { subject: result.text.trim(), costUsd: result.costUsd };
+  }
+  const result = await callClaude('haiku', prompt, { maxTokens: 30 });
   return { subject: result.text.trim(), costUsd: result.costUsd };
 }
 
@@ -157,8 +184,23 @@ export default async function findLeads() {
       return;
     }
 
-    const batches = getConfigInt(cfg, 'find_leads_batches', 5);
+    const FALLBACK_CITIES = ['Mumbai', 'Bangalore', 'Delhi NCR', 'Pune'];
+    const VALID_SIZES = ['msme', 'sme', 'both'];
+
+    let cities = FALLBACK_CITIES;
+    try {
+      const raw = JSON.parse(getConfigStr(cfg, 'find_leads_cities', JSON.stringify(FALLBACK_CITIES)));
+      cities = Array.isArray(raw) && raw.length > 0 ? raw : FALLBACK_CITIES;
+    } catch {
+      // malformed JSON in DB — use fallback
+    }
+
+    const businessSizeRaw = getConfigStr(cfg, 'find_leads_business_size', 'msme');
+    const businessSize = VALID_SIZES.includes(businessSizeRaw) ? businessSizeRaw : 'msme';
+
+    const leadsCount = Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
     const perBatch = getConfigInt(cfg, 'find_leads_per_batch', 30);
+    const batches = Math.ceil(leadsCount / perBatch);
     const rubric = buildIcpRubric(db);
     const threshA = getConfigInt(cfg, 'icp_threshold_a', 7);
     const threshB = getConfigInt(cfg, 'icp_threshold_b', 4);
@@ -195,7 +237,7 @@ export default async function findLeads() {
     const batchIndices = Array.from({ length: batches }, (_, i) => i);
     const discoveryResults = await withConcurrency(batchIndices, 5, async (batchIndex) => {
       try {
-        const { leads, costUsd } = await stage1_discover(niche, batchIndex, perBatch);
+        const { leads, costUsd } = await stage1_discover(niche, batchIndex, perBatch, cities, businessSize);
         totalCost += costUsd;
         bumpMetric('gemini_cost_usd', costUsd);
         bumpMetric('total_api_cost_usd', costUsd);
@@ -354,37 +396,41 @@ export default async function findLeads() {
     const abLeads = scoredLeads.filter(Boolean);
 
     // ── Stage 10/11: Hook + email body + subject + DB insert ─────────────
-    // Pre-check spend cap once before launching 10 concurrent Claude workers.
+    // Pre-check spend cap once before launching concurrent workers.
     // Workers fire simultaneously so per-request cap checks can race — a single
     // synchronous guard here prevents the entire stage from starting if cap is hit.
     const todayStr = new Date().toISOString().slice(0, 10);
-    const claudeSpendToday = db.prepare(
-      `SELECT COALESCE(sonnet_cost_usd, 0) + COALESCE(haiku_cost_usd, 0) AS total
-       FROM daily_metrics WHERE date = ?`
-    ).get(todayStr)?.total ?? 0;
+    const aiSpendToday = ANTHROPIC_DISABLED
+      ? (db.prepare(`SELECT COALESCE(gemini_cost_usd, 0) AS total FROM daily_metrics WHERE date = ?`).get(todayStr)?.total ?? 0)
+      : (db.prepare(`SELECT COALESCE(sonnet_cost_usd, 0) + COALESCE(haiku_cost_usd, 0) AS total FROM daily_metrics WHERE date = ?`).get(todayStr)?.total ?? 0);
     const claudeCap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '5.00');
-    if (claudeSpendToday >= claudeCap) {
-      await sendAlert(`findLeads: Claude spend cap hit ($${claudeSpendToday.toFixed(3)} >= $${claudeCap}) — skipping Stage 10/11 for ${abLeads.length} leads`);
+    if (aiSpendToday >= claudeCap) {
+      const provider = ANTHROPIC_DISABLED ? 'Gemini' : 'Claude';
+      await sendAlert(`findLeads: ${provider} spend cap hit ($${aiSpendToday.toFixed(3)} >= $${claudeCap}) — skipping Stage 10/11 for ${abLeads.length} leads`);
       finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped + abLeads.length, costUsd: totalCost });
       return;
     }
 
-    // cap=10 — Claude Sonnet/Haiku RPM limit ~50; 10 concurrent is safe
+    // cap=10 concurrent — Gemini/Claude RPM limits are safe at this concurrency
     await withConcurrency(abLeads, 10, async (lead) => {
       try {
-        // Stage 10: Hook (Claude Sonnet)
+        // Stage 10: Hook
         const hookResult = await stage10_hook(lead, persona);
         totalCost += hookResult.costUsd;
 
-        // Stage 11: Body + subject in parallel (Claude Haiku)
+        // Stage 11: Body + subject in parallel
         const [bodyResult, subjectResult] = await Promise.all([
           stage11_body(lead, hookResult.hook, persona),
           stage11_subject(lead)
         ]);
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
-        bumpMetric('sonnet_cost_usd', hookResult.costUsd);
-        bumpMetric('haiku_cost_usd', bodyCost);
+        if (ANTHROPIC_DISABLED) {
+          bumpMetric('gemini_cost_usd', hookResult.costUsd + bodyCost);
+        } else {
+          bumpMetric('sonnet_cost_usd', hookResult.costUsd);
+          bumpMetric('haiku_cost_usd', bodyCost);
+        }
         bumpMetric('total_api_cost_usd', hookResult.costUsd + bodyCost);
 
         const geminiCost = lead.extractCost + lead.icpCost;
