@@ -8,8 +8,8 @@ const ENGINE_CARDS = [
     title: 'findLeads.js',
     schedule: 'Runs: 09:00 AM daily (Mon–Sat)',
     fields: [
-      { key: 'find_leads_batches',   label: 'Batches per run',  type: 'int' },
-      { key: 'find_leads_per_batch', label: 'Leads per batch',  type: 'int' },
+      { key: 'find_leads_count',     label: 'Lead count (total per run)',  type: 'int' },
+      { key: 'find_leads_per_batch', label: 'Leads per batch',             type: 'int' },
     ]
   },
   {
