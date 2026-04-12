@@ -1231,3 +1231,84 @@ tbody tr:hover { background: var(--bg-elevated); }
   font-size: 11px;
   cursor: pointer;
 }
+
+/* ── Engine Config ────────────────────────────────────────── */
+.engine-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-lg);
+}
+.engine-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+.engine-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.engine-card-title { font-family: var(--font-mono); font-size: 13px; font-weight: 600; color: var(--text-1); }
+.engine-card-schedule { font-size: 10px; color: var(--text-4); margin-bottom: 16px; }
+.engine-toggle {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+}
+.engine-toggle:hover { background: var(--bg-hover); }
+.engine-field-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.engine-field-label { font-size: 11px; color: var(--text-2); }
+.engine-field-readonly { font-size: 11px; color: var(--text-3); }
+.engine-warning {
+  background: var(--amber-dim);
+  border: 1px solid var(--amber);
+  color: var(--amber);
+  font-size: 11px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+.saved-confirm { color: var(--green); font-size: 11px; }
+
+/* ── ICP Rules ────────────────────────────────────────────── */
+.icp-rules-list { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
+.icp-rule-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+.icp-rule-order { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+.icp-rule-content { flex: 1; min-width: 0; }
+.icp-thresholds {
+  margin-top: 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+  max-width: 360px;
+}
+.icp-threshold-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+/* ── Email Persona ────────────────────────────────────────── */
+.persona-form { display: flex; flex-direction: column; gap: 14px; }
+.persona-field { display: flex; align-items: center; gap: 16px; }
+.persona-field .engine-field-label { width: 140px; flex-shrink: 0; }
