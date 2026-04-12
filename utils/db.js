@@ -71,6 +71,29 @@ export function isRejected(email) {
   return !!row;
 }
 
+export function getConfigMap() {
+  try {
+    const rows = getDb().prepare('SELECT key, value FROM config').all();
+    return Object.fromEntries(rows.map(r => [r.key, r.value]));
+  } catch {
+    return {};
+  }
+}
+
+export function getConfigInt(cfg, key, fallback) {
+  const v = parseInt(cfg[key]);
+  return isNaN(v) ? fallback : v;
+}
+
+export function getConfigFloat(cfg, key, fallback) {
+  const v = parseFloat(cfg[key]);
+  return isNaN(v) ? fallback : v;
+}
+
+export function getConfigStr(cfg, key, fallback) {
+  return cfg[key] ?? fallback;
+}
+
 export function addToRejectList(email, reason) {
   const domain = email.split('@')[1];
   getDb().prepare(
