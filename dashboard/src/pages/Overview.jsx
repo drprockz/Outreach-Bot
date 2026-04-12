@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { api } from '../api';
 import StatCard from '../components/StatCard';
+import RunConfig from '../components/RunConfig';
 
 const USD_TO_INR = 85;
 
@@ -103,6 +104,7 @@ export default function Overview() {
 
   return (
     <div>
+      <RunConfig />
       <h1 className="page-title">Overview</h1>
 
       <div className="stat-grid">
