@@ -98,8 +98,8 @@ beforeEach(async () => {
   const { seedConfigDefaults, seedNichesAndIcpRules, getDb } = await import('../utils/db.js');
   seedConfigDefaults();
   seedNichesAndIcpRules();
-  // Override: set enough batches/seeds for the test mock
-  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_batches', '1');
+  // Override: set small count so test runs only 1 batch of 2 leads
+  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_count', '2');
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_per_batch', '2');
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_enabled', '1');
 });
