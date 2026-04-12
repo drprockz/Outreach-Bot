@@ -3,6 +3,16 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
+// Helper: get auth token
+async function getToken() {
+  const res = await fetch(`${baseUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: 'testpass' })
+  });
+  return (await res.json()).token;
+}
+
 let tmpDir, server, baseUrl;
 
 beforeAll(async () => {
@@ -294,5 +304,40 @@ describe('dashboard API', () => {
     const data = await res.json();
     expect(data).toHaveProperty('history');
     expect(Array.isArray(data.history)).toBe(true);
+  });
+});
+
+describe('GET /api/config', () => {
+  it('requires auth', async () => {
+    const res = await fetch(`${baseUrl}/api/config`);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns seeded config as flat object', async () => {
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/config`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.daily_send_limit).toBeDefined();
+    expect(data.persona_name).toBe('Darshan Parmar');
+  });
+});
+
+describe('PUT /api/config', () => {
+  it('updates provided keys without touching others', async () => {
+    const token = await getToken();
+    await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ daily_send_limit: '20' })
+    });
+    const res = await fetch(`${baseUrl}/api/config`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const data = await res.json();
+    expect(data.daily_send_limit).toBe('20');
+    expect(data.persona_name).toBe('Darshan Parmar');
   });
 });
