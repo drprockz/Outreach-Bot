@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, today, getConfigMap, getConfigInt, getConfigStr } from './utils/db.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from './utils/db.js';
 import { callGemini } from './utils/gemini.js';
 import { callClaude } from './utils/claude.js';
 import { verifyEmail } from './utils/mev.js';
@@ -185,6 +185,7 @@ export default async function findLeads() {
         SELECT DISTINCT substr(contact_email, instr(contact_email, '@') + 1) AS domain
         FROM leads
         WHERE status IN ('sent', 'replied')
+          -- 'contacted' excluded: not a valid status in the pipeline state machine
           AND domain_last_contacted >= datetime('now', '-90 days')
           AND contact_email IS NOT NULL
       `).all().map(r => r.domain)
@@ -353,6 +354,21 @@ export default async function findLeads() {
     const abLeads = scoredLeads.filter(Boolean);
 
     // ── Stage 10/11: Hook + email body + subject + DB insert ─────────────
+    // Pre-check spend cap once before launching 10 concurrent Claude workers.
+    // Workers fire simultaneously so per-request cap checks can race — a single
+    // synchronous guard here prevents the entire stage from starting if cap is hit.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const claudeSpendToday = db.prepare(
+      `SELECT COALESCE(sonnet_cost_usd, 0) + COALESCE(haiku_cost_usd, 0) AS total
+       FROM daily_metrics WHERE date = ?`
+    ).get(todayStr)?.total ?? 0;
+    const claudeCap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '5.00');
+    if (claudeSpendToday >= claudeCap) {
+      await sendAlert(`findLeads: Claude spend cap hit ($${claudeSpendToday.toFixed(3)} >= $${claudeCap}) — skipping Stage 10/11 for ${abLeads.length} leads`);
+      finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped + abLeads.length, costUsd: totalCost });
+      return;
+    }
+
     // cap=10 — Claude Sonnet/Haiku RPM limit ~50; 10 concurrent is safe
     await withConcurrency(abLeads, 10, async (lead) => {
       try {
