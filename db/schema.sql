@@ -272,3 +272,30 @@ CREATE INDEX IF NOT EXISTS idx_daily_metrics_date  ON daily_metrics(date);
 CREATE INDEX IF NOT EXISTS idx_error_log_source    ON error_log(source, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_reject_list_email   ON reject_list(email);
 CREATE INDEX IF NOT EXISTS idx_reject_list_domain  ON reject_list(domain);
+
+-- ── CONFIG ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS config (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
+-- ── NICHES ─────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS niches (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  label       TEXT NOT NULL,
+  query       TEXT NOT NULL,
+  day_of_week INTEGER,
+  enabled     INTEGER DEFAULT 1,
+  sort_order  INTEGER DEFAULT 0,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ── ICP RULES ──────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS icp_rules (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  label       TEXT NOT NULL,
+  points      INTEGER NOT NULL,
+  description TEXT,
+  enabled     INTEGER DEFAULT 1,
+  sort_order  INTEGER DEFAULT 0
+);

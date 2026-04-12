@@ -43,4 +43,22 @@ describe('db helpers', () => {
     addToRejectList('test@spam.com', 'unsubscribe');
     expect(isRejected('test@spam.com')).toBe(true);
   });
+
+  it('initSchema creates config table', async () => {
+    const { getDb } = await import('../../utils/db.js');
+    const row = getDb().prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='config'`).get();
+    expect(row).toBeTruthy();
+  });
+
+  it('initSchema creates niches table', async () => {
+    const { getDb } = await import('../../utils/db.js');
+    const row = getDb().prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='niches'`).get();
+    expect(row).toBeTruthy();
+  });
+
+  it('initSchema creates icp_rules table', async () => {
+    const { getDb } = await import('../../utils/db.js');
+    const row = getDb().prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='icp_rules'`).get();
+    expect(row).toBeTruthy();
+  });
 });
