@@ -208,25 +208,25 @@ export default async function findLeads() {
 
     bumpMetric('leads_discovered', rawLeads.length);
 
-    for (const raw of rawLeads) {
+    // ── Stage 2-6: Extract + Gate 1 + email check + dedup ────────────────
+    // 20 concurrent Gemini calls — safe on paid tier (1,000 RPM generation limit)
+    const extractedLeads = await withConcurrency(rawLeads, 20, async (raw) => {
       try {
         leadsProcessed++;
 
-        // Stages 2–6: Extract + tech fingerprint + signals + judge + DM finder
         const { data: extracted, costUsd: extractCost } = await stages2to6_extract(raw);
         totalCost += extractCost;
         bumpMetric('gemini_cost_usd', extractCost);
         bumpMetric('total_api_cost_usd', extractCost);
 
         if (!extracted) {
-          // Extraction failed — mark and skip
           leadsSkipped++;
-          continue;
+          return null;
         }
 
         bumpMetric('leads_extracted');
 
-        const lead = { ...raw, ...extracted };
+        const lead = { ...raw, ...extracted, extractCost };
 
         // Gate 1: Drop if modern stack + no signals + quality score >= 7
         const techStack = Array.isArray(lead.tech_stack) ? lead.tech_stack : [];
@@ -235,72 +235,76 @@ export default async function findLeads() {
         );
         const hasSignals = Array.isArray(lead.business_signals) && lead.business_signals.length > 0;
         if (modernTech && !hasSignals && (lead.website_quality_score || 0) >= 7) {
-          lead.judge_skip = 1;
           leadsSkipped++;
-          continue;
+          return null;
         }
 
         bumpMetric('leads_judge_passed');
 
-        // Check for contact email
         if (!lead.contact_email) {
           leadsSkipped++;
-          continue;
+          return null;
         }
 
         bumpMetric('leads_email_found');
 
-        // Stage 7: Email verification via MEV
+        // Stage 8: Dedup — all three checks use pre-loaded Sets (no DB query, race-free)
+        // .has() and .add() are synchronous — JS event loop guarantees no interleave
+        const emailDomain = lead.contact_email.split('@')[1];
+        if (
+          rejectedEmails.has(lead.contact_email) ||
+          knownEmails.has(lead.contact_email) ||
+          cooledDomains.has(emailDomain)
+        ) {
+          leadsSkipped++;
+          return null;
+        }
+        knownEmails.add(lead.contact_email);
+        cooledDomains.add(emailDomain);
+
+        return lead;
+      } catch (err) {
+        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        leadsSkipped++;
+        return null;
+      }
+    });
+    const gate1Passed = extractedLeads.filter(Boolean);
+
+    // ── Stage 7: Email verification (MEV) ────────────────────────────────
+    const verifiedLeads = await withConcurrency(gate1Passed, 20, async (lead) => {
+      try {
         const { status: verifyStatus, confidence } = await verifyEmail(lead.contact_email);
         lead.email_status = verifyStatus;
 
         if (verifyStatus === 'invalid' || verifyStatus === 'disposable') {
           leadsSkipped++;
-          // Still insert as email_invalid for tracking
           db.prepare(`
             INSERT INTO leads (business_name, website_url, category, city, contact_email, email_status, status)
             VALUES (?, ?, ?, ?, ?, ?, 'email_invalid')
           `).run(lead.business_name, lead.website_url, lead.category, lead.city, lead.contact_email, verifyStatus);
-          continue;
+          return null;
         }
 
         // Gate 2: unknown + low confidence = skip
         if (verifyStatus === 'unknown' && confidence < 0.5) {
           leadsSkipped++;
-          continue;
+          return null;
         }
 
         bumpMetric('leads_email_valid');
+        return lead;
+      } catch (err) {
+        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        leadsSkipped++;
+        return null;
+      }
+    });
+    const gate2Passed = verifiedLeads.filter(Boolean);
 
-        // Stage 8: Dedup — reject list check
-        if (isRejected(lead.contact_email)) {
-          leadsSkipped++;
-          continue;
-        }
-
-        // Stage 8: Dedup — already in database check
-        const existing = db.prepare(
-          `SELECT id FROM leads WHERE contact_email = ?`
-        ).get(lead.contact_email);
-        if (existing) {
-          leadsSkipped++;
-          continue;
-        }
-
-        // Stage 8: Domain-level cooldown — skip if domain contacted in last 90 days
-        const emailDomain = lead.contact_email.split('@')[1];
-        const recentDomain = db.prepare(`
-          SELECT 1 FROM leads
-          WHERE contact_email LIKE ? AND status IN ('sent', 'replied', 'contacted')
-            AND domain_last_contacted >= datetime('now', '-90 days')
-          LIMIT 1
-        `).get(`%@${emailDomain}`);
-        if (recentDomain) {
-          leadsSkipped++;
-          continue;
-        }
-
-        // Stage 9: ICP scoring
+    // ── Stage 9: ICP scoring ─────────────────────────────────────────────
+    const scoredLeads = await withConcurrency(gate2Passed, 20, async (lead) => {
+      try {
         const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead, rubric, threshA, threshB);
         totalCost += icpCost;
         bumpMetric('gemini_cost_usd', icpCost);
@@ -309,8 +313,9 @@ export default async function findLeads() {
         lead.icp_score = icp.icp_score;
         lead.icp_priority = icp.icp_priority;
         lead.icp_reason = icp.icp_reason;
+        lead.icpCost = icpCost;
 
-        // Gate 3: C-priority -> nurture, not discard
+        // Gate 3: C-priority → nurture (not discarded)
         if (icp.icp_priority === 'C') {
           db.prepare(`
             INSERT INTO leads (
@@ -331,34 +336,41 @@ export default async function findLeads() {
             lead.website_quality_score, lead.judge_reason,
             lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
             lead.email_status, lead.icp_score, lead.icp_priority, lead.icp_reason,
-            extractCost + icpCost
+            lead.extractCost + icpCost
           );
           leadsSkipped++;
-          continue;
+          return null;
         }
 
         bumpMetric('leads_icp_ab');
+        return lead;
+      } catch (err) {
+        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        leadsSkipped++;
+        return null;
+      }
+    });
+    const abLeads = scoredLeads.filter(Boolean);
 
-        // Stage 10: Hook generation (only for A/B priority)
+    // ── Stage 10/11: Hook + email body + subject + DB insert ─────────────
+    // cap=10 — Claude Sonnet/Haiku RPM limit ~50; 10 concurrent is safe
+    await withConcurrency(abLeads, 10, async (lead) => {
+      try {
+        // Stage 10: Hook (Claude Sonnet)
         const hookResult = await stage10_hook(lead, persona);
-        const hook = hookResult.hook;
         totalCost += hookResult.costUsd;
-        // Note: callClaude already writes sonnet_cost_usd + total_api_cost_usd to daily_metrics
 
-        // Stage 11: Email body + subject (only for A/B priority with hook)
+        // Stage 11: Body + subject in parallel (Claude Haiku)
         const [bodyResult, subjectResult] = await Promise.all([
-          stage11_body(lead, hook, persona),
+          stage11_body(lead, hookResult.hook, persona),
           stage11_subject(lead)
         ]);
-        const emailBody = bodyResult.body;
-        const emailSubject = subjectResult.subject;
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
-        // Note: callClaude already writes haiku_cost_usd + total_api_cost_usd to daily_metrics
 
-        const geminiCost = extractCost + icpCost;
+        const geminiCost = lead.extractCost + lead.icpCost;
 
-        // Insert lead into database with full spec columns
+        // Insert lead
         const leadInsert = db.prepare(`
           INSERT INTO leads (
             business_name, website_url, category, city, country, search_query,
@@ -383,7 +395,7 @@ export default async function findLeads() {
           geminiCost
         );
 
-        // Insert pre-generated email into emails table
+        // Insert pre-generated email
         const leadId = leadInsert.lastInsertRowid;
         db.prepare(`
           INSERT INTO emails (
@@ -392,19 +404,19 @@ export default async function findLeads() {
             status, hook_model, body_model, hook_cost_usd, body_cost_usd, total_cost_usd
           ) VALUES (?, 0, ?, ?, ?, ?, 0, 0, 1, 1, 'pending', ?, ?, ?, ?, ?)
         `).run(
-          leadId, emailSubject, emailBody,
-          emailBody.trim().split(/\s+/).filter(Boolean).length,
-          hook, hookResult.model, bodyResult.model,
+          leadId, subjectResult.subject, bodyResult.body,
+          bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
+          hookResult.hook, hookResult.model, bodyResult.model,
           hookResult.costUsd, bodyCost, hookResult.costUsd + bodyCost
         );
 
         bumpMetric('leads_ready');
         leadsReady++;
-      } catch (leadErr) {
-        logError('findLeads.lead', leadErr, { jobName: 'findLeads' });
+      } catch (err) {
+        logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
       }
-    }
+    });
 
     finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped, costUsd: totalCost });
     await sendAlert(`findLeads: ${leadsReady} leads ready, ${leadsProcessed} processed, ${leadsSkipped} skipped (cost $${totalCost.toFixed(4)})`);
