@@ -367,6 +367,9 @@ export default async function findLeads() {
         ]);
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
+        bumpMetric('sonnet_cost_usd', hookResult.costUsd);
+        bumpMetric('haiku_cost_usd', bodyCost);
+        bumpMetric('total_api_cost_usd', hookResult.costUsd + bodyCost);
 
         const geminiCost = lead.extractCost + lead.icpCost;
 
