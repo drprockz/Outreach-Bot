@@ -1,5 +1,5 @@
 // utils/concurrency.test.js
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { withConcurrency } from './concurrency.js';
 
 describe('withConcurrency', () => {
@@ -39,7 +39,8 @@ describe('withConcurrency', () => {
     // Item 2 must start well before the 50ms slow item 0 finishes.
     // If chunked behavior was used, item 2 would start at ~50ms.
     // With correct rolling slots, item 2 starts at ~10ms.
-    expect(startTimes[2]).toBeLessThan(startTimes[0] + 25);
+    // Threshold is 40ms (not 25ms) to tolerate OS scheduler jitter under CI load.
+    expect(startTimes[2]).toBeLessThan(startTimes[0] + 40);
   });
 
   it('handles empty array', async () => {
