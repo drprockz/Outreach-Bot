@@ -1,32 +1,34 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, today } from './utils/db.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, today, getConfigMap, getConfigInt, getConfigStr } from './utils/db.js';
 import { callGemini } from './utils/gemini.js';
 import { callClaude } from './utils/claude.js';
 import { verifyEmail } from './utils/mev.js';
 import { sendAlert } from './utils/telegram.js';
 
-// ── Niche rotation: Mon=1 through Sat=6 ──────────────────
-const NICHES = {
-  1: { label: 'Shopify/D2C brands', query: 'India D2C ecommerce brand Shopify outdated website' },
-  2: { label: 'Real estate agencies', query: 'Mumbai real estate agency property portal outdated website' },
-  3: { label: 'Funded startups', query: 'India funded B2B startup outdated website developer needed' },
-  4: { label: 'Restaurants/cafes', query: 'Mumbai restaurant cafe outdated website no online booking' },
-  5: { label: 'Agencies/consultancies', query: 'Mumbai digital agency overflow web development outsource' },
-  6: { label: 'Healthcare/salons', query: 'India healthcare salon clinic outdated website no booking' }
-};
+// ── Niche rotation: DB-backed ─────────────────────────────
+function getNicheForToday(db) {
+  const dow = new Date().getDay();
+  return db.prepare('SELECT * FROM niches WHERE day_of_week = ? AND enabled = 1 LIMIT 1').get(dow)
+    || db.prepare('SELECT * FROM niches WHERE enabled = 1 ORDER BY sort_order LIMIT 1').get();
+}
 
-function getNicheForToday() {
-  const dow = new Date().getDay(); // 0=Sun, 1=Mon, ..., 6=Sat
-  return NICHES[dow] || NICHES[1]; // Sunday fallback to Monday niche
+function buildIcpRubric(db) {
+  const rules = db.prepare('SELECT * FROM icp_rules WHERE enabled = 1 ORDER BY sort_order').all();
+  return rules.map(r => `${r.points > 0 ? '+' : ''}${r.points}  ${r.label}`).join('\n');
+}
+
+// Strip markdown code fences Gemini sometimes wraps JSON in
+function stripJson(text) {
+  return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 }
 
 // ── Stage 1: Discovery — Gemini with grounding ───────────
-// Run in batches of 30 to get 150 leads total
-async function stage1_discover(niche, batchIndex) {
-  const prompt = `You are a B2B lead researcher. Discover 30 real Indian businesses in the "${niche.label}" niche that likely have outdated websites. Search query context: "${niche.query}". Batch ${batchIndex + 1}/5 — find DIFFERENT businesses than previous batches. Return a JSON array of objects: [{business_name, website_url, city, category}]. Return only valid JSON, no markdown.`;
+// Run in batches of perBatch to get leads total
+async function stage1_discover(niche, batchIndex, perBatch) {
+  const prompt = `You are a B2B lead researcher. Discover ${perBatch} real Indian businesses in the "${niche.label}" niche that likely have outdated websites. Search query context: "${niche.query}". Batch ${batchIndex + 1} — find DIFFERENT businesses than previous batches. Return a JSON array of objects: [{business_name, website_url, city, category}]. Return only valid JSON, no markdown.`;
   const result = await callGemini(prompt, { useGrounding: true });
   try {
-    return { leads: JSON.parse(result.text), costUsd: result.costUsd };
+    return { leads: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
   } catch {
     return { leads: [], costUsd: result.costUsd };
   }
@@ -55,27 +57,20 @@ Business: ${lead.business_name}, Website: ${lead.website_url}, City: ${lead.city
 Return only valid JSON, no markdown.`;
   const result = await callGemini(prompt, { useGrounding: true });
   try {
-    return { data: JSON.parse(result.text), costUsd: result.costUsd };
+    return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
   } catch {
     return { data: null, costUsd: result.costUsd };
   }
 }
 
 // ── Stage 9: ICP scorer — Gemini ─────────────────────────
-async function stage9_icpScore(lead) {
+async function stage9_icpScore(lead, rubric, threshA, threshB) {
   const prompt = `Score this lead on the ICP rubric and return JSON {icp_score: number, icp_priority: "A"|"B"|"C", icp_reason: "brief explanation"}.
 
 Rubric:
-+3  India-based B2C-facing (restaurant, salon, real estate, D2C)
-+2  20+ Google reviews (established business, has budget)
-+2  WordPress/Wix/Squarespace stack (easiest sell)
-+2  Website last updated 2+ years ago
-+1  Active Instagram/Facebook but neglected website
-+1  WhatsApp Business on site but no online booking/ordering
--2  Freelancer or solo consultant (low budget)
--3  Already on modern stack (Next.js, custom React, Webflow)
+${rubric}
 
-Priority: A=7-10, B=4-6, C=0-3
+Priority: A=${threshA}-10, B=${threshB}-${threshA - 1}, C=below ${threshB} (including negative)
 
 Lead data:
 Company: ${lead.business_name}
@@ -88,34 +83,36 @@ Quality score: ${lead.website_quality_score}
 Return only valid JSON.`;
   const result = await callGemini(prompt);
   try {
-    return { data: JSON.parse(result.text), costUsd: result.costUsd };
+    return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
   } catch {
     return { data: { icp_score: 0, icp_priority: 'C', icp_reason: 'parse error' }, costUsd: result.costUsd };
   }
 }
 
 // ── Stage 10: Hook generation — Claude Sonnet ────────────
-async function stage10_hook(lead) {
+async function stage10_hook(lead, persona) {
   const result = await callClaude('sonnet',
-    `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a developer — outdated tech, missing feature, design issue. No fluff, no compliments.`,
+    `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`,
     { maxTokens: 60 }
   );
   return { hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
 }
 
 // ── Stage 11: Email body — Claude Haiku ──────────────────
-async function stage11_body(lead, hook) {
+async function stage11_body(lead, hook, persona) {
   const result = await callClaude('haiku',
-    `Write a cold email from Darshan Parmar (Full-Stack Developer, Simple Inc) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
+    `Write a cold email from ${persona.name} (${persona.role}, ${persona.company}) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
 
 Hook to open with: "${hook}"
+
+Services context: ${persona.services}
 
 Rules:
 - Plain text only, no HTML
 - 50-90 words total
 - No links, no URLs
 - CTA: ask to reply
-- Professional but direct tone
+- Tone: ${persona.tone}
 - Do not mention price
 
 Return only the email body, no subject line.`,
@@ -136,19 +133,46 @@ async function stage11_subject(lead) {
 // ── Main pipeline ────────────────────────────────────────
 export default async function findLeads() {
   const cronId = logCron('findLeads');
+
+  const cfg = getConfigMap();
+
+  if (!getConfigInt(cfg, 'find_leads_enabled', 1)) {
+    finishCron(cronId, { status: 'skipped' });
+    return;
+  }
+
   let totalCost = 0;
   let leadsReady = 0;
   let leadsProcessed = 0;
   let leadsSkipped = 0;
 
   try {
-    const niche = getNicheForToday();
     const db = getDb();
+    const niche = getNicheForToday(db);
 
-    // Stage 1: Discovery — 5 batches of 30 = 150 leads
+    if (!niche) {
+      finishCron(cronId, { status: 'failed', error: 'No enabled niches configured' });
+      await sendAlert('findLeads failed: No enabled niches configured');
+      return;
+    }
+
+    const batches = getConfigInt(cfg, 'find_leads_batches', 5);
+    const perBatch = getConfigInt(cfg, 'find_leads_per_batch', 30);
+    const rubric = buildIcpRubric(db);
+    const threshA = getConfigInt(cfg, 'icp_threshold_a', 7);
+    const threshB = getConfigInt(cfg, 'icp_threshold_b', 4);
+    const persona = {
+      name:     getConfigStr(cfg, 'persona_name',     'Darshan Parmar'),
+      role:     getConfigStr(cfg, 'persona_role',     'Full-Stack Developer'),
+      company:  getConfigStr(cfg, 'persona_company',  'Simple Inc'),
+      tone:     getConfigStr(cfg, 'persona_tone',     'professional but direct'),
+      services: getConfigStr(cfg, 'persona_services', ''),
+    };
+
+    // Stage 1: Discovery — batches of perBatch leads
     let rawLeads = [];
-    for (let batch = 0; batch < 5; batch++) {
-      const { leads: batchLeads, costUsd: discoverCost } = await stage1_discover(niche, batch);
+    for (let batch = 0; batch < batches; batch++) {
+      const { leads: batchLeads, costUsd: discoverCost } = await stage1_discover(niche, batch, perBatch);
       totalCost += discoverCost;
       bumpMetric('gemini_cost_usd', discoverCost);
       bumpMetric('total_api_cost_usd', discoverCost);
@@ -250,7 +274,7 @@ export default async function findLeads() {
         }
 
         // Stage 9: ICP scoring
-        const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead);
+        const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead, rubric, threshA, threshB);
         totalCost += icpCost;
         bumpMetric('gemini_cost_usd', icpCost);
         bumpMetric('total_api_cost_usd', icpCost);
@@ -289,14 +313,14 @@ export default async function findLeads() {
         bumpMetric('leads_icp_ab');
 
         // Stage 10: Hook generation (only for A/B priority)
-        const hookResult = await stage10_hook(lead);
+        const hookResult = await stage10_hook(lead, persona);
         const hook = hookResult.hook;
         totalCost += hookResult.costUsd;
         // Note: callClaude already writes sonnet_cost_usd + total_api_cost_usd to daily_metrics
 
         // Stage 11: Email body + subject (only for A/B priority with hook)
         const [bodyResult, subjectResult] = await Promise.all([
-          stage11_body(lead, hook),
+          stage11_body(lead, hook, persona),
           stage11_subject(lead)
         ]);
         const emailBody = bodyResult.body;
