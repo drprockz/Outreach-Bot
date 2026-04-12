@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, today } from './utils/db.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, today, getConfigMap, getConfigInt, getConfigFloat, getConfigStr } from './utils/db.js';
 import { sendMail } from './utils/mailer.js';
 import { callClaude } from './utils/claude.js';
 import { validate } from './utils/contentValidator.js';
@@ -13,16 +13,18 @@ import { sleep } from './utils/sleep.js';
 // Step 3: +14 days — breakup "I'll leave you alone after this"
 // Step 4: +90 days — quarterly nurture, new thread
 
-const STEP_PROMPTS = {
-  1: (lead) =>
-    `Write a very short follow-up email (2-3 sentences, 40-60 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
-  2: (lead) =>
-    `Write a follow-up email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. Share a brief value angle — mention a relevant result like "helped a ${lead.category || 'similar'} business increase bookings by 40% after redesigning their site." Make it conversational, not salesy. Plain text only. A single relevant link is OK if natural.`,
-  3: (lead) =>
-    `Write a final breakup email (40-50 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
-  4: (lead) =>
-    `Write a quarterly check-in email (50-80 words) from Darshan Parmar to ${lead.contact_name || 'the owner'} at ${lead.business_name}. It has been ~3 months since last contact. Reference something seasonal or timely. Reintroduce yourself briefly. Plain text only. No links.`
-};
+function buildStepPrompts(personaName) {
+  return {
+    1: (lead) =>
+      `Write a very short follow-up email (2-3 sentences, 40-60 words) from ${personaName} to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is a "just checking if my last email landed" bump. Do not repeat the original pitch. Be casual and human. Plain text only. No links.`,
+    2: (lead) =>
+      `Write a follow-up email (50-80 words) from ${personaName} to ${lead.contact_name || 'the owner'} at ${lead.business_name}. Share a brief value angle — mention a relevant result like "helped a ${lead.category || 'similar'} business increase bookings by 40% after redesigning their site." Make it conversational, not salesy. Plain text only. A single relevant link is OK if natural.`,
+    3: (lead) =>
+      `Write a final breakup email (40-50 words) from ${personaName} to ${lead.contact_name || 'the owner'} at ${lead.business_name}. This is the "I'll leave you alone after this" email. Be respectful and brief. Leave the door open. Plain text only. No links.`,
+    4: (lead) =>
+      `Write a quarterly check-in email (50-80 words) from ${personaName} to ${lead.contact_name || 'the owner'} at ${lead.business_name}. It has been ~3 months since last contact. Reference something seasonal or timely. Reintroduce yourself briefly. Plain text only. No links.`
+  };
+}
 
 // Days until next step after current step
 const NEXT_STEP_DAYS = {
@@ -45,7 +47,7 @@ function isHoliday(istDate) {
 }
 
 // Non-negotiable Rule 6: Send window enforced
-function inSendWindow() {
+function inSendWindow(windowStart, windowEnd) {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const ist = new Date(now.getTime() + istOffset);
@@ -54,12 +56,10 @@ function inSendWindow() {
   if (isHoliday(ist)) return false;
   const hour = ist.getUTCHours();
   const minute = ist.getUTCMinutes();
-  const currentTime = hour + minute / 60;
-  const startEnv = process.env.SEND_WINDOW_START_IST;
-  const endEnv = process.env.SEND_WINDOW_END_IST;
-  const windowStart = startEnv !== undefined ? parseFloat(startEnv) + 0.5 : 9.5; // default 9:30 AM (env=9 → 9.5)
-  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM (env=17 → 17.5)
-  return currentTime >= windowStart && currentTime < windowEnd;
+  const currentHour = hour + minute / 60;
+  const start = windowStart + 0.5;
+  const end   = windowEnd   + 0.5;
+  return currentHour >= start && currentHour < end;
 }
 
 export default async function sendFollowups() {
@@ -68,20 +68,35 @@ export default async function sendFollowups() {
   let totalCost = 0;
 
   try {
-    const dailyLimit = parseInt(process.env.DAILY_SEND_LIMIT || '0');
+    const cfg = getConfigMap();
+
+    if (!getConfigInt(cfg, 'send_followups_enabled', 1)) {
+      finishCron(cronId, { status: 'skipped' });
+      return;
+    }
+
+    const dailyLimit  = getConfigInt(cfg,   'daily_send_limit',     parseInt(process.env.DAILY_SEND_LIMIT    || '0'));
+    const delayMin    = getConfigInt(cfg,   'send_delay_min_ms',    parseInt(process.env.SEND_DELAY_MIN_MS   || '180000'));
+    const delayMax    = getConfigInt(cfg,   'send_delay_max_ms',    parseInt(process.env.SEND_DELAY_MAX_MS   || '420000'));
+    const windowStart = getConfigInt(cfg,   'send_window_start',    parseInt(process.env.SEND_WINDOW_START_IST || '9'));
+    const windowEnd   = getConfigInt(cfg,   'send_window_end',      parseInt(process.env.SEND_WINDOW_END_IST   || '17'));
+    const bounceStop  = getConfigFloat(cfg, 'bounce_rate_hard_stop', parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02'));
+    const personaName = getConfigStr(cfg,   'persona_name',          'Darshan Parmar');
+
+    const STEP_PROMPTS = buildStepPrompts(personaName);
+
     if (dailyLimit === 0) {
       finishCron(cronId, { status: 'skipped' });
       return;
     }
 
     // Non-negotiable Rule 6: enforce send window for follow-ups too
-    if (!inSendWindow()) {
+    if (!inSendWindow(windowStart, windowEnd)) {
       finishCron(cronId, { status: 'skipped' });
       return;
     }
 
-    const bounceThreshold = parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02');
-    if (todayBounceRate() > bounceThreshold) {
+    if (todayBounceRate() > bounceStop) {
       await sendAlert('sendFollowups: bounce rate exceeded — skipping');
       finishCron(cronId, { status: 'skipped' });
       return;
@@ -100,16 +115,13 @@ export default async function sendFollowups() {
       ORDER BY ss.next_send_date ASC
     `).all();
 
-    const delayMin = parseInt(process.env.SEND_DELAY_MIN_MS || '180000');
-    const delayMax = parseInt(process.env.SEND_DELAY_MAX_MS || '420000');
-
     for (let i = 0; i < dueSequences.length; i++) {
       const seq = dueSequences[i];
       const nextStep = seq.current_step + 1;
 
       // Check limits
       if (todaySentCount() >= dailyLimit) break;
-      if (todayBounceRate() > bounceThreshold) break;
+      if (todayBounceRate() > bounceStop) break;
 
       // Skip rejected leads
       if (isRejected(seq.contact_email)) {
@@ -206,9 +218,9 @@ export default async function sendFollowups() {
             content_valid, status, sent_at, message_id, send_duration_ms,
             in_reply_to, references_header,
             body_model, body_cost_usd, total_cost_usd
-          ) VALUES (?, ?, ?, ?, 'Darshan Parmar', ?, ?, ?, ?, 0, 1, 1, 'sent', datetime('now'), ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, 1, 'sent', datetime('now'), ?, ?, ?, ?, ?, ?, ?)
         `).run(
-          seq.lead_id, nextStep, inboxUser, domain,
+          seq.lead_id, nextStep, inboxUser, domain, personaName,
           subject, finalBody, finalBody.trim().split(/\s+/).filter(Boolean).length,
           /https?:\/\//i.test(finalBody) ? 1 : 0,
           messageId, sendDuration, inReplyTo, referencesHeader,

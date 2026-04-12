@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, addToRejectList, today } from './utils/db.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, addToRejectList, today, getConfigMap, getConfigInt } from './utils/db.js';
 import { fetchUnseen } from './utils/imap.js';
 import { callClaude } from './utils/claude.js';
 import { sendAlert } from './utils/telegram.js';
@@ -89,6 +89,12 @@ export default async function checkReplies() {
   let totalCost = 0;
 
   try {
+    const cfg = getConfigMap();
+    if (!getConfigInt(cfg, 'check_replies_enabled', 1)) {
+      finishCron(cronId, { status: 'skipped' });
+      return;
+    }
+
     const db = getDb();
 
     // Check both inboxes

@@ -23,18 +23,21 @@ let tmpDir;
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
   process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
-  process.env.DAILY_SEND_LIMIT = '10';
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
-  process.env.BOUNCE_RATE_HARD_STOP = '0.02';
-  process.env.SEND_WINDOW_START_IST = '0';
-  process.env.SEND_WINDOW_END_IST = '23';
-  process.env.SEND_DELAY_MIN_MS = '1000';
-  process.env.SEND_DELAY_MAX_MS = '2000';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_2_USER = 'hello@trysimpleinc.com';
-  const { resetDb, initSchema, getDb } = await import('../utils/db.js');
+  const { resetDb, initSchema, getDb, seedConfigDefaults } = await import('../utils/db.js');
   resetDb();
   initSchema();
+  seedConfigDefaults();
+  const cfgDb = getDb();
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '10');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_followups_enabled', '1');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('bounce_rate_hard_stop', '0.02');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_window_start', '0');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_window_end', '23');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_delay_min_ms', '1');
+  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_delay_max_ms', '2');
   // Insert a sent lead with active sequence due today
   getDb().prepare(`
     INSERT INTO leads (id, business_name, contact_email, contact_name, category, icp_priority, icp_score, status)
@@ -77,10 +80,10 @@ describe('sendFollowups', () => {
   });
 
   it('skips when DAILY_SEND_LIMIT is 0', async () => {
-    process.env.DAILY_SEND_LIMIT = '0';
+    const { getDb } = await import('../utils/db.js');
+    getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '0');
     const sendFollowups = (await import('../sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../utils/db.js');
     // Only the pre-seeded step-0 email should exist — no follow-ups sent
     const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
     expect(followups.length).toBe(0);

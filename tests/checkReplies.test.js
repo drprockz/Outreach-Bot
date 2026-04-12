@@ -24,9 +24,11 @@ beforeEach(async () => {
   process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_2_USER = 'hello@trysimpleinc.com';
-  const { resetDb, initSchema, getDb } = await import('../utils/db.js');
+  const { resetDb, initSchema, getDb, seedConfigDefaults } = await import('../utils/db.js');
   resetDb();
   initSchema();
+  seedConfigDefaults();
+  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('check_replies_enabled', '1');
   getDb().prepare(`
     INSERT INTO leads (id, business_name, contact_email, status) VALUES (1, 'Acme', 'john@acme.com', 'sent')
   `).run();
