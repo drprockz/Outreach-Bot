@@ -1146,4 +1146,29 @@ tbody tr:hover { background: var(--bg-elevated); }
 .mt-md { margin-top: var(--space-md); }
 .mt-lg { margin-top: var(--space-lg); }
 .gap-sm { gap: var(--space-sm); }
+
+/* ── Settings Sidebar ─────────────────────────────────────── */
+.sidebar-section-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  transition: background 0.15s, color 0.15s;
+}
+.sidebar-section-toggle:hover { background: var(--bg-hover); color: var(--text-1); }
+.sidebar-section-toggle.active { color: var(--green); }
+.sidebar-chevron { margin-left: auto; font-size: 10px; }
+.sidebar-sublink {
+  padding-left: 40px !important;
+  font-size: 11px;
+}
 .gap-md { gap: var(--space-md); }

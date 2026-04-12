@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { api } from '../api';
 
 const navItems = [
   { path: '/',          label: 'Overview',   icon: '◉' },
   { path: '/leads',     label: 'Leads',      icon: '◎' },
+  { path: '/funnel',    label: 'Funnel',     icon: '▽' },
   { path: '/send-log',  label: 'Send Log',   icon: '✉' },
   { path: '/replies',   label: 'Replies',    icon: '↩' },
   { path: '/sequences', label: 'Sequences',  icon: '→' },
@@ -14,9 +15,18 @@ const navItems = [
   { path: '/errors',    label: 'Errors',      icon: '⚠', showBadge: true },
 ];
 
+const settingsItems = [
+  { path: '/settings/niches',  label: 'Niches' },
+  { path: '/settings/engines', label: 'Engines' },
+  { path: '/settings/icp',     label: 'ICP Rubric' },
+  { path: '/settings/persona', label: 'Persona' },
+];
+
 export default function Sidebar() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [unresolvedErrors, setUnresolvedErrors] = useState(0);
+  const [settingsOpen, setSettingsOpen] = useState(location.pathname.startsWith('/settings'));
 
   useEffect(() => {
     api.errors('?resolved=0').then(d => {
@@ -50,6 +60,25 @@ export default function Sidebar() {
             )}
           </NavLink>
         ))}
+        <div className="sidebar-section">
+          <button
+            className={`sidebar-link sidebar-section-toggle ${location.pathname.startsWith('/settings') ? 'active' : ''}`}
+            onClick={() => setSettingsOpen(o => !o)}
+          >
+            <span className="icon">⚙</span>
+            Settings
+            <span className="sidebar-chevron">{settingsOpen ? '▾' : '▸'}</span>
+          </button>
+          {settingsOpen && settingsItems.map(item => (
+            <NavLink
+              key={item.path}
+              to={item.path}
+              className={({ isActive }) => `sidebar-link sidebar-sublink ${isActive ? 'active' : ''}`}
+            >
+              {item.label}
+            </NavLink>
+          ))}
+        </div>
       </nav>
       <div className="sidebar-footer">
         <button className="sidebar-logout" onClick={handleLogout}>
