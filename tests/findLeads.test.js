@@ -98,9 +98,9 @@ beforeEach(async () => {
   const { seedConfigDefaults, seedNichesAndIcpRules, getDb } = await import('../utils/db.js');
   seedConfigDefaults();
   seedNichesAndIcpRules();
-  // Override: set small count so test runs only 1 batch of 2 leads
-  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_count', '2');
-  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_per_batch', '2');
+  // Override: 50 leads / 50 per batch = 1 batch (50 is the Math.max floor in findLeads.js)
+  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_count', '50');
+  getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_per_batch', '50');
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_enabled', '1');
 });
 
