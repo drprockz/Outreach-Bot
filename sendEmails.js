@@ -1,5 +1,6 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList, today } from './utils/db.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList, today,
+         getConfigMap, getConfigInt, getConfigFloat } from './utils/db.js';
 import { verifyConnections, sendMail } from './utils/mailer.js';
 import { validate } from './utils/contentValidator.js';
 import { callClaude } from './utils/claude.js';
@@ -23,7 +24,7 @@ function isHoliday(istDate) {
   return HOLIDAYS.includes(mmdd);
 }
 
-function inSendWindow() {
+function inSendWindow(windowStart, windowEnd) {
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
   const ist = new Date(now.getTime() + istOffset);
@@ -33,11 +34,9 @@ function inSendWindow() {
   const hour = ist.getUTCHours();
   const minute = ist.getUTCMinutes();
   const currentTime = hour + minute / 60;
-  const startEnv = process.env.SEND_WINDOW_START_IST;
-  const endEnv = process.env.SEND_WINDOW_END_IST;
-  const windowStart = startEnv !== undefined ? parseFloat(startEnv) + 0.5 : 9.5; // default 9:30 AM (env=9 → 9.5)
-  const windowEnd = endEnv !== undefined ? parseFloat(endEnv) + 0.5 : 17.5; // default 5:30 PM (env=17 → 17.5)
-  return currentTime >= windowStart && currentTime < windowEnd;
+  const wStart = windowStart + 0.5; // env=9 → 9.5 (9:30 AM)
+  const wEnd   = windowEnd   + 0.5; // env=17 → 17.5 (5:30 PM)
+  return currentTime >= wStart && currentTime < wEnd;
 }
 
 function getInboxUser(inboxNumber) {
@@ -50,14 +49,29 @@ export default async function sendEmails() {
   let totalCost = 0;
 
   try {
+    // ── Read config from DB (process.env as fallback) ────
+    const cfg = getConfigMap();
+
+    if (!getConfigInt(cfg, 'send_emails_enabled', 1)) {
+      finishCron(cronId, { status: 'skipped' });
+      return;
+    }
+
+    const dailyLimit  = getConfigInt(cfg,   'daily_send_limit',    parseInt(process.env.DAILY_SEND_LIMIT    || '0'));
+    const maxPerInbox = getConfigInt(cfg,   'max_per_inbox',       parseInt(process.env.MAX_PER_INBOX       || '17'));
+    const delayMin    = getConfigInt(cfg,   'send_delay_min_ms',   parseInt(process.env.SEND_DELAY_MIN_MS   || '180000'));
+    const delayMax    = getConfigInt(cfg,   'send_delay_max_ms',   parseInt(process.env.SEND_DELAY_MAX_MS   || '420000'));
+    const windowStart = getConfigInt(cfg,   'send_window_start',   parseInt(process.env.SEND_WINDOW_START_IST || '9'));
+    const windowEnd   = getConfigInt(cfg,   'send_window_end',     parseInt(process.env.SEND_WINDOW_END_IST   || '17'));
+    const bounceStop  = getConfigFloat(cfg, 'bounce_rate_hard_stop', parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02'));
+
     // ── Pre-flight checks ────────────────────────────────
-    const dailyLimit = parseInt(process.env.DAILY_SEND_LIMIT || '0');
     if (dailyLimit === 0) {
       finishCron(cronId, { status: 'skipped' });
       return;
     }
 
-    if (!inSendWindow()) {
+    if (!inSendWindow(windowStart, windowEnd)) {
       finishCron(cronId, { status: 'skipped' });
       return;
     }
@@ -66,7 +80,7 @@ export default async function sendEmails() {
     await verifyConnections();
 
     // Check bounce rate before sending (Non-negotiable Rule 5)
-    const bounceThreshold = parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02');
+    const bounceThreshold = bounceStop;
     if (todayBounceRate() > bounceThreshold) {
       await sendAlert('BOUNCE RATE exceeded threshold - sending paused');
       finishCron(cronId, { status: 'skipped' });
@@ -94,9 +108,6 @@ export default async function sendEmails() {
       ORDER BY l.icp_priority ASC, l.icp_score DESC
       LIMIT ?
     `).all(remaining);
-
-    const delayMin = parseInt(process.env.SEND_DELAY_MIN_MS || '180000');
-    const delayMax = parseInt(process.env.SEND_DELAY_MAX_MS || '420000');
 
     for (let i = 0; i < queue.length; i++) {
       const item = queue[i];
