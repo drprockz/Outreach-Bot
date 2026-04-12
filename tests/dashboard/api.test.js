@@ -341,3 +341,94 @@ describe('PUT /api/config', () => {
     expect(data.persona_name).toBe('Darshan Parmar');
   });
 });
+
+// NOTE: GET /api/niches must run before POST /api/niches tests — POST tests add rows
+// that would break the length===6 assertion. Declaration order in this file is relied upon.
+describe('GET /api/niches', () => {
+  it('returns seeded niches ordered by sort_order', async () => {
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/niches`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(Array.isArray(data.niches)).toBe(true);
+    expect(data.niches.length).toBe(6);
+    expect(data.niches[0].day_of_week).toBe(1); // Monday first
+  });
+});
+
+describe('POST /api/niches', () => {
+  it('creates a niche and returns it', async () => {
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/niches`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'Test Niche', query: 'test query string here', day_of_week: null, enabled: 1 })
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json();
+    expect(data.niche.label).toBe('Test Niche');
+    expect(data.niche.id).toBeDefined();
+  });
+
+  it('clears conflicting day assignment atomically when day is taken', async () => {
+    const token = await getToken();
+    // Monday (day 1) is already taken by seed
+    const res = await fetch(`${baseUrl}/api/niches`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'New Monday', query: 'new monday query string', day_of_week: 1, enabled: 1 })
+    });
+    expect(res.status).toBe(201);
+    // Old Monday niche should now have day_of_week = null
+    const listRes = await fetch(`${baseUrl}/api/niches`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    const { niches } = await listRes.json();
+    const mondayNiches = niches.filter(n => n.day_of_week === 1);
+    expect(mondayNiches.length).toBe(1);
+    expect(mondayNiches[0].label).toBe('New Monday');
+  });
+});
+
+describe('PUT /api/niches/:id', () => {
+  it('updates a niche', async () => {
+    const token = await getToken();
+    const listRes = await fetch(`${baseUrl}/api/niches`, { headers: { Authorization: `Bearer ${token}` } });
+    const { niches } = await listRes.json();
+    const id = niches[0].id;
+
+    const res = await fetch(`${baseUrl}/api/niches/${id}`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'Updated', query: 'updated query text here', day_of_week: niches[0].day_of_week, enabled: 1 })
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.ok).toBe(true);
+  });
+});
+
+describe('DELETE /api/niches/:id', () => {
+  it('deletes a niche', async () => {
+    const token = await getToken();
+    // Create one first
+    const createRes = await fetch(`${baseUrl}/api/niches`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'To Delete', query: 'to be deleted query', day_of_week: null, enabled: 1 })
+    });
+    const { niche } = await createRes.json();
+
+    const res = await fetch(`${baseUrl}/api/niches/${niche.id}`, {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    expect(res.status).toBe(200);
+
+    const listRes = await fetch(`${baseUrl}/api/niches`, { headers: { Authorization: `Bearer ${token}` } });
+    const { niches } = await listRes.json();
+    expect(niches.find(n => n.id === niche.id)).toBeUndefined();
+  });
+});
