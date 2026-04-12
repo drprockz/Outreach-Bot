@@ -1,9 +1,10 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import 'dotenv/config';
 
-// Gemini 2.5 Flash pricing (per 1M tokens, non-thinking)
-const INPUT_COST_PER_1M = 0.15;
-const OUTPUT_COST_PER_1M = 0.60;
+// Gemini 2.5 Flash pricing (per 1M tokens, standard tier)
+// Source: ai.google.dev/gemini-api/docs/pricing — verified 2026-04-12
+const INPUT_COST_PER_1M = 0.30;
+const OUTPUT_COST_PER_1M = 2.50;
 
 let _client;
 

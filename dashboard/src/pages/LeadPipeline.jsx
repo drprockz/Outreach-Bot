@@ -14,7 +14,7 @@ const statusBadge = {
 
 function parseJson(val) {
   if (!val) return [];
-  try { return JSON.parse(val); } catch { return []; }
+  try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
 export default function LeadPipeline() {

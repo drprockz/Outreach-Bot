@@ -18,6 +18,7 @@ export default function SendLog() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState(null);
   const limit = 25;
 
   function buildParams() {
@@ -110,21 +111,91 @@ export default function SendLog() {
             ) : (data.emails || []).length === 0 ? (
               <tr><td colSpan={13} className="td-muted text-center" style={{ padding: '40px' }}>No emails found.</td></tr>
             ) : data.emails.map((email) => (
-              <tr key={email.id}>
-                <td>{email.business_name || '-'}</td>
-                <td style={{ maxWidth: '220px' }}>{email.subject || '-'}</td>
-                <td className="td-dim">{email.inbox_used || '-'}</td>
-                <td className="td-dim">{email.from_domain || '-'}</td>
-                <td className="td-center">{email.sequence_step ?? 0}</td>
-                <td><span className={`badge ${deliveryBadge[email.status] || 'badge-muted'}`}>{email.status}</span></td>
-                <td className="td-dim td-center">{email.smtp_code || '-'}</td>
-                <td className="td-muted td-center">{email.word_count || '-'}</td>
-                <td className="td-dim td-center">{email.send_duration_ms ? `${(email.send_duration_ms / 1000).toFixed(1)}s` : '-'}</td>
-                <td className="td-dim">{email.hook_model ? email.hook_model.split('-').slice(0, 2).join('-') : '-'}</td>
-                <td className="td-dim">{email.body_model ? email.body_model.split('-').slice(0, 2).join('-') : '-'}</td>
-                <td style={{ color: 'var(--amber)', fontSize: '10px' }}>{email.total_cost_usd != null ? `$${(email.total_cost_usd || 0).toFixed(4)}` : '-'}</td>
-                <td className="td-dim">{email.sent_at ? new Date(email.sent_at).toLocaleString() : '-'}</td>
-              </tr>
+              <React.Fragment key={email.id}>
+                <tr
+                  className="cursor-pointer"
+                  style={{ background: expanded === email.id ? 'var(--surface-2)' : undefined }}
+                  onClick={() => setExpanded(expanded === email.id ? null : email.id)}
+                >
+                  <td>
+                    <span style={{ marginRight: 6, fontSize: 10, color: 'var(--text-muted)' }}>
+                      {expanded === email.id ? '▼' : '▶'}
+                    </span>
+                    {email.business_name || '-'}
+                  </td>
+                  <td style={{ maxWidth: '220px' }}>{email.subject || '-'}</td>
+                  <td className="td-dim">{email.inbox_used || '-'}</td>
+                  <td className="td-dim">{email.from_domain || '-'}</td>
+                  <td className="td-center">{email.sequence_step ?? 0}</td>
+                  <td><span className={`badge ${deliveryBadge[email.status] || 'badge-muted'}`}>{email.status}</span></td>
+                  <td className="td-dim td-center">{email.smtp_code || '-'}</td>
+                  <td className="td-muted td-center">{email.word_count || '-'}</td>
+                  <td className="td-dim td-center">{email.send_duration_ms ? `${(email.send_duration_ms / 1000).toFixed(1)}s` : '-'}</td>
+                  <td className="td-dim">{email.hook_model ? email.hook_model.split('-').slice(0, 2).join('-') : '-'}</td>
+                  <td className="td-dim">{email.body_model ? email.body_model.split('-').slice(0, 2).join('-') : '-'}</td>
+                  <td style={{ color: 'var(--amber)', fontSize: '10px' }}>{email.total_cost_usd != null ? `$${(email.total_cost_usd || 0).toFixed(4)}` : '-'}</td>
+                  <td className="td-dim">{email.sent_at ? new Date(email.sent_at).toLocaleString() : '-'}</td>
+                </tr>
+                {expanded === email.id && (
+                  <tr style={{ background: 'var(--surface-2)' }}>
+                    <td colSpan={13} style={{ padding: '0 16px 16px 32px', borderBottom: '2px solid var(--border)' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, paddingTop: 14 }}>
+                        {/* Left: metadata */}
+                        <div>
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Details</div>
+                          <table style={{ fontSize: 12, width: '100%', borderCollapse: 'collapse' }}>
+                            <tbody>
+                              {[
+                                ['To', email.contact_email || email.inbox_used],
+                                ['From', `${email.from_name || 'Darshan Parmar'} <${email.from_domain ? `darshan@${email.from_domain}` : email.inbox_used}>`],
+                                ['Subject', email.subject],
+                                ['Sequence step', `Step ${email.sequence_step ?? 0}`],
+                                ['Word count', email.word_count],
+                                ['Contains link', email.contains_link ? 'Yes' : 'No'],
+                                ['HTML', email.is_html ? 'Yes' : 'Plain text'],
+                                ['Message ID', email.message_id || '—'],
+                                ['SMTP response', email.smtp_response || '—'],
+                                ['Hook model', email.hook_model || '—'],
+                                ['Body model', email.body_model || '—'],
+                                ['Cost', email.total_cost_usd != null ? `$${email.total_cost_usd.toFixed(6)}` : '—'],
+                              ].map(([label, value]) => (
+                                <tr key={label}>
+                                  <td style={{ color: 'var(--text-muted)', paddingRight: 12, paddingBottom: 4, whiteSpace: 'nowrap' }}>{label}</td>
+                                  <td style={{ color: 'var(--text-primary)', wordBreak: 'break-all' }}>{value}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                        {/* Right: hook + body */}
+                        <div>
+                          {email.hook && (
+                            <>
+                              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Hook</div>
+                              <div style={{
+                                background: 'var(--surface)', border: '1px solid var(--border)',
+                                borderRadius: 6, padding: '10px 14px', fontSize: 13,
+                                color: 'var(--amber)', fontStyle: 'italic', marginBottom: 14,
+                              }}>
+                                {email.hook}
+                              </div>
+                            </>
+                          )}
+                          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Email Body</div>
+                          <div style={{
+                            background: 'var(--surface)', border: '1px solid var(--border)',
+                            borderRadius: 6, padding: '12px 16px', fontSize: 13,
+                            color: 'var(--text-primary)', whiteSpace: 'pre-wrap',
+                            lineHeight: 1.7, fontFamily: 'inherit',
+                          }}>
+                            {email.body || '(no body)'}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             ))}
           </tbody>
         </table>
