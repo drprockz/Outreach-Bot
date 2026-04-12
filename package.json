@@ -1,33 +1,27 @@
 {
-  "name": "outreach-agent",
-  "version": "1.0.0",
-  "description": "Fully automated cold email outreach system powered by Claude AI",
+  "name": "radar",
+  "version": "2.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "setup-db": "node db/setup.js",
-    "test:leads": "node src/scripts/testLeadGen.js",
-    "test:email": "node src/scripts/testEmailGen.js",
-    "test:classify": "node src/scripts/testClassify.js",
-    "test:report": "node src/scripts/testReport.js",
-    "test:costs": "node src/scripts/testCosts.js",
-    "dry-run": "node src/scripts/dryRun.js"
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
-    "better-sqlite3": "^11.7.0",
-    "cors": "^2.8.5",
-    "dotenv": "^16.4.7",
-    "express": "^4.21.2",
-    "imapflow": "^1.0.171",
+    "@google/generative-ai": "^0.21.0",
+    "axios": "^1.7.0",
+    "bcrypt": "^5.1.1",
+    "better-sqlite3": "^9.6.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.19.0",
+    "imapflow": "^1.0.169",
     "jsonwebtoken": "^9.0.2",
-    "mailparser": "^3.7.2",
+    "mailparser": "^3.9.4",
     "node-cron": "^3.0.3",
-    "nodemailer": "^6.9.16",
-    "winston": "^3.17.0"
+    "node-telegram-bot-api": "^0.66.0",
+    "nodemailer": "^6.9.0"
   },
-  "engines": {
-    "node": ">=20.0.0"
+  "devDependencies": {
+    "vitest": "^1.6.0"
   }
 }

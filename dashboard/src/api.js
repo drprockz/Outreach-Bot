@@ -1,52 +1,52 @@
 const BASE = '/api';
 
 function getToken() {
-  return localStorage.getItem('outreach_token');
+  return localStorage.getItem('radar_token');
 }
 
-async function request(path, options = {}) {
-  const token = getToken();
-  const headers = { 'Content-Type': 'application/json', ...options.headers };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+async function request(path, opts = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`,
+      ...(opts.headers || {})
+    }
+  });
   if (res.status === 401) {
-    localStorage.removeItem('outreach_token');
-    window.location.reload();
-    return null;
+    localStorage.removeItem('radar_token');
+    window.location.href = '/login';
+    return;
   }
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
 
-export async function login(password) {
-  const data = await request('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ password }),
-  });
-  if (data?.token) {
-    localStorage.setItem('outreach_token', data.token);
-  }
-  return data;
-}
-
-export function logout() {
-  localStorage.removeItem('outreach_token');
-  window.location.reload();
-}
-
-export function isLoggedIn() {
-  return !!getToken();
-}
-
-export const fetchOverview = () => request('/overview');
-export const fetchPipeline = () => request('/pipeline');
-export const fetchPipelineLead = (id) => request(`/pipeline/${id}`);
-export const updateLeadStatus = (id, status) => request(`/pipeline/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) });
-export const fetchAnalytics = () => request('/analytics');
-export const fetchCosts = () => request('/costs');
-export const fetchCostChart = () => request('/costs/chart');
-export const fetchReports = () => request('/reports');
-export const fetchReport = (date) => request(`/reports/${date}`);
-export const fetchEmails = (page = 1, limit = 20) => request(`/emails?page=${page}&limit=${limit}`);
-export const fetchEmail = (id) => request(`/emails/${id}`);
+export const api = {
+  login: (password) =>
+    fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }).then(r => r.json()),
+  overview:      () => request('/overview'),
+  leads:         (params = '') => request(`/leads${params}`),
+  lead:          (id) => request(`/leads/${id}`),
+  updateStatus:  (id, status) => request(`/leads/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  sendLog:       (params = '') => request(`/send-log${params}`),
+  replies:       () => request('/replies'),
+  sequences:     () => request('/sequences'),
+  cronStatus:    () => request('/cron-status'),
+  cronHistory:   (job) => request(`/cron-status/${job}/history`),
+  health:        () => request('/health'),
+  costs:         () => request('/costs'),
+  errors:        (params = '') => request(`/errors${params}`),
+  resolveError:  (id) => request(`/errors/${id}/resolve`, { method: 'PATCH' }),
+  replyAction:   (id, action) => request(`/replies/${id}/action`, { method: 'PATCH', body: JSON.stringify({ action }) }),
+  replyReject:   (id) => request(`/replies/${id}/reject`, { method: 'POST' }),
+  updateMailTester: (score) => request('/health/mail-tester', { method: 'PATCH', body: JSON.stringify({ score }) }),
+  funnel: () => request('/funnel'),
+  getConfig:      ()          => request('/config'),
+  updateConfig:   (obj)       => request('/config', { method: 'PUT', body: JSON.stringify(obj) }),
+  getNiches:      ()          => request('/niches'),
+  createNiche:    (data)      => request('/niches', { method: 'POST', body: JSON.stringify(data) }),
+  updateNiche:    (id, data)  => request(`/niches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteNiche:    (id)        => request(`/niches/${id}`, { method: 'DELETE' }),
+  getIcpRules:    ()          => request('/icp-rules'),
+  updateIcpRules: (rules)     => request('/icp-rules', { method: 'PUT', body: JSON.stringify(rules) }),
+};

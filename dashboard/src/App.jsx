@@ -1,36 +1,30 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { isLoggedIn } from './api.js';
-import Sidebar from './components/Sidebar.jsx';
-import Login from './views/Login.jsx';
-import Overview from './views/Overview.jsx';
-import Pipeline from './views/Pipeline.jsx';
-import Analytics from './views/Analytics.jsx';
-import Costs from './views/Costs.jsx';
-import Reports from './views/Reports.jsx';
-import Emails from './views/Emails.jsx';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import Sidebar from './components/Sidebar';
+import Login from './pages/Login';
+import Overview from './pages/Overview';
+import LeadPipeline from './pages/LeadPipeline';
+import SendLog from './pages/SendLog';
+import ReplyFeed from './pages/ReplyFeed';
+import SequenceTracker from './pages/SequenceTracker';
+import CronStatus from './pages/CronStatus';
+import HealthMonitor from './pages/HealthMonitor';
+import CostTracker from './pages/CostTracker';
+import ErrorLog from './pages/ErrorLog';
+import FunnelAnalytics from './pages/FunnelAnalytics';
+import NicheManager from './pages/NicheManager';
+import EngineConfig from './pages/EngineConfig';
+import IcpRules from './pages/IcpRules';
+import EmailPersona from './pages/EmailPersona';
 
 function ProtectedLayout() {
-  if (!isLoggedIn()) return <Navigate to="/login" />;
+  const token = localStorage.getItem('radar_token');
+  if (!token) return <Navigate to="/login" replace />;
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: '#050505' }}>
+    <div className="app-shell">
       <Sidebar />
-      <main style={{
-        flex: 1,
-        padding: '32px 40px',
-        overflowY: 'auto',
-        maxHeight: '100vh',
-        background: '#0a0a0a',
-        backgroundImage: 'radial-gradient(ellipse at 0% 0%, #6366f108 0%, transparent 50%)',
-      }}>
-        <Routes>
-          <Route path="/" element={<Overview />} />
-          <Route path="/pipeline" element={<Pipeline />} />
-          <Route path="/analytics" element={<Analytics />} />
-          <Route path="/costs" element={<Costs />} />
-          <Route path="/reports" element={<Reports />} />
-          <Route path="/emails" element={<Emails />} />
-        </Routes>
+      <main className="main-content">
+        <Outlet />
       </main>
     </div>
   );
@@ -41,7 +35,24 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
-        <Route path="/*" element={<ProtectedLayout />} />
+        <Route element={<ProtectedLayout />}>
+          <Route path="/" element={<Overview />} />
+          <Route path="/leads" element={<LeadPipeline />} />
+          <Route path="/send-log" element={<SendLog />} />
+          <Route path="/replies" element={<ReplyFeed />} />
+          <Route path="/sequences" element={<SequenceTracker />} />
+          <Route path="/cron" element={<CronStatus />} />
+          <Route path="/health" element={<HealthMonitor />} />
+          <Route path="/costs" element={<CostTracker />} />
+          <Route path="/errors" element={<ErrorLog />} />
+          <Route path="/funnel" element={<FunnelAnalytics />} />
+          <Route path="/settings" element={<Navigate to="/settings/niches" replace />} />
+          <Route path="/settings/niches"  element={<NicheManager />} />
+          <Route path="/settings/engines" element={<EngineConfig />} />
+          <Route path="/settings/icp"     element={<IcpRules />} />
+          <Route path="/settings/persona" element={<EmailPersona />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );
