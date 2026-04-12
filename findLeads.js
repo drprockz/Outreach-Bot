@@ -4,6 +4,7 @@ import { callGemini } from './utils/gemini.js';
 import { callClaude } from './utils/claude.js';
 import { verifyEmail } from './utils/mev.js';
 import { sendAlert } from './utils/telegram.js';
+import { withConcurrency } from './utils/concurrency.js';
 
 // ── Niche rotation: DB-backed ─────────────────────────────
 function getNicheForToday(db) {
@@ -169,15 +170,41 @@ export default async function findLeads() {
       services: getConfigStr(cfg, 'persona_services', ''),
     };
 
-    // Stage 1: Discovery — batches of perBatch leads
-    let rawLeads = [];
-    for (let batch = 0; batch < batches; batch++) {
-      const { leads: batchLeads, costUsd: discoverCost } = await stage1_discover(niche, batch, perBatch);
-      totalCost += discoverCost;
-      bumpMetric('gemini_cost_usd', discoverCost);
-      bumpMetric('total_api_cost_usd', discoverCost);
-      rawLeads = rawLeads.concat(batchLeads);
-    }
+    // ── Dedup guards — pre-load before any concurrent work ───────────────
+    // Loaded synchronously once. Workers use Set.has/add (synchronous, no await)
+    // so JS's single-threaded event loop guarantees no two workers race on these.
+    const knownEmails = new Set(
+      db.prepare('SELECT contact_email FROM leads WHERE contact_email IS NOT NULL')
+        .all().map(r => r.contact_email)
+    );
+    const rejectedEmails = new Set(
+      db.prepare('SELECT email FROM reject_list').all().map(r => r.email)
+    );
+    const cooledDomains = new Set(
+      db.prepare(`
+        SELECT DISTINCT substr(contact_email, instr(contact_email, '@') + 1) AS domain
+        FROM leads
+        WHERE status IN ('sent', 'replied')
+          AND domain_last_contacted >= datetime('now', '-90 days')
+          AND contact_email IS NOT NULL
+      `).all().map(r => r.domain)
+    );
+
+    // Stage 1: Discovery — all batches concurrent (cap=5 to stay within grounding RPM)
+    const batchIndices = Array.from({ length: batches }, (_, i) => i);
+    const discoveryResults = await withConcurrency(batchIndices, 5, async (batchIndex) => {
+      try {
+        const { leads, costUsd } = await stage1_discover(niche, batchIndex, perBatch);
+        totalCost += costUsd;
+        bumpMetric('gemini_cost_usd', costUsd);
+        bumpMetric('total_api_cost_usd', costUsd);
+        return leads;
+      } catch (err) {
+        logError('findLeads.discovery', err, { jobName: 'findLeads' });
+        return [];
+      }
+    });
+    const rawLeads = discoveryResults.flat();
 
     bumpMetric('leads_discovered', rawLeads.length);
 
