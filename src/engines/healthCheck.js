@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { writeFileSync, readFileSync } from 'fs';
-import { getDb, logCron, finishCron, logError, bumpMetric, today } from './utils/db.js';
-import { checkDomain } from './utils/blacklistCheck.js';
-import { sendAlert } from './utils/telegram.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, today } from '../core/db/index.js';
+import { checkDomain } from '../core/integrations/blacklistCheck.js';
+import { sendAlert } from '../core/integrations/telegram.js';
 
 const DOMAIN = process.env.OUTREACH_DOMAIN || 'trysimpleinc.com';
 

@@ -18,7 +18,7 @@ describe('mailer', () => {
     process.env.SMTP_HOST = 'smtp.gmail.com';
     process.env.SMTP_PORT = '587';
     process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
-    const { sendMail } = await import('../../utils/mailer.js');
+    const { sendMail } = await import('../../../src/core/email/mailer.js');
     const result = await sendMail(1, {
       to: 'test@example.com',
       subject: 'Test subject',
@@ -28,7 +28,7 @@ describe('mailer', () => {
   });
 
   it('verifyConnections resolves without throwing', async () => {
-    const { verifyConnections } = await import('../../utils/mailer.js');
+    const { verifyConnections } = await import('../../../src/core/email/mailer.js');
     await expect(verifyConnections()).resolves.not.toThrow();
   });
 });

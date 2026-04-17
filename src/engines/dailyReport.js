@@ -1,7 +1,7 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, today } from './utils/db.js';
-import { sendAlert } from './utils/telegram.js';
-import { sendMail } from './utils/mailer.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, today } from '../core/db/index.js';
+import { sendAlert } from '../core/integrations/telegram.js';
+import { sendMail } from '../core/email/mailer.js';
 import nodemailer from 'nodemailer';
 
 function getMetrics(db) {

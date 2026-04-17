@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { sleep } from '../../utils/sleep.js';
+import { sleep } from '../../../src/core/lib/sleep.js';
 
 describe('sleep', () => {
   it('resolves after at least minMs', async () => {

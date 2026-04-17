@@ -23,7 +23,7 @@ export function resetDb() {
 }
 
 export function initSchema() {
-  const sql = readFileSync(join(__dirname, '../db/schema.sql'), 'utf8');
+  const sql = readFileSync(join(__dirname, '../../../db/schema.sql'), 'utf8');
   getDb().exec(sql);
 }
 

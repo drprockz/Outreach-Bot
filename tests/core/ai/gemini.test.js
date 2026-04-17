@@ -14,7 +14,7 @@ describe('gemini client', () => {
   it('callGemini returns text and cost', async () => {
     process.env.GEMINI_API_KEY = 'test-key';
     process.env.GEMINI_MODEL = 'gemini-2.5-flash';
-    const { callGemini } = await import('../../utils/gemini.js');
+    const { callGemini } = await import('../../../src/core/ai/gemini.js');
     const result = await callGemini('test prompt');
     expect(result.text).toBe('mock response');
     expect(typeof result.costUsd).toBe('number');

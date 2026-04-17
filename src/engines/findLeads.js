@@ -1,10 +1,10 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from './utils/db.js';
-import { callGemini } from './utils/gemini.js';
-import { callClaude } from './utils/claude.js';
-import { verifyEmail } from './utils/mev.js';
-import { sendAlert } from './utils/telegram.js';
-import { withConcurrency } from './utils/concurrency.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from '../core/db/index.js';
+import { callGemini } from '../core/ai/gemini.js';
+import { callClaude } from '../core/ai/claude.js';
+import { verifyEmail } from '../core/integrations/mev.js';
+import { sendAlert } from '../core/integrations/telegram.js';
+import { withConcurrency } from '../core/lib/concurrency.js';
 
 // ── Niche rotation: DB-backed ─────────────────────────────
 function getNicheForToday(db) {

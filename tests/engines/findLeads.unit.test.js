@@ -1,6 +1,6 @@
 // findLeads.test.js
 import { describe, it, expect } from 'vitest';
-import { buildDiscoveryPrompt } from './findLeads.js';
+import { buildDiscoveryPrompt } from '../../src/engines/findLeads.js';
 
 const niche = { label: 'Restaurants/cafes', query: 'Mumbai restaurant cafe outdated website' };
 

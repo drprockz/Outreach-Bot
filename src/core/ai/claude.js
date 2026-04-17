@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import 'dotenv/config';
-import { getDb, today, logError } from './db.js';
+import { getDb, today, logError } from '../db/index.js';
 
 // Pricing per 1M tokens (Haiku 4.5: $1.00/$5.00, Sonnet 4: $3.00/$15.00)
 const PRICING = {

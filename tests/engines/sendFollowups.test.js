@@ -3,11 +3,11 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-vi.mock('../utils/mailer.js', () => ({
+vi.mock('../../src/core/email/mailer.js', () => ({
   verifyConnections: vi.fn(async () => {}),
   sendMail: vi.fn(async () => ({ messageId: '<followup-123@test.com>' }))
 }));
-vi.mock('../utils/claude.js', () => ({
+vi.mock('../../src/core/ai/claude.js', () => ({
   callClaude: vi.fn(async () => ({
     text: 'Hey just wanted to check if my last email landed in your inbox. Would love to chat about your website if you have a few minutes this week. Let me know either way and I will stop bugging you.',
     costUsd: 0.001,
@@ -15,9 +15,9 @@ vi.mock('../utils/claude.js', () => ({
     outputTokens: 30
   }))
 }));
-vi.mock('../utils/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
-vi.mock('../utils/contentValidator.js', () => ({ validate: vi.fn(() => ({ valid: true })) }));
-vi.mock('../utils/sleep.js', () => ({ sleep: vi.fn(async () => {}) }));
+vi.mock('../../src/core/integrations/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
+vi.mock('../../src/core/email/contentValidator.js', () => ({ validate: vi.fn(() => ({ valid: true })) }));
+vi.mock('../../src/core/lib/sleep.js', () => ({ sleep: vi.fn(async () => {}) }));
 
 let tmpDir;
 beforeEach(async () => {
@@ -26,7 +26,7 @@ beforeEach(async () => {
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_2_USER = 'hello@trysimpleinc.com';
-  const { resetDb, initSchema, getDb, seedConfigDefaults } = await import('../utils/db.js');
+  const { resetDb, initSchema, getDb, seedConfigDefaults } = await import('../../src/core/db/index.js');
   resetDb();
   initSchema();
   seedConfigDefaults();
@@ -54,16 +54,16 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const { resetDb } = await import('../utils/db.js');
+  const { resetDb } = await import('../../src/core/db/index.js');
   resetDb();
   rmSync(tmpDir, { recursive: true });
 });
 
 describe('sendFollowups', () => {
   it('sends follow-up for due sequences and advances step', async () => {
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
 
     // Email should be sent
     const emails = getDb().prepare(`SELECT * FROM emails WHERE sequence_step=1`).all();
@@ -80,9 +80,9 @@ describe('sendFollowups', () => {
   });
 
   it('skips when DAILY_SEND_LIMIT is 0', async () => {
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '0');
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
     // Only the pre-seeded step-0 email should exist — no follow-ups sent
     const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
@@ -90,11 +90,11 @@ describe('sendFollowups', () => {
   });
 
   it('skips rejected leads and marks sequence as unsubscribed', async () => {
-    const { addToRejectList } = await import('../utils/db.js');
+    const { addToRejectList } = await import('../../src/core/db/index.js');
     addToRejectList('john@acme.com', 'unsubscribe');
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const seq = getDb().prepare(`SELECT * FROM sequence_state WHERE lead_id=1`).get();
     expect(seq.status).toBe('unsubscribed');
     // Only the pre-seeded step-0 email should exist — no follow-ups sent
@@ -103,9 +103,9 @@ describe('sendFollowups', () => {
   });
 
   it('does not send follow-ups for future sequences', async () => {
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare(`UPDATE sequence_state SET next_send_date = date('now', '+10 days') WHERE lead_id=1`).run();
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
     // Only the pre-seeded step-0 email should exist — no follow-ups sent
     const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
@@ -113,8 +113,8 @@ describe('sendFollowups', () => {
   });
 
   it('uses threading headers for steps 1-3', async () => {
-    const { sendMail } = await import('../utils/mailer.js');
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const { sendMail } = await import('../../src/core/email/mailer.js');
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
     expect(sendMail).toHaveBeenCalledWith(
       expect.any(Number),
@@ -126,9 +126,9 @@ describe('sendFollowups', () => {
   });
 
   it('logs to cron_log', async () => {
-    const sendFollowups = (await import('../sendFollowups.js')).default;
+    const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='sendFollowups'`).all();
     expect(cronEntries.length).toBe(1);
     expect(cronEntries[0].status).toBe('success');

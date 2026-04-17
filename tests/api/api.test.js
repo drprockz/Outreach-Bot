@@ -23,11 +23,11 @@ beforeAll(async () => {
   process.env.JWT_EXPIRES_IN = '7d';
   process.env.NODE_ENV = 'test';
 
-  const { resetDb, initSchema } = await import('../../utils/db.js');
+  const { resetDb, initSchema } = await import('../../src/core/db/index.js');
   resetDb();
   initSchema();
 
-  const mod = await import('../../dashboard/server.js');
+  const mod = await import('../../src/api/server.js');
   // Start on random port
   server = mod.app.listen(0);
   const port = server.address().port;
@@ -36,7 +36,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (server) server.close();
-  const { resetDb } = await import('../../utils/db.js');
+  const { resetDb } = await import('../../src/core/db/index.js');
   resetDb();
   rmSync(tmpDir, { recursive: true });
 });
@@ -136,7 +136,7 @@ describe('dashboard API', () => {
 
   it('PATCH /api/errors/:id/resolve marks error resolved', async () => {
     // Insert an error first
-    const { getDb } = await import('../../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare(`INSERT INTO error_log (source, error_message) VALUES ('test', 'test error')`).run();
     const err = getDb().prepare(`SELECT id FROM error_log WHERE source='test'`).get();
 
@@ -242,7 +242,7 @@ describe('dashboard API', () => {
 
   it('PATCH /api/leads/:id/status updates lead status', async () => {
     // Insert a lead
-    const { getDb } = await import('../../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare(`INSERT INTO leads (business_name, contact_email, status) VALUES ('TestCo', 'test@testco.com', 'discovered')`).run();
     const lead = getDb().prepare(`SELECT id FROM leads WHERE business_name='TestCo'`).get();
 
@@ -268,7 +268,7 @@ describe('dashboard API', () => {
   });
 
   it('GET /api/leads/:id returns lead detail', async () => {
-    const { getDb } = await import('../../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const lead = getDb().prepare(`SELECT id FROM leads LIMIT 1`).get();
     if (!lead) return; // skip if no leads
 

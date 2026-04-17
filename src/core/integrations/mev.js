@@ -1,6 +1,6 @@
 import axios from 'axios';
 import 'dotenv/config';
-import { getDb, today } from './db.js';
+import { getDb, today } from '../db/index.js';
 
 const MEV_BASE = 'https://api.myemailverifier.com/verify';
 

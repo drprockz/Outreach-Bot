@@ -3,7 +3,7 @@ db/*.sqlite
 db/*.sqlite-wal
 db/*.sqlite-shm
 node_modules/
-dashboard/node_modules/
-dashboard/dist/
+web/node_modules/
+web/dist/
 logs/
 *.log

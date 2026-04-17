@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
-vi.mock('../utils/mailer.js', () => ({
+vi.mock('../../src/core/email/mailer.js', () => ({
   sendMail: vi.fn(async () => ({ messageId: '<report@test.com>' }))
 }));
-vi.mock('../utils/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
+vi.mock('../../src/core/integrations/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
 
 const mockSendMail = vi.fn(async () => ({ messageId: '<report@test.com>' }));
 vi.mock('nodemailer', () => ({
@@ -25,7 +25,7 @@ beforeEach(async () => {
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_1_PASS = 'test';
-  const { resetDb, initSchema, getDb, today } = await import('../utils/db.js');
+  const { resetDb, initSchema, getDb, today } = await import('../../src/core/db/index.js');
   resetDb();
   initSchema();
   // Seed some metrics
@@ -34,15 +34,15 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const { resetDb } = await import('../utils/db.js');
+  const { resetDb } = await import('../../src/core/db/index.js');
   resetDb();
   rmSync(tmpDir, { recursive: true });
 });
 
 describe('dailyReport', () => {
   it('sends telegram summary', async () => {
-    const { sendAlert } = await import('../utils/telegram.js');
-    const dailyReport = (await import('../dailyReport.js')).default;
+    const { sendAlert } = await import('../../src/core/integrations/telegram.js');
+    const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
     expect(sendAlert).toHaveBeenCalled();
     const msg = sendAlert.mock.calls[0][0];
@@ -52,7 +52,7 @@ describe('dailyReport', () => {
   });
 
   it('attempts to send email digest', async () => {
-    const dailyReport = (await import('../dailyReport.js')).default;
+    const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
     expect(mockSendMail).toHaveBeenCalledWith(expect.objectContaining({
       to: 'darshan@simpleinc.in',
@@ -61,22 +61,22 @@ describe('dailyReport', () => {
   });
 
   it('logs to cron_log', async () => {
-    const dailyReport = (await import('../dailyReport.js')).default;
+    const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='dailyReport'`).all();
     expect(cronEntries.length).toBe(1);
     expect(cronEntries[0].status).toBe('success');
   });
 
   it('handles missing metrics gracefully', async () => {
-    const { getDb, today } = await import('../utils/db.js');
+    const { getDb, today } = await import('../../src/core/db/index.js');
     // Delete the seeded metrics to test empty state
     getDb().prepare(`DELETE FROM daily_metrics WHERE date=?`).run(today());
-    const dailyReport = (await import('../dailyReport.js')).default;
+    const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
     // Should still succeed — just report zeros
-    const { sendAlert } = await import('../utils/telegram.js');
+    const { sendAlert } = await import('../../src/core/integrations/telegram.js');
     expect(sendAlert).toHaveBeenCalled();
     const msg = sendAlert.mock.calls[0][0];
     expect(msg).toContain('Found: 0');

@@ -1,8 +1,8 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, addToRejectList, today, getConfigMap, getConfigInt } from './utils/db.js';
-import { fetchUnseen } from './utils/imap.js';
-import { callClaude } from './utils/claude.js';
-import { sendAlert } from './utils/telegram.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, addToRejectList, today, getConfigMap, getConfigInt } from '../core/db/index.js';
+import { fetchUnseen } from '../core/email/imap.js';
+import { callClaude } from '../core/ai/claude.js';
+import { sendAlert } from '../core/integrations/telegram.js';
 
 // ── Classification prompt ────────────────────────────────
 function classifyPrompt(text, subject) {

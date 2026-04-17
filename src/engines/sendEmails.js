@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList, today,
-         getConfigMap, getConfigInt, getConfigFloat } from './utils/db.js';
-import { verifyConnections, sendMail } from './utils/mailer.js';
-import { validate } from './utils/contentValidator.js';
-import { callClaude } from './utils/claude.js';
-import { sendAlert } from './utils/telegram.js';
-import { sleep } from './utils/sleep.js';
+         getConfigMap, getConfigInt, getConfigFloat } from '../core/db/index.js';
+import { verifyConnections, sendMail } from '../core/email/mailer.js';
+import { validate } from '../core/email/contentValidator.js';
+import { callClaude } from '../core/ai/claude.js';
+import { sendAlert } from '../core/integrations/telegram.js';
+import { sleep } from '../core/lib/sleep.js';
 
 // ── Indian holidays (MM-DD) ──────────────────────────────
 // Includes Republic Day, Holi (~mid-Mar), Independence Day, Gandhi Jayanti, Diwali week (~late Oct/Nov)

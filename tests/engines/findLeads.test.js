@@ -4,7 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 
 // Mock all external dependencies before any imports that use them
-vi.mock('../utils/gemini.js', () => ({
+vi.mock('../../src/core/ai/gemini.js', () => ({
   callGemini: vi.fn(async (prompt) => {
     if (prompt.toLowerCase().includes('discover')) {
       return {
@@ -56,7 +56,7 @@ vi.mock('../utils/gemini.js', () => ({
   })
 }));
 
-vi.mock('../utils/claude.js', () => ({
+vi.mock('../../src/core/ai/claude.js', () => ({
   callClaude: vi.fn(async (model, prompt) => {
     if (prompt.includes('ONE sentence')) {
       // Stage 10: hook generation
@@ -79,11 +79,11 @@ vi.mock('../utils/claude.js', () => ({
   })
 }));
 
-vi.mock('../utils/mev.js', () => ({
+vi.mock('../../src/core/integrations/mev.js', () => ({
   verifyEmail: vi.fn(async () => ({ status: 'valid', confidence: 0.9 }))
 }));
 
-vi.mock('../utils/telegram.js', () => ({
+vi.mock('../../src/core/integrations/telegram.js', () => ({
   sendAlert: vi.fn(async () => {})
 }));
 
@@ -92,10 +92,10 @@ let tmpDir;
 beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
   process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
-  const { resetDb, initSchema } = await import('../utils/db.js');
+  const { resetDb, initSchema } = await import('../../src/core/db/index.js');
   resetDb();
   initSchema();
-  const { seedConfigDefaults, seedNichesAndIcpRules, getDb } = await import('../utils/db.js');
+  const { seedConfigDefaults, seedNichesAndIcpRules, getDb } = await import('../../src/core/db/index.js');
   seedConfigDefaults();
   seedNichesAndIcpRules();
   // Override: 50 leads / 50 per batch = 1 batch (50 is the Math.max floor in findLeads.js)
@@ -105,17 +105,17 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  const { resetDb } = await import('../utils/db.js');
+  const { resetDb } = await import('../../src/core/db/index.js');
   resetDb();
   rmSync(tmpDir, { recursive: true });
 });
 
 describe('findLeads', () => {
   it('runs pipeline and inserts ready leads', async () => {
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const leads = getDb().prepare(`SELECT * FROM leads WHERE status='ready'`).all();
 
     expect(leads.length).toBeGreaterThan(0);
@@ -132,14 +132,14 @@ describe('findLeads', () => {
   });
 
   it('skips leads with invalid emails', async () => {
-    const { verifyEmail } = await import('../utils/mev.js');
+    const { verifyEmail } = await import('../../src/core/integrations/mev.js');
     verifyEmail.mockResolvedValueOnce({ status: 'invalid', confidence: 0 });
     verifyEmail.mockResolvedValueOnce({ status: 'invalid', confidence: 0 });
 
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     // Invalid email leads are still inserted with status='email_invalid' for tracking
     const readyLeads = getDb().prepare(`SELECT * FROM leads WHERE status='ready'`).all();
     expect(readyLeads.length).toBe(0);
@@ -149,7 +149,7 @@ describe('findLeads', () => {
   });
 
   it('sets C-priority leads to nurture status', async () => {
-    const { callGemini } = await import('../utils/gemini.js');
+    const { callGemini } = await import('../../src/core/ai/gemini.js');
 
     // Override ICP scoring to return C priority
     const originalImpl = callGemini.getMockImplementation();
@@ -166,10 +166,10 @@ describe('findLeads', () => {
       return originalImpl(prompt, opts);
     });
 
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const nurtureLeads = getDb().prepare(`SELECT * FROM leads WHERE status='nurture'`).all();
     expect(nurtureLeads.length).toBeGreaterThan(0);
     // C-priority leads should NOT have emails generated (skipped stages 10-11)
@@ -179,12 +179,12 @@ describe('findLeads', () => {
 
   it('deduplicates leads already in database', async () => {
     // Insert a lead with the same email first
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare(`INSERT INTO leads (business_name, contact_email, status) VALUES (?, ?, ?)`).run(
       'Existing Company', 'john@acme-restaurant.com', 'sent'
     );
 
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
     // Should only have 2 leads: the pre-existing one + the non-duplicate
@@ -193,11 +193,11 @@ describe('findLeads', () => {
   });
 
   it('skips leads in reject list', async () => {
-    const { addToRejectList, getDb } = await import('../utils/db.js');
+    const { addToRejectList, getDb } = await import('../../src/core/db/index.js');
     addToRejectList('john@acme-restaurant.com', 'unsubscribe');
     addToRejectList('info@betasalon.in', 'hard_bounce');
 
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
     const leads = getDb().prepare(`SELECT * FROM leads`).all();
@@ -205,19 +205,19 @@ describe('findLeads', () => {
   });
 
   it('writes cron_log entries', async () => {
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
-    const { getDb } = await import('../utils/db.js');
+    const { getDb } = await import('../../src/core/db/index.js');
     const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='findLeads'`).all();
     expect(cronEntries.length).toBe(1);
     expect(cronEntries[0].status).toBe('success');
   });
 
   it('sends telegram alert on completion', async () => {
-    const { sendAlert } = await import('../utils/telegram.js');
+    const { sendAlert } = await import('../../src/core/integrations/telegram.js');
 
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
     expect(sendAlert).toHaveBeenCalled();
@@ -226,10 +226,10 @@ describe('findLeads', () => {
   });
 
   it('logs to daily_metrics', async () => {
-    const { default: findLeads } = await import('../findLeads.js');
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
     await findLeads();
 
-    const { getDb, today } = await import('../utils/db.js');
+    const { getDb, today } = await import('../../src/core/db/index.js');
     const metrics = getDb().prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(today());
     expect(metrics).toBeTruthy();
     expect(metrics.leads_discovered).toBeGreaterThan(0);

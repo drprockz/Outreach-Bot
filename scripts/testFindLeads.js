@@ -5,11 +5,11 @@
  * Delete this file after testing.
  */
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected } from './utils/db.js';
-import { callGemini } from './utils/gemini.js';
-import { callClaude } from './utils/claude.js';
-import { verifyEmail } from './utils/mev.js';
-import { sendAlert } from './utils/telegram.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected } from '../src/core/db/index.js';
+import { callGemini } from '../src/core/ai/gemini.js';
+import { callClaude } from '../src/core/ai/claude.js';
+import { verifyEmail } from '../src/core/integrations/mev.js';
+import { sendAlert } from '../src/core/integrations/telegram.js';
 
 const NICHE = { label: 'Real estate agencies', query: 'Mumbai Bangalore Delhi real estate agency property outdated website' };
 

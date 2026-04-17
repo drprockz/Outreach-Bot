@@ -6,8 +6,8 @@
  * Delete after testing.
  */
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, today } from './utils/db.js';
-import { callGemini } from './utils/gemini.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, today } from '../src/core/db/index.js';
+import { callGemini } from '../src/core/ai/gemini.js';
 
 const NICHE = { label: 'Real estate agencies', query: 'Mumbai Bangalore Delhi real estate agency property outdated website' };
 

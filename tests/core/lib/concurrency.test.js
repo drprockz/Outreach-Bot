@@ -1,6 +1,6 @@
 // utils/concurrency.test.js
 import { describe, it, expect } from 'vitest';
-import { withConcurrency } from './concurrency.js';
+import { withConcurrency } from '../../../src/core/lib/concurrency.js';
 
 describe('withConcurrency', () => {
   it('processes all items and returns results in order', async () => {

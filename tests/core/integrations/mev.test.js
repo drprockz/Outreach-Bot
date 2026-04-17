@@ -11,7 +11,7 @@ vi.mock('axios', () => ({
 describe('mev client', () => {
   it('verifyEmail returns status and confidence', async () => {
     process.env.MEV_API_KEY = 'test-key';
-    const { verifyEmail } = await import('../../utils/mev.js');
+    const { verifyEmail } = await import('../../../src/core/integrations/mev.js');
     const result = await verifyEmail('test@example.com');
     expect(result.status).toBe('valid');
     expect(typeof result.confidence).toBe('number');
@@ -19,7 +19,7 @@ describe('mev client', () => {
 
   it('returns skipped when no API key', async () => {
     delete process.env.MEV_API_KEY;
-    const { verifyEmail } = await import('../../utils/mev.js');
+    const { verifyEmail } = await import('../../../src/core/integrations/mev.js');
     const result = await verifyEmail('test@example.com');
     expect(result.status).toBe('skipped');
   });

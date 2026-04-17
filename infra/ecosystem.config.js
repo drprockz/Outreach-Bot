@@ -1,8 +1,15 @@
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = resolve(here, '..');
+
 export default {
   apps: [
     {
       name: 'radar-cron',
-      script: './cron.js',
+      script: resolve(root, 'src/scheduler/cron.js'),
+      cwd: root,
       instances: 1,
       autorestart: true,
       watch: false,
@@ -11,7 +18,8 @@ export default {
     },
     {
       name: 'radar-dashboard',
-      script: './dashboard/server.js',
+      script: resolve(root, 'src/api/server.js'),
+      cwd: root,
       instances: 1,
       autorestart: true,
       watch: false,

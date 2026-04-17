@@ -19,7 +19,7 @@ vi.mock('dns', async () => {
   };
 });
 
-import { checkDomain } from '../../utils/blacklistCheck.js';
+import { checkDomain } from '../../../src/core/integrations/blacklistCheck.js';
 
 describe('blacklistCheck', () => {
   it('returns clean=true when all DNS lookups fail (NXDOMAIN = not listed)', async () => {

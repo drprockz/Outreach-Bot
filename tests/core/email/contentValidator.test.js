@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { validate } from '../../utils/contentValidator.js';
+import { validate } from '../../../src/core/email/contentValidator.js';
 
 describe('contentValidator', () => {
   const goodSubject = 'Quick question about your site';

@@ -1,10 +1,10 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, today, getConfigMap, getConfigInt, getConfigFloat, getConfigStr } from './utils/db.js';
-import { sendMail } from './utils/mailer.js';
-import { callClaude } from './utils/claude.js';
-import { validate } from './utils/contentValidator.js';
-import { sendAlert } from './utils/telegram.js';
-import { sleep } from './utils/sleep.js';
+import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, today, getConfigMap, getConfigInt, getConfigFloat, getConfigStr } from '../core/db/index.js';
+import { sendMail } from '../core/email/mailer.js';
+import { callClaude } from '../core/ai/claude.js';
+import { validate } from '../core/email/contentValidator.js';
+import { sendAlert } from '../core/integrations/telegram.js';
+import { sleep } from '../core/lib/sleep.js';
 
 // ── Sequence steps ───────────────────────────────────────
 // Step 0: Day 0 — cold (already sent by sendEmails.js)
