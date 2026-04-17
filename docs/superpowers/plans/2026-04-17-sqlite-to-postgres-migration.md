@@ -4,7 +4,7 @@
 
 **Goal:** Replace better-sqlite3 with self-hosted PostgreSQL 16 + Prisma ORM across the Radar outreach system, preserving all 12 table schemas and every existing helper behavior.
 
-**Architecture:** Prisma `schema.prisma` becomes the source of truth. A single `PrismaClient` singleton is exported from `utils/db.js` and reused across PM2 processes. Every engine script, utility module, and dashboard route becomes async. No data migration — fresh-start on Postgres.
+**Architecture:** Prisma `schema.prisma` becomes the source of truth. A single `PrismaClient` singleton is exported from `src/core/db/index.js` and reused across PM2 processes. Every engine script, utility module, and dashboard route becomes async. No data migration — fresh-start on Postgres.
 
 **Tech Stack:** PostgreSQL 16, Prisma ORM, Node.js ESM, Vitest, Docker (local dev), PM2 (production).
 
@@ -71,7 +71,7 @@ DATABASE_URL="postgresql://radar:CHANGE_ME@127.0.0.1:5432/radar?schema=public"
 DATABASE_URL_TEST="postgresql://radar:CHANGE_ME@127.0.0.1:5432/radar_test?schema=public"
 ```
 
-Do NOT yet remove `DB_PATH` — it's still used until `utils/db.js` is rewritten.
+Do NOT yet remove `DB_PATH` — it's still used until `src/core/db/index.js` is rewritten.
 
 - [ ] **Step 4: Create the `radar_test` database**
 
@@ -567,19 +567,19 @@ git commit -m "test(db): add postgres test fixture with truncate-per-test"
 
 ---
 
-## Chunk 2: `utils/db.js` Rewrite
+## Chunk 2: `src/core/db/index.js` Rewrite
 
-### Task 2.1: Rewrite `utils/db.js` to export PrismaClient singleton
+### Task 2.1: Rewrite `src/core/db/index.js` to export PrismaClient singleton
 
 **Files:**
-- Modify: `utils/db.js`
-- Modify: `tests/utils/db.test.js`
+- Modify: `src/core/db/index.js`
+- Modify: `tests/core/db/db.test.js`
 
 This is the keystone task — every other module imports from here. Port every helper from the current file to Prisma with the same call signature. Helpers become `async` (breaking change — callers in later tasks will `await` them).
 
-- [ ] **Step 1: Rewrite `utils/db.js`**
+- [ ] **Step 1: Rewrite `src/core/db/index.js`**
 
-Overwrite `utils/db.js` with:
+Overwrite `src/core/db/index.js` with:
 
 ```js
 import { PrismaClient } from '@prisma/client';
@@ -594,7 +594,7 @@ export function getPrisma() {
   return _prisma;
 }
 
-// Convenience: `import { prisma } from './utils/db.js'`
+// Convenience: `import { prisma } from './src/core/db/index.js'`
 export const prisma = new Proxy({}, {
   get(_t, prop) { return getPrisma()[prop]; },
 });
@@ -808,18 +808,18 @@ export async function seedNichesAndIcpRules() {
 
 **Note:** `getDb()` is removed. Callers must switch to either `getPrisma()` or the `prisma` named export (they're equivalent; `prisma` is nicer syntax). `initSchema()` is also removed — Prisma migrations replace it.
 
-- [ ] **Step 2: Rewrite `tests/utils/db.test.js`**
+- [ ] **Step 2: Rewrite `tests/core/db/db.test.js`**
 
 Overwrite with a Prisma-aware version that uses the test fixture:
 
 ```js
 import { describe, it, expect, beforeEach, afterAll } from 'vitest';
-import { truncateAll, closeTestPrisma } from '../helpers/testDb.js';
+import { truncateAll, closeTestPrisma } from '../../helpers/testDb.js';
 import {
   resetDb, today, logError, isRejected, addToRejectList,
   bumpMetric, bumpCostMetric, todaySentCount, todayBounceRate,
   getConfigMap, seedConfigDefaults, seedNichesAndIcpRules, getPrisma,
-} from '../../utils/db.js';
+} from '../../../src/core/db/index.js';
 
 beforeEach(async () => { await truncateAll(); await resetDb(); });
 afterAll(async () => { await resetDb(); await closeTestPrisma(); });
@@ -882,7 +882,7 @@ describe('db helpers', () => {
 
 Run:
 ```bash
-npm test -- tests/utils/db.test.js
+npm test -- tests/core/db/db.test.js
 ```
 
 Expected: all tests pass. If `logError` complains about unknown fields, check your Prisma schema camelCase conversions.
@@ -890,25 +890,25 @@ Expected: all tests pass. If `logError` complains about unknown fields, check yo
 - [ ] **Step 4: Commit**
 
 ```bash
-git add utils/db.js tests/utils/db.test.js
-git commit -m "feat(db): rewrite utils/db.js to use PrismaClient"
+git add src/core/db/index.js tests/core/db/db.test.js
+git commit -m "feat(db): rewrite src/core/db/index.js to use PrismaClient"
 ```
 
 ---
 
-## Chunk 3: Cost-Tracking Utilities (`utils/claude.js`, `utils/mev.js`)
+## Chunk 3: Cost-Tracking Utilities (`src/core/ai/claude.js`, `src/core/integrations/mev.js`)
 
-### Task 3.1: Rewrite `utils/claude.js`
+### Task 3.1: Rewrite `src/core/ai/claude.js`
 
 **Files:**
-- Modify: `utils/claude.js`
-- Modify: `tests/utils/claude.test.js`
+- Modify: `src/core/ai/claude.js`
+- Modify: `tests/core/ai/claude.test.js`
 
-- [ ] **Step 1: Read the current `utils/claude.js`**
+- [ ] **Step 1: Read the current `src/core/ai/claude.js`**
 
 Run:
 ```bash
-cat /home/darshanparmar/Projects/Outreach-Bot/utils/claude.js
+cat /home/darshanparmar/Projects/Outreach-Bot/src/core/ai/claude.js
 ```
 
 Identify every call that uses `getDb()` / `prepare()` / raw SQL against `daily_metrics`. There will be an UPSERT on Sonnet/Haiku cost columns and a read for the spend cap.
@@ -935,26 +935,26 @@ const row = await getPrisma().dailyMetrics.findUnique({ where: { date: today() }
 
 Make every exported function `async`. Update imports at the top:
 ```js
-import { bumpCostMetric, getPrisma, today, logError } from './db.js';
+import { bumpCostMetric, getPrisma, today, logError } from '../db/index.js';
 ```
 
-- [ ] **Step 3: Update `tests/utils/claude.test.js`**
+- [ ] **Step 3: Update `tests/core/ai/claude.test.js`**
 
 Switch from SQLite-based setup to the new fixture:
 ```js
 import { beforeEach, afterAll } from 'vitest';
-import { truncateAll, closeTestPrisma } from '../helpers/testDb.js';
-import { resetDb } from '../../utils/db.js';
+import { truncateAll, closeTestPrisma } from '../../helpers/testDb.js';
+import { resetDb } from '../../../src/core/db/index.js';
 
 beforeEach(async () => { await truncateAll(); await resetDb(); });
 afterAll(async () => { await resetDb(); await closeTestPrisma(); });
 ```
-Await every call into `utils/claude.js`. If tests mock the Anthropic SDK, keep that mocking intact — only change the DB side.
+Await every call into `src/core/ai/claude.js`. If tests mock the Anthropic SDK, keep that mocking intact — only change the DB side.
 
 - [ ] **Step 4: Run tests**
 
 ```bash
-npm test -- tests/utils/claude.test.js
+npm test -- tests/core/ai/claude.test.js
 ```
 
 Expected: all pass.
@@ -962,28 +962,28 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add utils/claude.js tests/utils/claude.test.js
+git add src/core/ai/claude.js tests/core/ai/claude.test.js
 git commit -m "feat(claude): async + prisma for daily_metrics cost tracking"
 ```
 
-### Task 3.2: Rewrite `utils/mev.js`
+### Task 3.2: Rewrite `src/core/integrations/mev.js`
 
 **Files:**
-- Modify: `utils/mev.js`
-- Modify: `tests/utils/mev.test.js`
+- Modify: `src/core/integrations/mev.js`
+- Modify: `tests/core/integrations/mev.test.js`
 
 - [ ] **Step 1: Same mechanical rewrite**
 
-Replace the `daily_metrics` UPSERT with `await bumpCostMetric('mevCostUsd', costUsd)`. Make the exported verify-function `async` (it probably already is). Update imports: `import { bumpCostMetric } from './db.js';`.
+Replace the `daily_metrics` UPSERT with `await bumpCostMetric('mevCostUsd', costUsd)`. Make the exported verify-function `async` (it probably already is). Update imports: `import { bumpCostMetric } from '../db/index.js';` (from `src/core/integrations/mev.js`).
 
-- [ ] **Step 2: Update `tests/utils/mev.test.js`**
+- [ ] **Step 2: Update `tests/core/integrations/mev.test.js`**
 
 Same pattern as `claude.test.js` — swap fixture, await calls.
 
 - [ ] **Step 3: Run tests**
 
 ```bash
-npm test -- tests/utils/mev.test.js
+npm test -- tests/core/integrations/mev.test.js
 ```
 
 Expected: all pass.
@@ -991,7 +991,7 @@ Expected: all pass.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add utils/mev.js tests/utils/mev.test.js
+git add src/core/integrations/mev.js tests/core/integrations/mev.test.js
 git commit -m "feat(mev): async + prisma for daily_metrics cost tracking"
 ```
 
@@ -1011,11 +1011,11 @@ grep -nE "bumpMetric|bumpCostMetric|logError|addToRejectList|isRejected|logCron|
 ```
 Every hit must be either preceded by `await` on the same line, or appear inside a `const x = ...; await x;` pattern. Non-await matches (e.g. `import` lines) are fine.
 
-### Task 4.1: Rewrite `findLeads.js`
+### Task 4.1: Rewrite `src/engines/findLeads.js`
 
 **Files:**
-- Modify: `findLeads.js`
-- Modify: `tests/findLeads.test.js` (only the fixture/setup — assertions stay)
+- Modify: `src/engines/findLeads.js`
+- Modify: `tests/engines/findLeads.test.js` (only the fixture/setup — assertions stay)
 
 - [ ] **Step 1: Walk the file top-to-bottom**
 
@@ -1036,24 +1036,26 @@ For each statement matching `db.prepare` or `getDb()`, replace with a Prisma cal
 
 Including `bumpMetric`, `logError`, `logCron`, `finishCron`, `addToRejectList`, `isRejected` — all now async.
 
-- [ ] **Step 3: Update `tests/findLeads.test.js` fixture**
+- [ ] **Step 3: Update `tests/engines/findLeads.test.js` fixture**
 
-If the test file touches the DB, swap its setup to use `tests/helpers/testDb.js`. If it only tests the pure `buildDiscoveryPrompt` function (as the current `findLeads.test.js` at the repo root does), no changes needed.
+The repo has two test files for this engine:
+- `tests/engines/findLeads.unit.test.js` — pure unit tests of `buildDiscoveryPrompt` (no DB); no fixture changes needed.
+- `tests/engines/findLeads.test.js` — integration tests that touch the DB. Swap its setup to use `tests/helpers/testDb.js`.
 
 - [ ] **Step 4: Run tests**
 
 ```bash
-npm test -- findLeads.test.js tests/findLeads.test.js
+npm test -- tests/engines/findLeads.unit.test.js tests/engines/findLeads.test.js
 ```
 
 Expected: all pass.
 
 - [ ] **Step 5: Run an end-to-end smoke test against local Postgres**
 
-Create a tiny runner `smoke/findLeads-smoke.js` (delete after verifying) or reuse `testFindLeads.js` with a 3-lead cap via `find_leads_count=3` in the `config` table. Run:
+Create a tiny runner `smoke/findLeads-smoke.js` (delete after verifying) or reuse `scripts/testFindLeads.js` with a 3-lead cap via `find_leads_count=3` in the `config` table. Run:
 
 ```bash
-node testFindLeads.js
+node scripts/testFindLeads.js
 ```
 
 Expected: completes without throwing; `leads` table has new rows; `daily_metrics` has a row for today.
@@ -1061,15 +1063,15 @@ Expected: completes without throwing; `leads` table has new rows; `daily_metrics
 - [ ] **Step 6: Commit**
 
 ```bash
-git add findLeads.js tests/findLeads.test.js
+git add src/engines/findLeads.js tests/engines/findLeads.test.js
 git commit -m "feat(findLeads): rewrite queries with prisma, async throughout"
 ```
 
-### Task 4.2: Rewrite `sendEmails.js`
+### Task 4.2: Rewrite `src/engines/sendEmails.js`
 
 **Files:**
-- Modify: `sendEmails.js`
-- Modify: `tests/sendEmails.test.js`
+- Modify: `src/engines/sendEmails.js`
+- Modify: `tests/engines/sendEmails.test.js`
 
 - [ ] **Step 1: Same rewrite pattern**
 
@@ -1084,7 +1086,7 @@ Pay extra attention to:
 - [ ] **Step 3: Run tests**
 
 ```bash
-npm test -- tests/sendEmails.test.js
+npm test -- tests/engines/sendEmails.test.js
 ```
 
 Expected: all pass. If tests assert against the DB, use the new fixture.
@@ -1092,15 +1094,15 @@ Expected: all pass. If tests assert against the DB, use the new fixture.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add sendEmails.js tests/sendEmails.test.js
+git add src/engines/sendEmails.js tests/engines/sendEmails.test.js
 git commit -m "feat(sendEmails): rewrite queries with prisma, async throughout"
 ```
 
-### Task 4.3: Rewrite `sendFollowups.js`
+### Task 4.3: Rewrite `src/engines/sendFollowups.js`
 
 **Files:**
-- Modify: `sendFollowups.js`
-- Modify: `tests/sendFollowups.test.js`
+- Modify: `src/engines/sendFollowups.js`
+- Modify: `tests/engines/sendFollowups.test.js`
 
 - [ ] **Step 1: Same rewrite pattern**
 
@@ -1109,7 +1111,7 @@ Pay attention to `sequence_state` upserts — use `prisma.sequenceState.upsert({
 - [ ] **Step 2: Run tests**
 
 ```bash
-npm test -- tests/sendFollowups.test.js
+npm test -- tests/engines/sendFollowups.test.js
 ```
 
 Expected: all pass.
@@ -1117,19 +1119,19 @@ Expected: all pass.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add sendFollowups.js tests/sendFollowups.test.js
+git add src/engines/sendFollowups.js tests/engines/sendFollowups.test.js
 git commit -m "feat(sendFollowups): rewrite queries with prisma, async throughout"
 ```
 
 ---
 
-## Chunk 5: Engines — `checkReplies`, `dailyReport`, `healthCheck`, `cron.js`
+## Chunk 5: Engines — `checkReplies`, `dailyReport`, `healthCheck`, `src/scheduler/cron.js`
 
-### Task 5.1: Rewrite `checkReplies.js`
+### Task 5.1: Rewrite `src/engines/checkReplies.js`
 
 **Files:**
-- Modify: `checkReplies.js`
-- Modify: `tests/checkReplies.test.js`
+- Modify: `src/engines/checkReplies.js`
+- Modify: `tests/engines/checkReplies.test.js`
 
 - [ ] **Step 1: Rewrite**
 
@@ -1138,16 +1140,16 @@ Standard pattern. Reply-writes use `prisma.reply.create`. Unsubscribe path calls
 - [ ] **Step 2: Tests + commit**
 
 ```bash
-npm test -- tests/checkReplies.test.js
-git add checkReplies.js tests/checkReplies.test.js
+npm test -- tests/engines/checkReplies.test.js
+git add src/engines/checkReplies.js tests/engines/checkReplies.test.js
 git commit -m "feat(checkReplies): rewrite queries with prisma, async throughout"
 ```
 
-### Task 5.2: Rewrite `dailyReport.js`
+### Task 5.2: Rewrite `src/engines/dailyReport.js`
 
 **Files:**
-- Modify: `dailyReport.js`
-- Modify: `tests/dailyReport.test.js`
+- Modify: `src/engines/dailyReport.js`
+- Modify: `tests/engines/dailyReport.test.js`
 
 - [ ] **Step 1: Rewrite**
 
@@ -1160,15 +1162,15 @@ The Telegram + email-digest HTML generation is untouched.
 - [ ] **Step 2: Tests + commit**
 
 ```bash
-npm test -- tests/dailyReport.test.js
-git add dailyReport.js tests/dailyReport.test.js
+npm test -- tests/engines/dailyReport.test.js
+git add src/engines/dailyReport.js tests/engines/dailyReport.test.js
 git commit -m "feat(dailyReport): rewrite queries with prisma, async throughout"
 ```
 
-### Task 5.3: Rewrite `healthCheck.js`
+### Task 5.3: Rewrite `src/engines/healthCheck.js`
 
 **Files:**
-- Modify: `healthCheck.js`
+- Modify: `src/engines/healthCheck.js`
 
 - [ ] **Step 1: Rewrite**
 
@@ -1188,14 +1190,14 @@ await prisma.config.upsert({ where: { key: 'daily_send_limit' }, create: { key: 
 - [ ] **Step 2: Commit** (no existing test file for this engine)
 
 ```bash
-git add healthCheck.js
+git add src/engines/healthCheck.js
 git commit -m "feat(healthCheck): rewrite queries with prisma, async throughout"
 ```
 
-### Task 5.4: Rewrite `cron.js`
+### Task 5.4: Rewrite `src/scheduler/cron.js`
 
 **Files:**
-- Modify: `cron.js`
+- Modify: `src/scheduler/cron.js`
 
 - [ ] **Step 1: `await` each engine**
 
@@ -1216,50 +1218,100 @@ Every engine that was previously fire-and-forget now must be awaited. Errors ins
 - [ ] **Step 2: Commit**
 
 ```bash
-git add cron.js
+git add src/scheduler/cron.js
 git commit -m "feat(cron): await async engines, catch + log unhandled rejections"
 ```
 
 ---
 
-## Chunk 6: Dashboard API
+## Chunk 6: Dashboard API (server + 14 route files + auth middleware)
 
-### Task 6.1: Rewrite `dashboard/server.js`
+The Express API was refactored into a 71-line bootstrap (`src/api/server.js`) + 14 route modules under `src/api/routes/` + one middleware at `src/api/middleware/auth.js`. Each file is small (14–112 lines) so the rewrite is a series of tight per-file edits rather than one monolithic pass.
+
+### Task 6.1: Rewrite `src/api/server.js` + `src/api/middleware/auth.js`
 
 **Files:**
-- Modify: `dashboard/server.js`
-- Modify: `tests/dashboard/api.test.js`
+- Modify: `src/api/server.js`
+- Modify: `src/api/middleware/auth.js`
 
-The dashboard is the longest single file (834 lines) and has the most queries. Rewrite in logical passes rather than one pass.
-
-- [ ] **Step 1: Swap imports**
+- [ ] **Step 1: Swap imports in `src/api/server.js`**
 
 ```js
 // Before
-import { getDb, ... } from '../utils/db.js';
-const db = getDb();
+import { getDb } from '../core/db/index.js';
 // After
-import { getPrisma, ... } from '../utils/db.js';
-const prisma = getPrisma();
+import { getPrisma } from '../core/db/index.js';
 ```
 
-Make every Express route handler `async` and `await` every DB call.
+Make the bootstrap async if it isn't already; route mounts are unchanged.
 
-- [ ] **Step 2: Rewrite route-by-route**
+- [ ] **Step 2: Rewrite `src/api/middleware/auth.js`**
 
-Group work by the dashboard pages in CLAUDE.md §11:
+If it reads from `config` (for `DASHBOARD_PASSWORD` / JWT secret) via `getDb`, swap to Prisma and `await`. The bcrypt + JWT calls are unchanged.
 
-- **Overview** — funnel counts (aggregate queries), metric cards, heatmap
-- **Lead Pipeline** — paginated leads table with filters → `prisma.lead.findMany({ where, skip, take, orderBy })`
-- **Send Log** — email rows joined with lead → `prisma.email.findMany({ include: { lead: true } })`
-- **Reply Feed** — same include pattern
-- **Sequence Tracker** — `prisma.sequenceState.findMany({ include: { lead: true } })`
-- **Cron Job Status** — includes the "NOT TRIGGERED" detection below
-- **Health Monitor** — reads `daily_metrics` + `config`
-- **Cost Tracker** — `daily_metrics` aggregates
-- **Error Log** — `prisma.errorLog.findMany`
+- [ ] **Step 3: Smoke-start the server**
 
-- [ ] **Step 3: Implement "NOT TRIGGERED" detection**
+```bash
+node src/api/server.js &
+curl -sS http://localhost:3001/api/overview
+kill %1
+```
+Expected: server starts without throwing; `/api/overview` either returns data or a well-formed 500 (routes rewritten in 6.2). Either way: no "getDb is not a function" errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/api/server.js src/api/middleware/auth.js
+git commit -m "feat(api): swap bootstrap + auth middleware to prisma"
+```
+
+### Task 6.2: Rewrite the 14 route files
+
+Each route is small. Follow this pattern for every file: swap `getDb()` → `getPrisma()`, make every handler `async`, `await` every DB call, replace raw SQL with Prisma Client calls, convert `0`/`1` booleans to `true`/`false` for boolean columns, and use `JSON.parse` / raw arrays for `Json` columns (Prisma parses automatically — don't double-parse).
+
+Rewrite in this order (simpler first, hardest last):
+
+**Files + what they do:**
+
+| Route file | LOC | Tables read | Notes |
+|---|---|---|---|
+| `src/api/routes/auth.js` | 14 | `config` | Password check + JWT issue. |
+| `src/api/routes/config.js` | 20 | `config` | GET (all) + PUT (by key). Use `upsert`. |
+| `src/api/routes/icpRules.js` | 36 | `icp_rules` | GET + PUT (replace all). Wrap PUT in `prisma.$transaction`. |
+| `src/api/routes/niches.js` | 62 | `niches` | Full CRUD. Use `create` / `update` / `delete`. |
+| `src/api/routes/costs.js` | 38 | `daily_metrics` | Aggregates. Prisma `aggregate` + `findMany`. |
+| `src/api/routes/errors.js` | 42 | `error_log` | List + PATCH `resolved=true`. |
+| `src/api/routes/sendLog.js` | 49 | `emails` + `leads` | `findMany({ include: { lead: true } })` with pagination. |
+| `src/api/routes/replies.js` | 54 | `replies` + `leads` | Same include pattern + PATCH `actionedAt`. |
+| `src/api/routes/leads.js` | 63 | `leads` | Filtered paginated list + detail view. |
+| `src/api/routes/cronStatus.js` | 73 | `cron_log` | Implements "NOT TRIGGERED" detection — see Task 6.3. |
+| `src/api/routes/health.js` | 77 | `daily_metrics` + `config` | Blacklist + bounce-rate gauges. |
+| `src/api/routes/overview.js` | 79 | `leads` + `emails` + `replies` + `daily_metrics` | Dashboard cards + heatmap aggregates. |
+| `src/api/routes/sequences.js` | 29 | `sequence_state` + `leads` | `findMany({ include: { lead: true } })`. |
+| `src/api/routes/funnel.js` | 112 | `leads` + `daily_metrics` | Stage-by-stage waterfall counts — `groupBy` or multiple `count` calls. |
+
+For each file:
+- [ ] **Swap** `getDb` → `getPrisma`, add `async` to handlers, add `await` to every DB call
+- [ ] **Replace** raw SQL with Prisma equivalents (see table above for the right pattern)
+- [ ] **Run** `npm test -- tests/api/api.test.js` after each file to catch regressions as they land
+
+**Commit cadence:** commit in 3 batches to keep blast radius small:
+
+```bash
+# Batch 1 — leaf reads (no joins, no aggregations)
+git add src/api/routes/auth.js src/api/routes/config.js src/api/routes/icpRules.js src/api/routes/niches.js src/api/routes/errors.js
+git commit -m "feat(api): prisma rewrite — auth, config, icp, niches, errors"
+
+# Batch 2 — joined reads (Email+Lead, Reply+Lead, etc.)
+git add src/api/routes/sendLog.js src/api/routes/replies.js src/api/routes/leads.js src/api/routes/sequences.js
+git commit -m "feat(api): prisma rewrite — sendLog, replies, leads, sequences"
+
+# Batch 3 — aggregates + detection logic
+git add src/api/routes/costs.js src/api/routes/health.js src/api/routes/overview.js src/api/routes/cronStatus.js src/api/routes/funnel.js
+git commit -m "feat(api): prisma rewrite — costs, health, overview, cronStatus, funnel"
+```
+
+### Task 6.3: Implement "NOT TRIGGERED" detection in `cronStatus.js`
 
 Per CLAUDE.md §11: for each of 9 scheduled jobs, if `scheduled_at` was >30 minutes ago AND no `cron_log` row exists for today → `NOT TRIGGERED`.
 
@@ -1284,42 +1336,49 @@ async function cronJobStatus(jobName, scheduledHour, scheduledMinute) {
 }
 ```
 
-- [ ] **Step 4: Run dashboard API tests**
+- [ ] **Step 1: Drop the snippet above into `src/api/routes/cronStatus.js`**
+
+Call it once per scheduled job (9 jobs, per CLAUDE.md §11). Return the array to the client.
+
+- [ ] **Step 2: Commit** — already grouped into Batch 3 above.
+
+### Task 6.4: Full dashboard regression
+
+- [ ] **Step 1: Run the dashboard API test suite**
 
 ```bash
-npm test -- tests/dashboard/api.test.js
+npm test -- tests/api/api.test.js
 ```
 
-Expected: all pass. If tests used supertest against the Express app, the fixture should truncate between tests and seed fresh data per test.
+Expected: all pass. The fixture truncates between tests and seeds fresh data per test via `tests/helpers/testDb.js`.
 
-- [ ] **Step 5: Manual click-through**
+- [ ] **Step 2: Manual click-through**
 
-Start the dashboard locally:
 ```bash
-cd dashboard && npm run dev    # or whatever vite runs
-# In another terminal
-node dashboard/server.js
+cd web && npm run dev           # React SPA via Vite
+# In another terminal, from repo root
+node src/api/server.js
 ```
 
 Open each page in a browser. Verify:
 - Zero-row state (empty DB) renders without errors
 - After seeding 3 leads + 1 email + 1 reply manually via `psql`, every card shows the right count
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 3: Commit test-only changes (if any)**
 
 ```bash
-git add dashboard/server.js tests/dashboard/api.test.js
-git commit -m "feat(dashboard): rewrite express api with prisma"
+git add tests/api/api.test.js
+git commit -m "test(api): update fixtures for prisma-based api tests"
 ```
 
 ---
 
 ## Chunk 7: Ops, Cutover, Cleanup
 
-### Task 7.1: Rewrite `backup.sh`
+### Task 7.1: Rewrite `infra/backup.sh`
 
 **Files:**
-- Modify: `backup.sh`
+- Modify: `infra/backup.sh`
 
 - [ ] **Step 1: Replace content**
 
@@ -1338,14 +1397,14 @@ pg_dump \
 - [ ] **Step 2: Make it executable**
 
 ```bash
-chmod +x backup.sh
+chmod +x infra/backup.sh
 ```
 
 - [ ] **Step 3: Local dry-run**
 
 Temporarily swap `rclone rcat …` for `> /tmp/radar-test.dump`. Run:
 ```bash
-./backup.sh
+./infra/backup.sh
 ls -la /tmp/radar-test.dump
 ```
 Expected: non-zero file created. Restore original `rclone` line.
@@ -1353,7 +1412,7 @@ Expected: non-zero file created. Restore original `rclone` line.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add backup.sh
+git add infra/backup.sh
 git commit -m "feat(backup): replace sqlite file-copy with pg_dump to B2"
 ```
 
@@ -1361,12 +1420,12 @@ git commit -m "feat(backup): replace sqlite file-copy with pg_dump to B2"
 
 **Files:**
 - Delete (git rm): `db/schema.sql`
-- Modify: `testFindLeads.js`, `testFullPipeline.js`
+- Modify: `scripts/testFindLeads.js`, `scripts/testFullPipeline.js`
 - Modify: `.env.example` (remove `DB_PATH`)
 
 - [ ] **Step 1: Port ad-hoc test scripts**
 
-`testFindLeads.js` and `testFullPipeline.js` both import from `utils/db.js`. Swap `initSchema()` calls for a no-op (schema is now applied via `prisma migrate deploy`), swap raw SQL for Prisma, and await everywhere. If these scripts were one-off debugging tools, confirm with a quick run whether they still have value; if not, git-rm them.
+`scripts/testFindLeads.js` and `scripts/testFullPipeline.js` both import from `src/core/db/index.js`. Swap `initSchema()` calls for a no-op (schema is now applied via `prisma migrate deploy`), swap raw SQL for Prisma, and await everywhere. If these scripts were one-off debugging tools, confirm with a quick run whether they still have value; if not, git-rm them.
 
 - [ ] **Step 2: Remove `DB_PATH` from `.env.example`**
 
@@ -1383,7 +1442,7 @@ Prisma is the source of truth now. Migrations under `prisma/migrations/` replace
 - [ ] **Step 4: Commit**
 
 ```bash
-git add .env.example testFindLeads.js testFullPipeline.js
+git add .env.example scripts/testFindLeads.js scripts/testFullPipeline.js
 git commit -m "chore(db): remove legacy schema.sql + port ad-hoc test scripts"
 ```
 
@@ -1395,7 +1454,7 @@ git commit -m "chore(db): remove legacy schema.sql + port ad-hoc test scripts"
 npm test
 ```
 
-Expected: all tests pass — including `utils/concurrency.test.js` (which doesn't touch the DB directly but runs in the same Vitest process). Every previously-passing test should still pass. If any fail: the failure is real — diagnose before continuing.
+Expected: all tests pass — including `tests/core/lib/concurrency.test.js` (which doesn't touch the DB directly but runs in the same Vitest process). Every previously-passing test should still pass. If any fail: the failure is real — diagnose before continuing.
 
 - [ ] **Step 1a: Verify no stragglers reference the old API**
 
@@ -1409,14 +1468,14 @@ Expected: only `package.json` lockfile entries (handled in Task 7.5) should stil
 In order, against local Docker Postgres:
 1. Seed config:
    ```bash
-   node -e "(async () => { const m = await import('./utils/db.js'); await m.seedConfigDefaults(); await m.seedNichesAndIcpRules(); await m.resetDb(); })()"
+   node -e "(async () => { const m = await import('./src/core/db/index.js'); await m.seedConfigDefaults(); await m.seedNichesAndIcpRules(); await m.resetDb(); })()"
    ```
 2. Set `find_leads_count=3` in `config` table via psql:
    ```bash
    docker exec radar-pg psql -U radar -d radar -c "UPDATE config SET value='3' WHERE key='find_leads_count';"
    ```
-3. `node findLeads.js` — creates 3 leads
-4. `node sendEmails.js` — with `DAILY_SEND_LIMIT=0` (default), exits cleanly without sending
+3. `node src/engines/findLeads.js` — creates 3 leads
+4. `node src/engines/sendEmails.js` — with `DAILY_SEND_LIMIT=0` (default), exits cleanly without sending
 5. Start dashboard, click every page — all render without error
 
 Expected: no exceptions, data visible in dashboard.
@@ -1510,13 +1569,13 @@ DATABASE_URL="postgresql://radar:<strong-password>@127.0.0.1:5432/radar?schema=p
 - [ ] **Step 10: Seed config**
 
 ```bash
-node -e "(async () => { const m = await import('./utils/db.js'); await m.seedConfigDefaults(); await m.seedNichesAndIcpRules(); await m.resetDb(); })()"
+node -e "(async () => { const m = await import('./src/core/db/index.js'); await m.seedConfigDefaults(); await m.seedNichesAndIcpRules(); await m.resetDb(); })()"
 ```
 
 - [ ] **Step 11: Start PM2**
 
 ```bash
-pm2 start ecosystem.config.js
+pm2 start infra/ecosystem.config.js
 pm2 save
 ```
 
@@ -1571,7 +1630,7 @@ pm2 stop radar-cron radar-dashboard
 cd /home/radar
 git checkout pre-postgres-cutover
 npm install
-pm2 start ecosystem.config.js
+pm2 start infra/ecosystem.config.js
 ```
 
 Because `db/radar.sqlite` is untouched until Task 7.5, this is a clean restore to the last known-good state.
@@ -1583,11 +1642,11 @@ Because `db/radar.sqlite` is untouched until Task 7.5, this is a clean restore t
 - [ ] All 12 Prisma models present in `prisma/schema.prisma`
 - [ ] `prisma migrate deploy` runs cleanly on a fresh DB
 - [ ] `npm test` passes with zero failures
-- [ ] `utils/db.js` exports every helper the old file did (plus `bumpCostMetric`)
-- [ ] `findLeads.js`, `sendEmails.js`, `sendFollowups.js`, `checkReplies.js`, `dailyReport.js`, `healthCheck.js` all async
-- [ ] `cron.js` awaits each engine + catches + logs errors
+- [ ] `src/core/db/index.js` exports every helper the old file did (plus `bumpCostMetric`)
+- [ ] `src/engines/findLeads.js`, `src/engines/sendEmails.js`, `src/engines/sendFollowups.js`, `src/engines/checkReplies.js`, `src/engines/dailyReport.js`, `src/engines/healthCheck.js` all async
+- [ ] `src/scheduler/cron.js` awaits each engine + catches + logs errors
 - [ ] Dashboard renders every page against both empty and seeded DBs
-- [ ] `backup.sh` produces a restorable `pg_dump` archive on B2
+- [ ] `infra/backup.sh` produces a restorable `pg_dump` archive on B2
 - [ ] `CLAUDE_DAILY_SPEND_CAP` still blocks AI calls (test by setting cap to 0.01 temporarily)
 - [ ] `DAILY_SEND_LIMIT=0` still blocks sends
 - [ ] `contentValidator` still runs before every send
