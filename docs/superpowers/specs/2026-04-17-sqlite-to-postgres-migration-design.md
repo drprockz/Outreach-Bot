@@ -89,7 +89,9 @@ Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `c
 | `TEXT` holding JSON arrays (`tech_stack`, `website_problems`, `business_signals`, `blacklist_zones`) | `Json` (Postgres `jsonb`) |
 | `TEXT` status/category columns (`leads.status`, `emails.status`, `replies.category`, `sequence_state.status`, etc.) | `String` — kept as strings, **not enums**, so new states can be added without migrations |
 | `REAL` (general) | `Float` |
-| `REAL` for monetary values (`gemini_cost_usd`, `hook_cost_usd`, `body_cost_usd`, `total_cost_usd`, `classification_cost_usd`, `sonnet_cost_usd`, `haiku_cost_usd`, `mev_cost_usd`, `total_api_cost_usd`, `total_api_cost_inr`, `cost_usd`) | `Decimal @db.Decimal(10, 6)` — avoids floating-point drift on accumulated AI spend |
+| `REAL` for per-row monetary values (`gemini_cost_usd`, `hook_cost_usd`, `body_cost_usd`, `total_cost_usd`, `classification_cost_usd`, `cost_usd`) | `Decimal @db.Decimal(10, 6)` — avoids floating-point drift |
+| `REAL` for aggregated monetary values in `daily_metrics` (`sonnet_cost_usd`, `haiku_cost_usd`, `mev_cost_usd`, `total_api_cost_usd`, `total_api_cost_inr`) | `Decimal @db.Decimal(14, 6)` — wider precision since INR totals can accumulate past 10,000 at Phase 2+ volumes |
+| `DATETIME` scheduling fields (`bounces.retry_after`, `replies.requeue_date`) | `DateTime @db.Timestamptz(6)` — same as other datetimes, nullable |
 | `TEXT` date (`daily_metrics.date` as `YYYY-MM-DD`) | `String` (kept as text for compatibility with existing aggregation logic) |
 | `TEXT` (general) | `String` |
 | `FOREIGN KEY REFERENCES` | Prisma `@relation` |
@@ -119,8 +121,9 @@ Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `c
 | `checkReplies.js` | Rewrite all queries, `async` throughout |
 | `dailyReport.js` | Rewrite all queries, `async` throughout |
 | `healthCheck.js` | Rewrite all queries, `async` throughout |
-| `dashboard/server.js` (+ any route modules) | Rewrite Express route queries |
-| `backup.sh` | Replace SQLite file copy with `pg_dump \| rclone rcat ...` |
+| `dashboard/server.js` (+ any route modules) | Rewrite Express route queries — including the Cron Job Status "NOT TRIGGERED" detection (`scheduled_at >30 min ago` + no `cron_log` row today) which needs careful Prisma translation |
+| `cron.js` | Rewrite — `await` each engine's top-level function (every engine becomes async) |
+| `backup.sh` | Replace SQLite file copy with `pg_dump \| rclone rcat ...`; `DB_PASSWORD` sourced from `~/.pgpass` (not `.env`), since shell cron runs outside PM2's env |
 | `.env` / `.env.example` | Add `DATABASE_URL`; remove `DB_PATH` |
 | `package.json` | Remove `better-sqlite3`; add `@prisma/client`, `prisma` (dev) |
 | `ecosystem.config.js` | No code change (PrismaClient inherits env from `dotenv`) |
@@ -187,14 +190,16 @@ PGPASSWORD="$DB_PASSWORD" pg_dump \
 ### Phase 2 — VPS Cutover (one evening, after 8:30 PM `dailyReport` run)
 
 1. `pm2 stop radar-cron radar-dashboard`
-2. Install Postgres 16 (`sudo apt install postgresql-16`)
-3. Create role + DB + password; apply `postgresql.conf` tuning; `systemctl restart postgresql`
-4. `git pull` the migration branch
-5. `npm install` (adds `@prisma/client`, removes `better-sqlite3`)
-6. `npx prisma generate` + `npx prisma migrate deploy`
-7. Update `.env` with `DATABASE_URL` and `DB_PASSWORD`
-8. `pm2 start ecosystem.config.js`
-9. Tail logs for next morning's 9 AM `findLeads` — verify first job writes cleanly to Postgres
+2. `git tag pre-postgres-cutover` (explicit rollback anchor)
+3. Install Postgres 16 (`sudo apt install postgresql-16`)
+4. Create role + DB + password; apply `postgresql.conf` tuning; `systemctl restart postgresql`
+5. Create `~/.pgpass` with `127.0.0.1:5432:radar:radar:<password>` (chmod 600) — used by `backup.sh` cron
+6. `git pull` the migration branch
+7. `npm install` (adds `@prisma/client`, removes `better-sqlite3`)
+8. `npx prisma generate` + `npx prisma migrate deploy`
+9. Update `.env` with `DATABASE_URL`
+10. `pm2 start ecosystem.config.js`
+11. Tail logs for next morning's 9 AM `findLeads` — verify first job writes cleanly to Postgres
 
 ### Phase 3 — Cleanup (after 48h clean run)
 
@@ -207,7 +212,7 @@ PGPASSWORD="$DB_PASSWORD" pg_dump \
 If Postgres misbehaves within 48h of cutover:
 
 1. `pm2 stop radar-cron radar-dashboard`
-2. `git checkout <pre-migration-tag>` (tagged before step 4 of Phase 2)
+2. `git checkout pre-postgres-cutover`
 3. `npm install`
 4. `pm2 start ecosystem.config.js`
 
