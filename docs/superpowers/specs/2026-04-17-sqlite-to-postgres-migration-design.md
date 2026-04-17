@@ -32,7 +32,7 @@ No data migration — the current SQLite database is pre-launch state and can be
 
 - Install and configure PostgreSQL 16 locally on the VPS (localhost-only)
 - Create `prisma/schema.prisma` translating all 9 tables + indices + foreign keys
-- Rewrite `utils/db.js` to export a `PrismaClient` singleton
+- Rewrite `utils/db.js` to export a `PrismaClient` singleton **and port every existing helper** (see `utils/db.js` Helper Inventory below) to Prisma equivalents
 - Rewrite every query in: `findLeads.js`, `sendEmails.js`, `sendFollowups.js`, `checkReplies.js`, `dailyReport.js`, `healthCheck.js`
 - Rewrite every query in `dashboard/server.js` and any dashboard route files
 - Replace `backup.sh` with a `pg_dump | rclone` pipeline to Backblaze B2
@@ -77,7 +77,11 @@ work_mem = 16MB
 
 ## Schema Translation
 
-Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `cron_log`, `daily_metrics`, `error_log`, `sequence_state`) is ported 1:1 with the following type mapping.
+Every existing table in `db/schema.sql` is ported 1:1 with the type mapping below. CLAUDE.md §4 documents 9 core tables; `db/schema.sql` additionally defines `config`, `niches`, and `icp_rules` (added in radar-v2). All **12 tables** are in scope:
+
+**Core pipeline (9):** `leads`, `emails`, `bounces`, `replies`, `reject_list`, `cron_log`, `daily_metrics`, `error_log`, `sequence_state`
+
+**Configuration (3):** `config` (runtime settings, `TEXT` key/value), `niches` (daily category rotation, 6 seeded rows), `icp_rules` (scoring rules, 8 seeded rows)
 
 ### Type Mapping
 
@@ -102,9 +106,38 @@ Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `c
 
 - Every column name (snake_case on the DB side; Prisma `@map` for any rename mismatches)
 - Every default value (e.g. `status DEFAULT 'discovered'`, `country DEFAULT 'IN'`)
-- Every index listed in CLAUDE.md §4 ("INDICES")
+- Every index from `db/schema.sql`
 - The full `status` lifecycle strings for both `leads` and `emails`
 - The 5-step `sequence_state` semantics (step 0 → 4, +3/+7/+14/+90 day offsets)
+- `config.key` as primary key (no surrogate `id`), since the codebase looks up by key
+- `niches` and `icp_rules` seed data — re-seeded on fresh DB via `seedNichesAndIcpRules()`
+
+---
+
+## `utils/db.js` Helper Inventory
+
+Every helper currently exported from `utils/db.js` must have a Prisma equivalent with the same signature (callers are unchanged). All become `async`.
+
+| Helper | Current behavior | Prisma port |
+|---|---|---|
+| `getDb()` | Returns `better-sqlite3` singleton | Replaced by `prisma` export (PrismaClient singleton) |
+| `resetDb()` | Closes + nulls the singleton (test-only) | `await prisma.$disconnect()` + null the singleton |
+| `initSchema()` | Executes `db/schema.sql` | **Deleted** — replaced by `prisma migrate deploy` |
+| `today()` | Returns `YYYY-MM-DD` for IST-ish current date | Unchanged (pure fn) |
+| `bumpMetric(field, amount)` | `INSERT … ON CONFLICT DO NOTHING` then `UPDATE` | `prisma.dailyMetrics.upsert({ where: { date }, create: {...}, update: { [field]: { increment: amount } } })` |
+| `logError(source, err, opts)` | Inserts into `error_log` | `prisma.errorLog.create({ data: {...} })` |
+| `logCron(jobName)` | Inserts `running` row, returns id | `prisma.cronLog.create({ data: { jobName, status: 'running' } })` → returns `id` |
+| `finishCron(id, opts)` | Computes duration, updates row | Same, using `prisma.cronLog.findUnique` + `update`; or compute in JS and single `update` |
+| `isRejected(email)` | Matches on email OR domain | `prisma.rejectList.findFirst({ where: { OR: [{ email }, { domain }] } })` |
+| `addToRejectList(email, reason)` | `INSERT OR IGNORE` | `prisma.rejectList.upsert` (or `createMany` with `skipDuplicates: true`) |
+| `todaySentCount()` | Reads `daily_metrics.emails_sent` for today | `prisma.dailyMetrics.findUnique({ where: { date } })` |
+| `todayBounceRate()` | Reads today's row, computes ratio | Same query, JS division |
+| `getConfigMap()` | `SELECT key, value FROM config` → object | `prisma.config.findMany()` + `Object.fromEntries` |
+| `getConfigInt/Float/Str(cfg, key, fallback)` | Pure coercion | Unchanged |
+| `seedConfigDefaults()` | `INSERT OR IGNORE` × ~24 rows | `prisma.config.createMany({ skipDuplicates: true, data: [...] })` |
+| `seedNichesAndIcpRules()` | Count-then-insert | Same semantics with Prisma `count` + `createMany` |
+
+**Note:** The `daily_metrics` UPSERT pattern currently repeats in `utils/db.js` (`bumpMetric`), `utils/claude.js`, and `utils/mev.js`. During the rewrite, consolidate into a single `bumpCostMetric(field, amount)` helper in `utils/db.js` so the three call sites can't drift.
 
 ---
 
@@ -112,7 +145,7 @@ Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `c
 
 | File | Action |
 |---|---|
-| `prisma/schema.prisma` | **New** — all 9 tables translated |
+| `prisma/schema.prisma` | **New** — all 12 tables translated (9 pipeline + `config`, `niches`, `icp_rules`) |
 | `prisma/migrations/<ts>_init/` | **New** — generated by `prisma migrate dev --name init` |
 | `utils/db.js` | **Rewrite** — export `PrismaClient` singleton |
 | `findLeads.js` | Rewrite all queries to Prisma Client, `async` throughout |
@@ -123,11 +156,16 @@ Every existing table (`leads`, `emails`, `bounces`, `replies`, `reject_list`, `c
 | `healthCheck.js` | Rewrite all queries, `async` throughout |
 | `dashboard/server.js` (+ any route modules) | Rewrite Express route queries — including the Cron Job Status "NOT TRIGGERED" detection (`scheduled_at >30 min ago` + no `cron_log` row today) which needs careful Prisma translation |
 | `cron.js` | Rewrite — `await` each engine's top-level function (every engine becomes async) |
+| `utils/claude.js` | Rewrite — `daily_metrics` UPSERT (Sonnet/Haiku cost) + spend-cap read to Prisma; make async. Silent failure here would break `CLAUDE_DAILY_SPEND_CAP`. |
+| `utils/mev.js` | Rewrite — `mev_cost_usd` + `total_api_cost_usd` UPSERT to Prisma; make async. Caller in `findLeads.js` already awaits. |
 | `backup.sh` | Replace SQLite file copy with `pg_dump \| rclone rcat ...`; `DB_PASSWORD` sourced from `~/.pgpass` (not `.env`), since shell cron runs outside PM2's env |
 | `.env` / `.env.example` | Add `DATABASE_URL`; remove `DB_PATH` |
 | `package.json` | Remove `better-sqlite3`; add `@prisma/client`, `prisma` (dev) |
 | `ecosystem.config.js` | No code change (PrismaClient inherits env from `dotenv`) |
 | `db/radar.sqlite` | **Deleted** after 48h of clean Postgres runs |
+| `db/schema.sql` | **Deleted** in Phase 3 — Prisma is the new source of truth |
+| `tests/**/*.test.js`, `findLeads.test.js`, `utils/concurrency.test.js` | Update Vitest fixtures to point at a per-test Postgres database (`DATABASE_URL` override) and use `prisma.$disconnect()` instead of `resetDb()`. Vitest already runs via `npm test`. |
+| `testFindLeads.js`, `testFullPipeline.js` | Update to use Prisma client (ad-hoc scripts — not part of Vitest suite) |
 
 ### Query Rewrite Pattern
 
