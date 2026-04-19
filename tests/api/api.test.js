@@ -340,6 +340,26 @@ describe('PUT /api/config', () => {
     expect(data.daily_send_limit).toBe('20');
     expect(data.persona_name).toBe('Darshan Parmar');
   });
+
+  it('PUT /api/config rejects icp_weights that do not sum to 100', async () => {
+    const token = await getToken();
+    const r = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ icp_weights: JSON.stringify({ firmographic: 50, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 }) })
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it('PUT /api/config accepts valid icp_weights summing to 100', async () => {
+    const token = await getToken();
+    const r = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ icp_weights: JSON.stringify({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 }) })
+    });
+    expect(r.status).toBe(200);
+  });
 });
 
 // NOTE: GET /api/niches must run before POST /api/niches tests — POST tests add rows

@@ -21,6 +21,8 @@ import cronStatusRoutes from './routes/cronStatus.js';
 import healthRoutes from './routes/health.js';
 import costsRoutes from './routes/costs.js';
 import errorsRoutes from './routes/errors.js';
+import offerRoutes from './routes/offer.js';
+import icpProfileRoutes from './routes/icpProfile.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
@@ -51,6 +53,8 @@ app.use('/api/cron-status', cronStatusRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/costs', costsRoutes);
 app.use('/api/errors', errorsRoutes);
+app.use('/api/offer', offerRoutes);
+app.use('/api/icp-profile', icpProfileRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
 const distPath = join(repoRoot, 'web/dist');
