@@ -1,23 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-
-let tmpDir;
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma, getTestPrisma } from '../helpers/testDb.js';
 
 beforeEach(async () => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-  process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
-  const { resetDb, initSchema } = await import('../../src/core/db/index.js');
-  resetDb();
-  initSchema();
+  await truncateAll();
+  const { resetDb } = await import('../../src/core/db/index.js');
+  await resetDb();
 });
 
-afterEach(async () => {
-  const { resetDb } = await import('../../src/core/db/index.js');
-  resetDb();
-  rmSync(tmpDir, { recursive: true });
-});
+afterAll(async () => { await closeTestPrisma(); });
 
 const baseLead = {
   business_name: 'Acme', website_url: 'https://x.com', category: 'restaurant', city: 'Mumbai',
@@ -40,48 +30,44 @@ const baseLead = {
 describe('insertLead', () => {
   it('status=ready inserts all columns and sets email_verified_at', async () => {
     const { insertLead } = await import('../../src/engines/findLeads.js');
-    const { getDb } = await import('../../src/core/db/index.js');
-    const db = getDb();
-    insertLead(db, baseLead, { query: 'q' }, 'ready');
-    const row = db.prepare('SELECT * FROM leads').get();
+    await insertLead(baseLead, { query: 'q' }, 'ready');
+    const prisma = getTestPrisma();
+    const row = await prisma.lead.findFirst();
     expect(row.status).toBe('ready');
-    expect(row.icp_score).toBe(75);
-    expect(row.email_verified_at).not.toBeNull();
-    expect(JSON.parse(row.icp_breakdown).firmographic).toBe(18);
+    expect(row.icpScore).toBe(75);
+    expect(row.emailVerifiedAt).not.toBeNull();
+    expect(row.icpBreakdown.firmographic).toBe(18);
   });
 
   it('status=nurture leaves email_verified_at NULL', async () => {
     const { insertLead } = await import('../../src/engines/findLeads.js');
-    const { getDb } = await import('../../src/core/db/index.js');
-    const db = getDb();
-    insertLead(db, { ...baseLead, icp_priority: 'C', icp_score: 20 }, { query: 'q' }, 'nurture');
-    const row = db.prepare('SELECT * FROM leads').get();
+    await insertLead({ ...baseLead, icp_priority: 'C', icp_score: 20 }, { query: 'q' }, 'nurture');
+    const prisma = getTestPrisma();
+    const row = await prisma.lead.findFirst();
     expect(row.status).toBe('nurture');
-    expect(row.email_verified_at).toBeNull();
+    expect(row.emailVerifiedAt).toBeNull();
   });
 
   it('status=disqualified stores disqualifiers JSON', async () => {
     const { insertLead } = await import('../../src/engines/findLeads.js');
-    const { getDb } = await import('../../src/core/db/index.js');
-    const db = getDb();
     const lead = { ...baseLead, icp_disqualifiers: ['locked-in contract'] };
-    insertLead(db, lead, { query: 'q' }, 'disqualified');
-    const row = db.prepare('SELECT * FROM leads').get();
+    await insertLead(lead, { query: 'q' }, 'disqualified');
+    const prisma = getTestPrisma();
+    const row = await prisma.lead.findFirst();
     expect(row.status).toBe('disqualified');
-    expect(JSON.parse(row.icp_disqualifiers)).toEqual(['locked-in contract']);
-    expect(row.email_verified_at).toBeNull();
+    expect(row.icpDisqualifiers).toEqual(['locked-in contract']);
+    expect(row.emailVerifiedAt).toBeNull();
   });
 
   it('defaults missing optional fields to safe values', async () => {
     const { insertLead } = await import('../../src/engines/findLeads.js');
-    const { getDb } = await import('../../src/core/db/index.js');
-    const db = getDb();
     const minimal = { ...baseLead };
     delete minimal.employees_estimate;
     delete minimal.business_stage;
-    insertLead(db, minimal, { query: 'q' }, 'nurture');
-    const row = db.prepare('SELECT * FROM leads').get();
-    expect(row.employees_estimate).toBe('unknown');
-    expect(row.business_stage).toBe('unknown');
+    await insertLead(minimal, { query: 'q' }, 'nurture');
+    const prisma = getTestPrisma();
+    const row = await prisma.lead.findFirst();
+    expect(row.employeesEstimate).toBe('unknown');
+    expect(row.businessStage).toBe('unknown');
   });
 });
