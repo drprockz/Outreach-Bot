@@ -1,95 +1,138 @@
-import Database from 'better-sqlite3';
-import { readFileSync } from 'fs';
-import { fileURLToPath } from 'url';
-import { join, dirname } from 'path';
+import { PrismaClient } from '@prisma/client';
 import 'dotenv/config';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+let _prisma;
 
-let _db;
-
-export function getDb() {
-  if (!_db) {
-    _db = new Database(process.env.DB_PATH || '/home/radar/db/radar.sqlite');
-    _db.pragma('journal_mode = WAL');
-    _db.pragma('foreign_keys = ON');
+export function getPrisma() {
+  if (!_prisma) {
+    _prisma = new PrismaClient();
   }
-  return _db;
+  return _prisma;
 }
 
-/** For tests only — close and reset the singleton so DB_PATH changes take effect */
-export function resetDb() {
-  if (_db) { _db.close(); _db = null; }
-}
+// Convenience: `import { prisma } from '...'` — same instance as getPrisma()
+export const prisma = new Proxy({}, {
+  get(_t, prop) { return getPrisma()[prop]; },
+});
 
-function addColumnIfMissing(db, table, column, type) {
-  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
-  if (!cols.some(c => c.name === column)) {
-    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
-  }
-}
-
-export function initSchema() {
-  const sql = readFileSync(join(__dirname, '../../../db/schema.sql'), 'utf8');
-  const db = getDb();
-  db.exec(sql);
-
-  // Idempotent column adds for live prod DBs (ICP v2 framework)
-  addColumnIfMissing(db, 'leads', 'icp_breakdown',     'TEXT');
-  addColumnIfMissing(db, 'leads', 'icp_key_matches',   'TEXT');
-  addColumnIfMissing(db, 'leads', 'icp_key_gaps',      'TEXT');
-  addColumnIfMissing(db, 'leads', 'icp_disqualifiers', 'TEXT');
-  addColumnIfMissing(db, 'leads', 'employees_estimate', 'TEXT');
-  addColumnIfMissing(db, 'leads', 'business_stage',    'TEXT');
+/** For tests only */
+export async function resetDb() {
+  if (_prisma) { await _prisma.$disconnect(); _prisma = null; }
 }
 
 export function today() {
   return new Date().toISOString().slice(0, 10);
 }
 
-export function bumpMetric(field, amount = 1) {
-  const db = getDb();
+async function ensureDailyMetricsRow(date) {
+  await getPrisma().dailyMetrics.upsert({
+    where: { date },
+    create: { date },
+    update: {},
+  });
+}
+
+export async function bumpMetric(field, amount = 1) {
   const d = today();
-  db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-  db.prepare(`UPDATE daily_metrics SET ${field} = ${field} + ? WHERE date = ?`).run(amount, d);
+  await ensureDailyMetricsRow(d);
+  await getPrisma().dailyMetrics.update({
+    where: { date: d },
+    data: { [field]: { increment: amount } },
+  });
 }
 
-export function logError(source, err, { jobName, errorType, errorCode, leadId, emailId } = {}) {
-  getDb().prepare(
-    `INSERT INTO error_log (source, job_name, error_type, error_code, error_message, stack_trace, lead_id, email_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(source, jobName || null, errorType || null, errorCode || null,
-        err.message || String(err), err.stack || null, leadId || null, emailId || null);
+// Consolidated cost-metric helper — always bumps the named field AND totalApiCostUsd
+export async function bumpCostMetric(field, amountUsd) {
+  const d = today();
+  await ensureDailyMetricsRow(d);
+  await getPrisma().dailyMetrics.update({
+    where: { date: d },
+    data: {
+      [field]: { increment: amountUsd },
+      totalApiCostUsd: { increment: amountUsd },
+    },
+  });
 }
 
-export function logCron(jobName) {
-  const info = getDb().prepare(
-    `INSERT INTO cron_log (job_name, scheduled_at, started_at, status) VALUES (?, datetime('now'), datetime('now'), 'running') RETURNING id`
-  ).get(jobName);
-  return info.id;
+export async function logError(source, err, { jobName, errorType, errorCode, leadId, emailId } = {}) {
+  await getPrisma().errorLog.create({
+    data: {
+      source,
+      jobName: jobName ?? null,
+      errorType: errorType ?? null,
+      errorCode: errorCode ?? null,
+      errorMessage: err?.message || String(err),
+      stackTrace: err?.stack ?? null,
+      leadId: leadId ?? null,
+      emailId: emailId ?? null,
+    },
+  });
 }
 
-export function finishCron(id, { status = 'success', recordsProcessed = 0, recordsSkipped = 0, costUsd = 0, error = null } = {}) {
-  const row = getDb().prepare(`SELECT started_at FROM cron_log WHERE id = ?`).get(id);
-  const durationMs = row?.started_at
-    ? Date.now() - new Date(row.started_at).getTime()
-    : null;
-  getDb().prepare(
-    `UPDATE cron_log SET completed_at=datetime('now'), duration_ms=?, status=?, records_processed=?, records_skipped=?, cost_usd=?, error_message=? WHERE id=?`
-  ).run(durationMs, status, recordsProcessed, recordsSkipped, costUsd, error, id);
+export async function logCron(jobName) {
+  const now = new Date();
+  const row = await getPrisma().cronLog.create({
+    data: { jobName, scheduledAt: now, startedAt: now, status: 'running' },
+    select: { id: true },
+  });
+  return row.id;
 }
 
-export function isRejected(email) {
+export async function finishCron(id, { status = 'success', recordsProcessed = 0, recordsSkipped = 0, costUsd = 0, error = null } = {}) {
+  const row = await getPrisma().cronLog.findUnique({ where: { id }, select: { startedAt: true } });
+  const durationMs = row?.startedAt ? Date.now() - row.startedAt.getTime() : null;
+  await getPrisma().cronLog.update({
+    where: { id },
+    data: {
+      completedAt: new Date(),
+      durationMs,
+      status,
+      recordsProcessed,
+      recordsSkipped,
+      costUsd,
+      errorMessage: error,
+    },
+  });
+}
+
+export async function isRejected(email) {
   const domain = email.split('@')[1];
-  const row = getDb().prepare(
-    `SELECT 1 FROM reject_list WHERE email=? OR domain=? LIMIT 1`
-  ).get(email, domain);
+  const row = await getPrisma().rejectList.findFirst({
+    where: { OR: [{ email }, { domain }] },
+    select: { id: true },
+  });
   return !!row;
 }
 
-export function getConfigMap() {
+export async function addToRejectList(email, reason) {
+  const domain = email.split('@')[1];
+  await getPrisma().rejectList.upsert({
+    where: { email },
+    create: { email, domain, reason },
+    update: {},
+  });
+}
+
+export async function todaySentCount() {
+  const row = await getPrisma().dailyMetrics.findUnique({
+    where: { date: today() },
+    select: { emailsSent: true },
+  });
+  return row?.emailsSent || 0;
+}
+
+export async function todayBounceRate() {
+  const row = await getPrisma().dailyMetrics.findUnique({
+    where: { date: today() },
+    select: { emailsSent: true, emailsHardBounced: true },
+  });
+  if (!row || row.emailsSent === 0) return 0;
+  return row.emailsHardBounced / row.emailsSent;
+}
+
+export async function getConfigMap() {
   try {
-    const rows = getDb().prepare('SELECT key, value FROM config').all();
+    const rows = await getPrisma().config.findMany();
     return Object.fromEntries(rows.map(r => [r.key, r.value]));
   } catch {
     return {};
@@ -110,8 +153,7 @@ export function getConfigStr(cfg, key, fallback) {
   return cfg[key] ?? fallback;
 }
 
-export function seedConfigDefaults() {
-  const db = getDb();
+export async function seedConfigDefaults() {
   const defaults = [
     ['daily_send_limit', '0'],
     ['max_per_inbox', '17'],
@@ -129,9 +171,9 @@ export function seedConfigDefaults() {
     ['icp_threshold_b', '40'],
     ['icp_weights', JSON.stringify({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 })],
     ['find_leads_per_batch', '30'],
-    ['find_leads_cities',        '["Mumbai","Bangalore","Delhi NCR","Pune"]'],
+    ['find_leads_cities', '["Mumbai","Bangalore","Delhi NCR","Pune"]'],
     ['find_leads_business_size', 'msme'],
-    ['find_leads_count',         '150'],
+    ['find_leads_count', '150'],
     ['persona_name', 'Darshan Parmar'],
     ['persona_role', 'Full-Stack Developer'],
     ['persona_company', 'Simple Inc'],
@@ -139,70 +181,52 @@ export function seedConfigDefaults() {
     ['persona_tone', 'professional but direct'],
     ['persona_services', 'Full-stack web development, redesigns, performance optimisation, custom React apps, API integrations'],
   ];
-  const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
-  for (const [key, value] of defaults) stmt.run(key, value);
+  await getPrisma().config.createMany({
+    data: defaults.map(([key, value]) => ({ key, value })),
+    skipDuplicates: true,
+  });
 
-  // One-off upgrade: prod DBs still have 0-10 thresholds. Detect by value and flip.
-  // Idempotent — runs harmlessly on already-upgraded DBs.
-  const threshA = Number(db.prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get()?.value);
-  if (threshA && threshA <= 10) {
-    db.prepare(`UPDATE config SET value='70' WHERE key='icp_threshold_a'`).run();
-    db.prepare(`UPDATE config SET value='40' WHERE key='icp_threshold_b'`).run();
+  // ICP v2 one-off upgrade: flip old 0-10 thresholds to 0-100
+  const prisma = getPrisma();
+  const threshA = await prisma.config.findUnique({ where: { key: 'icp_threshold_a' } });
+  if (threshA && Number(threshA.value) <= 10) {
+    await prisma.config.update({ where: { key: 'icp_threshold_a' }, data: { value: '70' } });
+    await prisma.config.update({ where: { key: 'icp_threshold_b' }, data: { value: '40' } });
   }
 }
 
-export function seedNichesAndIcpRules() {
-  const db = getDb();
+export async function seedNichesAndIcpRules() {
+  const prisma = getPrisma();
 
-  const nicheCount = db.prepare('SELECT COUNT(*) as n FROM niches').get().n;
-  if (nicheCount === 0) {
-    const niches = [
-      [1, 'Shopify/D2C brands', 'India D2C ecommerce brand Shopify outdated website'],
-      [2, 'Real estate agencies', 'Mumbai real estate agency property portal outdated website'],
-      [3, 'Funded startups', 'India funded B2B startup outdated website developer needed'],
-      [4, 'Restaurants/cafes', 'Mumbai restaurant cafe outdated website no online booking'],
-      [5, 'Agencies/consultancies', 'Mumbai digital agency overflow web development outsource'],
-      [6, 'Healthcare/salons', 'India healthcare salon clinic outdated website no booking'],
-    ];
-    const stmt = db.prepare('INSERT INTO niches (day_of_week, label, query, enabled, sort_order) VALUES (?, ?, ?, 1, ?)');
-    niches.forEach(([day, label, query], i) => stmt.run(day, label, query, i));
+  if ((await prisma.niche.count()) === 0) {
+    await prisma.niche.createMany({
+      data: [
+        { dayOfWeek: 1, label: 'Shopify/D2C brands',     query: 'India D2C ecommerce brand Shopify outdated website',         sortOrder: 0 },
+        { dayOfWeek: 2, label: 'Real estate agencies',   query: 'Mumbai real estate agency property portal outdated website', sortOrder: 1 },
+        { dayOfWeek: 3, label: 'Funded startups',        query: 'India funded B2B startup outdated website developer needed', sortOrder: 2 },
+        { dayOfWeek: 4, label: 'Restaurants/cafes',      query: 'Mumbai restaurant cafe outdated website no online booking',  sortOrder: 3 },
+        { dayOfWeek: 5, label: 'Agencies/consultancies', query: 'Mumbai digital agency overflow web development outsource',   sortOrder: 4 },
+        { dayOfWeek: 6, label: 'Healthcare/salons',      query: 'India healthcare salon clinic outdated website no booking',  sortOrder: 5 },
+      ],
+    });
   }
 
-  const ruleCount = db.prepare('SELECT COUNT(*) as n FROM icp_rules').get().n;
-  if (ruleCount === 0) {
-    const rules = [
-      [3,  'India-based B2C-facing (restaurant, salon, real estate, D2C)', null],
-      [2,  '20+ Google reviews (established business, has budget)', null],
-      [2,  'WordPress/Wix/Squarespace stack (easiest sell)', null],
-      [2,  'Website last updated 2+ years ago', null],
-      [1,  'Active Instagram/Facebook but neglected website', null],
-      [1,  'WhatsApp Business on site but no online booking/ordering', null],
-      [-2, 'Freelancer or solo consultant (low budget)', null],
-      [-3, 'Already on modern stack (Next.js, custom React, Webflow)', null],
-    ];
-    const stmt = db.prepare('INSERT INTO icp_rules (points, label, description, enabled, sort_order) VALUES (?, ?, ?, 1, ?)');
-    rules.forEach(([points, label, desc], i) => stmt.run(points, label, desc, i));
+  if ((await prisma.icpRule.count()) === 0) {
+    await prisma.icpRule.createMany({
+      data: [
+        { points:  3, label: 'India-based B2C-facing (restaurant, salon, real estate, D2C)',    sortOrder: 0 },
+        { points:  2, label: '20+ Google reviews (established business, has budget)',           sortOrder: 1 },
+        { points:  2, label: 'WordPress/Wix/Squarespace stack (easiest sell)',                  sortOrder: 2 },
+        { points:  2, label: 'Website last updated 2+ years ago',                               sortOrder: 3 },
+        { points:  1, label: 'Active Instagram/Facebook but neglected website',                 sortOrder: 4 },
+        { points:  1, label: 'WhatsApp Business on site but no online booking/ordering',        sortOrder: 5 },
+        { points: -2, label: 'Freelancer or solo consultant (low budget)',                      sortOrder: 6 },
+        { points: -3, label: 'Already on modern stack (Next.js, custom React, Webflow)',        sortOrder: 7 },
+      ],
+    });
   }
-}
 
-export function addToRejectList(email, reason) {
-  const domain = email.split('@')[1];
-  getDb().prepare(
-    `INSERT OR IGNORE INTO reject_list (email, domain, reason) VALUES (?, ?, ?)`
-  ).run(email, domain, reason);
-}
-
-export function todaySentCount() {
-  const row = getDb().prepare(
-    `SELECT emails_sent FROM daily_metrics WHERE date=?`
-  ).get(today());
-  return row?.emails_sent || 0;
-}
-
-export function todayBounceRate() {
-  const row = getDb().prepare(
-    `SELECT emails_sent, emails_hard_bounced FROM daily_metrics WHERE date=?`
-  ).get(today());
-  if (!row || row.emails_sent === 0) return 0;
-  return row.emails_hard_bounced / row.emails_sent;
+  // ICP v2 singletons — create empty row if missing
+  await prisma.offer.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+  await prisma.icpProfile.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
 }
