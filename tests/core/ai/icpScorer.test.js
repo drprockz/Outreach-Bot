@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { bucket, clampInt } from '../../../src/core/ai/icpScorer.js';
+import { truncateAll, closeTestPrisma, getTestPrisma } from '../../helpers/testDb.js';
 
 describe('bucket()', () => {
   it('returns A when score >= threshA', () => {
@@ -24,59 +25,46 @@ describe('clampInt()', () => {
   it('handles NaN', () => expect(clampInt(NaN, 0, 100)).toBe(0));
 });
 
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { afterEach } from 'vitest';
-
 describe('loadScoringContext', () => {
-  let tmpDir;
-  beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-    process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
-    const { resetDb, initSchema } = await import('../../../src/core/db/index.js');
-    resetDb();
-    initSchema();
-  });
-  afterEach(async () => {
-    const { resetDb } = await import('../../../src/core/db/index.js');
-    resetDb();
-    rmSync(tmpDir, { recursive: true });
-  });
+  beforeEach(async () => { await truncateAll(); });
+  afterAll(async () => { await closeTestPrisma(); });
 
   it('throws when offer.problem is empty (seeded but unconfigured)', async () => {
     const { loadScoringContext } = await import('../../../src/core/ai/icpScorer.js');
-    const { getDb } = await import('../../../src/core/db/index.js');
-    expect(() => loadScoringContext(getDb())).toThrow(/offer\.problem/);
+    const prisma = getTestPrisma();
+    await prisma.offer.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+    await prisma.icpProfile.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+    await expect(loadScoringContext(prisma)).rejects.toThrow(/offer\.problem/);
   });
 
   it('throws when icp_profile.industries is empty array', async () => {
     const { loadScoringContext } = await import('../../../src/core/ai/icpScorer.js');
-    const { getDb } = await import('../../../src/core/db/index.js');
-    const db = getDb();
-    db.prepare(`UPDATE offer SET problem = 'outdated websites' WHERE id = 1`).run();
-    expect(() => loadScoringContext(db)).toThrow(/industries/);
+    const prisma = getTestPrisma();
+    await prisma.offer.upsert({
+      where: { id: 1 },
+      create: { id: 1, problem: 'outdated websites' },
+      update: { problem: 'outdated websites' },
+    });
+    await prisma.icpProfile.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+    await expect(loadScoringContext(prisma)).rejects.toThrow(/industries/);
   });
 
   it('returns parsed context when both rows properly configured', async () => {
     const { loadScoringContext } = await import('../../../src/core/ai/icpScorer.js');
-    const { getDb } = await import('../../../src/core/db/index.js');
-    const db = getDb();
-    db.prepare(`UPDATE offer SET problem = 'outdated websites' WHERE id = 1`).run();
-    db.prepare(`UPDATE icp_profile SET industries = ? WHERE id = 1`).run(JSON.stringify(['restaurants', 'salons']));
-    const ctx = loadScoringContext(db);
+    const prisma = getTestPrisma();
+    await prisma.offer.upsert({
+      where: { id: 1 },
+      create: { id: 1, problem: 'outdated websites' },
+      update: { problem: 'outdated websites' },
+    });
+    await prisma.icpProfile.upsert({
+      where: { id: 1 },
+      create: { id: 1, industries: ['restaurants', 'salons'] },
+      update: { industries: ['restaurants', 'salons'] },
+    });
+    const ctx = await loadScoringContext(prisma);
     expect(ctx.offer.problem).toBe('outdated websites');
     expect(ctx.icp.industries).toEqual(['restaurants', 'salons']);
-  });
-
-  it('returns [] for malformed JSON array fields instead of throwing', async () => {
-    const { loadScoringContext } = await import('../../../src/core/ai/icpScorer.js');
-    const { getDb } = await import('../../../src/core/db/index.js');
-    const db = getDb();
-    db.prepare(`UPDATE offer SET problem='x', use_cases='not-valid-json' WHERE id = 1`).run();
-    db.prepare(`UPDATE icp_profile SET industries=? WHERE id = 1`).run(JSON.stringify(['x']));
-    const ctx = loadScoringContext(db);
-    expect(ctx.offer.use_cases).toEqual([]);
   });
 });
 
@@ -95,21 +83,12 @@ describe('scoreLead', () => {
   };
   const lead = { business_name: 'X', category: 'restaurant', city: 'Mumbai' };
 
-  let tmpDir;
   beforeEach(async () => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-    process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
-    const { resetDb, initSchema } = await import('../../../src/core/db/index.js');
-    resetDb();
-    initSchema();
+    await truncateAll();
     const { callGemini } = await import('../../../src/core/ai/gemini.js');
     callGemini.mockReset();
   });
-  afterEach(async () => {
-    const { resetDb } = await import('../../../src/core/db/index.js');
-    resetDb();
-    rmSync(tmpDir, { recursive: true });
-  });
+  afterAll(async () => { await closeTestPrisma(); });
 
   it('returns normalized result on valid JSON', async () => {
     const { callGemini } = await import('../../../src/core/ai/gemini.js');

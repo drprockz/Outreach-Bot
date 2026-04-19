@@ -1,14 +1,6 @@
 import { callGemini } from './gemini.js';
 import { logError } from '../db/index.js';
 
-const OFFER_JSON_FIELDS = ['use_cases', 'triggers', 'alternatives', 'required_inputs', 'proof_points'];
-const ICP_JSON_FIELDS   = [
-  'industries', 'geography', 'stage', 'tech_stack', 'internal_capabilities',
-  'impacted_kpis', 'initiator_roles', 'decision_roles', 'objections',
-  'intent_signals', 'current_tools', 'workarounds', 'frustrations',
-  'switching_barriers', 'hard_disqualifiers'
-];
-
 export function clampInt(n, lo, hi) {
   if (!Number.isFinite(n)) return lo;
   return Math.max(lo, Math.min(hi, Math.round(n)));
@@ -20,37 +12,21 @@ export function bucket(score, threshA, threshB) {
   return 'C';
 }
 
-function parseJsonFields(row, fields) {
-  const out = { ...row };
-  for (const f of fields) {
-    if (out[f] == null) { out[f] = []; continue; }
-    try {
-      const parsed = JSON.parse(out[f]);
-      out[f] = Array.isArray(parsed) ? parsed : [];
-    } catch {
-      console.warn(`icpScorer: malformed JSON in field "${f}", using []`);
-      out[f] = [];
-    }
-  }
-  return out;
-}
-
 function stripJson(text) {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 }
 
-export function loadScoringContext(db) {
-  const offer = db.prepare('SELECT * FROM offer WHERE id = 1').get();
-  const icp   = db.prepare('SELECT * FROM icp_profile WHERE id = 1').get();
+// Async + takes a Prisma client. JSON fields come back already parsed.
+export async function loadScoringContext(prisma) {
+  const offer = await prisma.offer.findUnique({ where: { id: 1 } });
+  const icp   = await prisma.icpProfile.findUnique({ where: { id: 1 } });
   if (!offer || !icp) {
     throw new Error('ICP scoring requires offer + icp_profile rows to exist');
   }
-  const parsedOffer = parseJsonFields(offer, OFFER_JSON_FIELDS);
-  const parsedIcp   = parseJsonFields(icp, ICP_JSON_FIELDS);
-  if (!parsedOffer.problem || !Array.isArray(parsedIcp.industries) || parsedIcp.industries.length === 0) {
+  if (!offer.problem || !Array.isArray(icp.industries) || icp.industries.length === 0) {
     throw new Error('ICP scoring requires offer.problem and icp_profile.industries to be configured');
   }
-  return { offer: parsedOffer, icp: parsedIcp };
+  return { offer, icp };
 }
 
 export function buildScorerPrompt(lead, offer, icp, weights) {
@@ -114,7 +90,7 @@ export async function scoreLead(lead, ctx) {
   try {
     parsed = JSON.parse(stripJson(result.text));
   } catch (err) {
-    logError('icpScorer.parse', err, { rawResponse: result.text, leadId: lead.id });
+    await logError('icpScorer.parse', err, { rawResponse: result.text, leadId: lead.id });
     return {
       icp_score: 0,
       icp_priority: 'C',
