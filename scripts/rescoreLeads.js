@@ -35,6 +35,21 @@ export default async function rescoreLeads({ legacy = false } = {}) {
   const statusUpdate = db.prepare(`UPDATE leads SET status='disqualified' WHERE id=?`);
   const deletePending = db.prepare(`DELETE FROM emails WHERE lead_id=? AND status='pending'`);
 
+  const applyLeadUpdate = db.transaction((lead, icp) => {
+    updateStmt.run(
+      icp.icp_score, icp.icp_priority, icp.icp_reason,
+      JSON.stringify(icp.icp_breakdown || null),
+      JSON.stringify(icp.icp_key_matches || []),
+      JSON.stringify(icp.icp_key_gaps || []),
+      JSON.stringify(icp.icp_disqualifiers || []),
+      lead.id
+    );
+    if (icp.icp_disqualifiers.length > 0 && lead.status === 'ready') {
+      statusUpdate.run(lead.id);
+      deletePending.run(lead.id);
+    }
+  });
+
   for (let i = 0; i < leads.length; i++) {
     const lead = leads[i];
     try { lead.tech_stack = JSON.parse(lead.tech_stack || '[]'); } catch { lead.tech_stack = []; }
@@ -44,22 +59,13 @@ export default async function rescoreLeads({ legacy = false } = {}) {
     const icp = await scoreLead(lead, scoringCtx);
     stats.cost += icp.costUsd;
 
-    updateStmt.run(
-      icp.icp_score, icp.icp_priority, icp.icp_reason,
-      JSON.stringify(icp.icp_breakdown || null),
-      JSON.stringify(icp.icp_key_matches || []),
-      JSON.stringify(icp.icp_key_gaps || []),
-      JSON.stringify(icp.icp_disqualifiers || []),
-      lead.id
-    );
+    applyLeadUpdate(lead, icp);
 
     stats[icp.icp_priority]++;
 
     if (icp.icp_disqualifiers.length > 0) {
       stats.disqualified++;
       if (lead.status === 'ready') {
-        statusUpdate.run(lead.id);
-        deletePending.run(lead.id);
         stats.ready_to_dq++;
       }
     }
