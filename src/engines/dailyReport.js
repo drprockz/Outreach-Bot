@@ -1,85 +1,99 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, today } from '../core/db/index.js';
+import { prisma, logCron, finishCron, logError, today } from '../core/db/index.js';
 import { sendAlert } from '../core/integrations/telegram.js';
-import { sendMail } from '../core/email/mailer.js';
 import nodemailer from 'nodemailer';
 
-function getMetrics(db) {
+async function getMetrics() {
   const d = today();
-  db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-  return db.prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(d);
+  await prisma.dailyMetrics.upsert({
+    where: { date: d },
+    create: { date: d },
+    update: {},
+  });
+  return prisma.dailyMetrics.findUnique({ where: { date: d } });
 }
 
-function getReplyBreakdown(db) {
+async function getReplyBreakdown() {
   const d = today();
-  const rows = db.prepare(`
-    SELECT category, COUNT(*) as cnt
-    FROM replies
-    WHERE received_at >= date(?)
-    GROUP BY category
-  `).all(d);
+  // received_at >= date(today) → compare against start of today
+  const startOfDay = new Date(`${d}T00:00:00.000Z`);
+  const rows = await prisma.reply.groupBy({
+    by: ['category'],
+    where: { receivedAt: { gte: startOfDay } },
+    _count: { _all: true },
+  });
   const breakdown = { hot: 0, schedule: 0, soft_no: 0, unsubscribe: 0, ooo: 0, other: 0 };
   for (const row of rows) {
-    if (breakdown.hasOwnProperty(row.category)) {
-      breakdown[row.category] = row.cnt;
+    if (row.category && breakdown.hasOwnProperty(row.category)) {
+      breakdown[row.category] = row._count._all;
     }
   }
   return breakdown;
 }
 
-function get7dReplyRate(db) {
-  const row = db.prepare(`
-    SELECT
-      COALESCE(SUM(emails_sent), 0) as sent,
-      COALESCE(SUM(replies_total), 0) as replied
-    FROM daily_metrics
-    WHERE date >= date('now', '-7 days')
-  `).get();
-  if (!row || row.sent === 0) return 0;
-  return ((row.replied / row.sent) * 100);
+async function get7dReplyRate() {
+  // Sum emails_sent + replies_total over last 7 days
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const rows = await prisma.dailyMetrics.findMany({
+    where: { date: { gte: sevenDaysAgo } },
+    select: { emailsSent: true, repliesTotal: true },
+  });
+  const sent = rows.reduce((a, r) => a + (r.emailsSent || 0), 0);
+  const replied = rows.reduce((a, r) => a + (r.repliesTotal || 0), 0);
+  if (sent === 0) return 0;
+  return (replied / sent) * 100;
 }
 
-function getCronStatus(db) {
+async function getCronStatus() {
   const d = today();
-  return db.prepare(`
-    SELECT job_name, status, started_at, completed_at, duration_ms, error_message
-    FROM cron_log
-    WHERE started_at >= date(?)
-    ORDER BY started_at DESC
-  `).all(d);
+  const startOfDay = new Date(`${d}T00:00:00.000Z`);
+  return prisma.cronLog.findMany({
+    where: { startedAt: { gte: startOfDay } },
+    orderBy: { startedAt: 'desc' },
+    select: {
+      jobName: true,
+      status: true,
+      startedAt: true,
+      completedAt: true,
+      durationMs: true,
+      errorMessage: true,
+    },
+  });
 }
 
-function getErrorCount(db) {
+async function getErrorCount() {
   const d = today();
-  const row = db.prepare(`SELECT COUNT(*) as cnt FROM error_log WHERE occurred_at >= date(?) AND resolved=0`).get(d);
-  return row?.cnt || 0;
+  const startOfDay = new Date(`${d}T00:00:00.000Z`);
+  return prisma.errorLog.count({
+    where: { occurredAt: { gte: startOfDay }, resolved: false },
+  });
 }
 
 function formatInr(usd) {
-  return (usd * 85).toFixed(0);
+  return (Number(usd) * 85).toFixed(0);
 }
 
 function buildTelegramSummary(metrics, replyBreakdown, replyRate7d) {
-  const bounceRate = metrics.emails_sent > 0
-    ? ((metrics.emails_hard_bounced / metrics.emails_sent) * 100).toFixed(1)
+  const bounceRate = metrics.emailsSent > 0
+    ? ((metrics.emailsHardBounced / metrics.emailsSent) * 100).toFixed(1)
     : '0.0';
   const replyRate = replyRate7d.toFixed(1);
-  const costInr = formatInr(metrics.total_api_cost_usd || 0);
+  const costInr = formatInr(metrics.totalApiCostUsd || 0);
 
   const d = today();
   const dateStr = new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 
   return [
     `📊 Radar — ${dateStr}`,
-    `🔍 Found: ${metrics.leads_discovered} → ✉️ Sent: ${metrics.emails_sent} → 💬 Replied: ${metrics.replies_total}`,
+    `🔍 Found: ${metrics.leadsDiscovered} → ✉️ Sent: ${metrics.emailsSent} → 💬 Replied: ${metrics.repliesTotal}`,
     `🔥 Hot: ${replyBreakdown.hot} | 📅 Schedule: ${replyBreakdown.schedule} | 🚫 Unsub: ${replyBreakdown.unsubscribe}`,
     `📈 Reply rate: ${replyRate}% | Bounce: ${bounceRate}% | Cost: ₹${costInr}`
   ].join('\n');
 }
 
 function buildHtmlReport(metrics, replyBreakdown, cronJobs, errorCount, replyRate7d) {
-  const bounceRate = metrics.emails_sent > 0
-    ? ((metrics.emails_hard_bounced / metrics.emails_sent) * 100).toFixed(2)
+  const bounceRate = metrics.emailsSent > 0
+    ? ((metrics.emailsHardBounced / metrics.emailsSent) * 100).toFixed(2)
     : '0.00';
 
   return `<!DOCTYPE html>
@@ -102,30 +116,30 @@ th{background:#f5f5f5;font-weight:600}
 
 <h2>Lead Funnel</h2>
 <div>
-  <div class="card"><label>Discovered</label><div class="metric">${metrics.leads_discovered}</div></div>
-  <div class="card"><label>Extracted</label><div class="metric">${metrics.leads_extracted}</div></div>
-  <div class="card"><label>Judge Passed</label><div class="metric">${metrics.leads_judge_passed}</div></div>
-  <div class="card"><label>Email Found</label><div class="metric">${metrics.leads_email_found}</div></div>
-  <div class="card"><label>Email Valid</label><div class="metric">${metrics.leads_email_valid}</div></div>
-  <div class="card"><label>ICP A+B</label><div class="metric">${metrics.leads_icp_ab}</div></div>
-  <div class="card"><label>Ready</label><div class="metric">${metrics.leads_ready}</div></div>
+  <div class="card"><label>Discovered</label><div class="metric">${metrics.leadsDiscovered}</div></div>
+  <div class="card"><label>Extracted</label><div class="metric">${metrics.leadsExtracted}</div></div>
+  <div class="card"><label>Judge Passed</label><div class="metric">${metrics.leadsJudgePassed}</div></div>
+  <div class="card"><label>Email Found</label><div class="metric">${metrics.leadsEmailFound}</div></div>
+  <div class="card"><label>Email Valid</label><div class="metric">${metrics.leadsEmailValid}</div></div>
+  <div class="card"><label>ICP A+B</label><div class="metric">${metrics.leadsIcpAb}</div></div>
+  <div class="card"><label>Ready</label><div class="metric">${metrics.leadsReady}</div></div>
 </div>
 
 <h2>Send Funnel</h2>
 <div>
-  <div class="card"><label>Attempted</label><div class="metric">${metrics.emails_attempted}</div></div>
-  <div class="card"><label>Sent</label><div class="metric">${metrics.emails_sent}</div></div>
-  <div class="card"><label>Hard Bounced</label><div class="metric ${metrics.emails_hard_bounced > 0 ? 'red' : ''}">${metrics.emails_hard_bounced}</div></div>
-  <div class="card"><label>Soft Bounced</label><div class="metric ${metrics.emails_soft_bounced > 0 ? 'amber' : ''}">${metrics.emails_soft_bounced}</div></div>
-  <div class="card"><label>Rejected</label><div class="metric">${metrics.emails_content_rejected}</div></div>
-  <div class="card"><label>Follow-ups</label><div class="metric">${metrics.followups_sent}</div></div>
+  <div class="card"><label>Attempted</label><div class="metric">${metrics.emailsAttempted}</div></div>
+  <div class="card"><label>Sent</label><div class="metric">${metrics.emailsSent}</div></div>
+  <div class="card"><label>Hard Bounced</label><div class="metric ${metrics.emailsHardBounced > 0 ? 'red' : ''}">${metrics.emailsHardBounced}</div></div>
+  <div class="card"><label>Soft Bounced</label><div class="metric ${metrics.emailsSoftBounced > 0 ? 'amber' : ''}">${metrics.emailsSoftBounced}</div></div>
+  <div class="card"><label>Rejected</label><div class="metric">${metrics.emailsContentRejected}</div></div>
+  <div class="card"><label>Follow-ups</label><div class="metric">${metrics.followupsSent}</div></div>
 </div>
 
 <h2>Inbox Breakdown</h2>
 <table>
 <tr><th>Inbox</th><th>Sent</th></tr>
-<tr><td>darshan@trysimpleinc.com</td><td>${metrics.sent_inbox_1}</td></tr>
-<tr><td>hello@trysimpleinc.com</td><td>${metrics.sent_inbox_2}</td></tr>
+<tr><td>darshan@trysimpleinc.com</td><td>${metrics.sentInbox1}</td></tr>
+<tr><td>hello@trysimpleinc.com</td><td>${metrics.sentInbox2}</td></tr>
 </table>
 
 <h2>Reply Breakdown</h2>
@@ -137,7 +151,7 @@ th{background:#f5f5f5;font-weight:600}
 <tr><td>Unsubscribe</td><td>${replyBreakdown.unsubscribe}</td></tr>
 <tr><td>OOO</td><td>${replyBreakdown.ooo}</td></tr>
 <tr><td>Other</td><td>${replyBreakdown.other}</td></tr>
-<tr><th>Total</th><th>${metrics.replies_total}</th></tr>
+<tr><th>Total</th><th>${metrics.repliesTotal}</th></tr>
 </table>
 
 <h2>Health</h2>
@@ -151,19 +165,19 @@ th{background:#f5f5f5;font-weight:600}
 <h2>API Costs</h2>
 <table>
 <tr><th>Service</th><th>Cost (USD)</th><th>Cost (INR)</th></tr>
-<tr><td>Gemini Flash</td><td>$${(metrics.gemini_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.gemini_cost_usd || 0)}</td></tr>
-<tr><td>Claude Sonnet</td><td>$${(metrics.sonnet_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.sonnet_cost_usd || 0)}</td></tr>
-<tr><td>Claude Haiku</td><td>$${(metrics.haiku_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.haiku_cost_usd || 0)}</td></tr>
-<tr><td>MEV</td><td>$${(metrics.mev_cost_usd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.mev_cost_usd || 0)}</td></tr>
-<tr><th>Total</th><th>$${(metrics.total_api_cost_usd || 0).toFixed(4)}</th><th>Rs ${formatInr(metrics.total_api_cost_usd || 0)}</th></tr>
+<tr><td>Gemini Flash</td><td>$${Number(metrics.geminiCostUsd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.geminiCostUsd || 0)}</td></tr>
+<tr><td>Claude Sonnet</td><td>$${Number(metrics.sonnetCostUsd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.sonnetCostUsd || 0)}</td></tr>
+<tr><td>Claude Haiku</td><td>$${Number(metrics.haikuCostUsd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.haikuCostUsd || 0)}</td></tr>
+<tr><td>MEV</td><td>$${Number(metrics.mevCostUsd || 0).toFixed(4)}</td><td>Rs ${formatInr(metrics.mevCostUsd || 0)}</td></tr>
+<tr><th>Total</th><th>$${Number(metrics.totalApiCostUsd || 0).toFixed(4)}</th><th>Rs ${formatInr(metrics.totalApiCostUsd || 0)}</th></tr>
 </table>
 
 <h2>Cron Jobs Today</h2>
 <table>
 <tr><th>Job</th><th>Status</th><th>Started</th><th>Completed</th><th>Duration</th><th>Error</th></tr>
 ${cronJobs.map(j => {
-  const dur = j.duration_ms ? `${(j.duration_ms / 1000).toFixed(1)}s` : '-';
-  return `<tr><td>${j.job_name}</td><td>${j.status}</td><td>${j.started_at || '-'}</td><td>${j.completed_at || '-'}</td><td>${dur}</td><td>${j.error_message || '-'}</td></tr>`;
+  const dur = j.durationMs ? `${(j.durationMs / 1000).toFixed(1)}s` : '-';
+  return `<tr><td>${j.jobName}</td><td>${j.status}</td><td>${j.startedAt ? j.startedAt.toISOString() : '-'}</td><td>${j.completedAt ? j.completedAt.toISOString() : '-'}</td><td>${dur}</td><td>${j.errorMessage || '-'}</td></tr>`;
 }).join('\n')}
 </table>
 
@@ -172,22 +186,28 @@ ${cronJobs.map(j => {
 }
 
 export default async function dailyReport() {
-  const cronId = logCron('dailyReport');
+  const cronId = await logCron('dailyReport');
 
   try {
-    const db = getDb();
-    const metrics = getMetrics(db);
-    const replyBreakdown = getReplyBreakdown(db);
-    const replyRate7d = get7dReplyRate(db);
-    const cronJobs = getCronStatus(db);
-    const errorCount = getErrorCount(db);
+    const metrics = await getMetrics();
+    const replyBreakdown = await getReplyBreakdown();
+    const replyRate7d = await get7dReplyRate();
+    const cronJobs = await getCronStatus();
+    const errorCount = await getErrorCount();
 
     // Update rolling rates in daily_metrics
-    const bounceRate = metrics.emails_sent > 0 ? metrics.emails_hard_bounced / metrics.emails_sent : 0;
-    const unsubRate = metrics.emails_sent > 0 ? metrics.replies_unsubscribe / metrics.emails_sent : 0;
-    db.prepare(`UPDATE daily_metrics SET bounce_rate=?, reply_rate=?, unsubscribe_rate=?, total_api_cost_inr=total_api_cost_usd*85 WHERE date=?`).run(
-      bounceRate, replyRate7d / 100, unsubRate, today()
-    );
+    const bounceRate = metrics.emailsSent > 0 ? metrics.emailsHardBounced / metrics.emailsSent : 0;
+    const unsubRate = metrics.emailsSent > 0 ? metrics.repliesUnsubscribe / metrics.emailsSent : 0;
+    const totalCostUsd = Number(metrics.totalApiCostUsd || 0);
+    await prisma.dailyMetrics.update({
+      where: { date: today() },
+      data: {
+        bounceRate,
+        replyRate: replyRate7d / 100,
+        unsubscribeRate: unsubRate,
+        totalApiCostInr: totalCostUsd * 85,
+      },
+    });
 
     // Send Telegram one-liner (spec §10)
     const telegramMsg = buildTelegramSummary(metrics, replyBreakdown, replyRate7d);
@@ -215,13 +235,13 @@ export default async function dailyReport() {
         html: htmlReport
       });
     } catch (mailErr) {
-      logError('dailyReport.email', mailErr, { jobName: 'dailyReport' });
+      await logError('dailyReport.email', mailErr, { jobName: 'dailyReport' });
     }
 
-    finishCron(cronId, { status: 'success' });
+    await finishCron(cronId, { status: 'success' });
   } catch (err) {
-    logError('dailyReport', err, { jobName: 'dailyReport' });
-    finishCron(cronId, { status: 'failed', error: err.message });
+    await logError('dailyReport', err, { jobName: 'dailyReport' });
+    await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`dailyReport failed: ${err.message}`);
   }
 }

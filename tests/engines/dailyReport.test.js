@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma, getTestPrisma } from '../helpers/testDb.js';
 
 vi.mock('../../src/core/email/mailer.js', () => ({
   sendMail: vi.fn(async () => ({ messageId: '<report@test.com>' }))
@@ -17,27 +15,36 @@ vi.mock('nodemailer', () => ({
   }
 }));
 
-let tmpDir;
 beforeEach(async () => {
   vi.clearAllMocks();
-  tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-  process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
+  await truncateAll();
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_1_PASS = 'test';
-  const { resetDb, initSchema, getDb, today } = await import('../../src/core/db/index.js');
-  resetDb();
-  initSchema();
+  const { resetDb, today } = await import('../../src/core/db/index.js');
+  await resetDb();
   // Seed some metrics
   const d = today();
-  getDb().prepare(`INSERT INTO daily_metrics (date, leads_discovered, emails_sent, replies_total, replies_hot, emails_hard_bounced, total_api_cost_usd) VALUES (?, 25, 10, 3, 1, 0, 0.15)`).run(d);
+  const prisma = getTestPrisma();
+  await prisma.dailyMetrics.create({
+    data: {
+      date: d,
+      leadsDiscovered: 25,
+      emailsSent: 10,
+      repliesTotal: 3,
+      repliesHot: 1,
+      emailsHardBounced: 0,
+      totalApiCostUsd: 0.15,
+    },
+  });
 });
 
 afterEach(async () => {
   const { resetDb } = await import('../../src/core/db/index.js');
-  resetDb();
-  rmSync(tmpDir, { recursive: true });
+  await resetDb();
 });
+
+afterAll(async () => { await closeTestPrisma(); });
 
 describe('dailyReport', () => {
   it('sends telegram summary', async () => {
@@ -63,16 +70,17 @@ describe('dailyReport', () => {
   it('logs to cron_log', async () => {
     const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
-    const { getDb } = await import('../../src/core/db/index.js');
-    const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='dailyReport'`).all();
+    const prisma = getTestPrisma();
+    const cronEntries = await prisma.cronLog.findMany({ where: { jobName: 'dailyReport' } });
     expect(cronEntries.length).toBe(1);
     expect(cronEntries[0].status).toBe('success');
   });
 
   it('handles missing metrics gracefully', async () => {
-    const { getDb, today } = await import('../../src/core/db/index.js');
+    const { today } = await import('../../src/core/db/index.js');
+    const prisma = getTestPrisma();
     // Delete the seeded metrics to test empty state
-    getDb().prepare(`DELETE FROM daily_metrics WHERE date=?`).run(today());
+    await prisma.dailyMetrics.delete({ where: { date: today() } });
     const dailyReport = (await import('../../src/engines/dailyReport.js')).default;
     await dailyReport();
     // Should still succeed — just report zeros
