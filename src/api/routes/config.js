@@ -17,8 +17,8 @@ router.put('/', (req, res) => {
     try { parsed = JSON.parse(updates.icp_weights); }
     catch { return res.status(400).json({ error: 'icp_weights must be valid JSON' }); }
     const expected = ['firmographic', 'problem', 'intent', 'tech', 'economic', 'buying'];
-    if (!expected.every(k => typeof parsed[k] === 'number')) {
-      return res.status(400).json({ error: `icp_weights must contain numeric keys: ${expected.join(', ')}` });
+    if (!expected.every(k => Number.isFinite(parsed[k]) && parsed[k] >= 0)) {
+      return res.status(400).json({ error: `icp_weights must contain non-negative finite numbers: ${expected.join(', ')}` });
     }
     const sum = expected.reduce((a, k) => a + parsed[k], 0);
     if (sum !== 100) {

@@ -519,4 +519,25 @@ describe('PUT /api/icp-rules', () => {
     const { rules: after } = await afterRes.json();
     expect(after.length).toBe(before.length);
   });
+
+  it('PUT /api/config rejects icp_weights with negative values (even if sum is 100)', async () => {
+    const token = await getToken();
+    const r = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ icp_weights: JSON.stringify({ firmographic: -50, problem: 150, intent: 0, tech: 0, economic: 0, buying: 0 }) })
+    });
+    expect(r.status).toBe(400);
+  });
+
+  it('PUT /api/config rejects icp_weights with NaN values', async () => {
+    const token = await getToken();
+    const r = await fetch(`${baseUrl}/api/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ icp_weights: '{"firmographic":"NaN","problem":20,"intent":15,"tech":15,"economic":15,"buying":15}' })
+    });
+    // 'NaN' as a string → not a number after JSON.parse → rejected
+    expect(r.status).toBe(400);
+  });
 });

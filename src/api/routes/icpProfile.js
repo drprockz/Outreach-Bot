@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { getDb, logError } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -19,7 +19,10 @@ function serialize(row) {
   const out = { ...row };
   for (const f of ARRAY_FIELDS) {
     try { out[f] = out[f] ? JSON.parse(out[f]) : []; }
-    catch { out[f] = []; }
+    catch (err) {
+      logError('api.icpProfile.serialize', err, { rawField: f, rawValue: String(out[f]).slice(0, 200) });
+      out[f] = [];
+    }
   }
   return out;
 }
