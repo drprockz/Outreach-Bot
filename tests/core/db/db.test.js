@@ -62,6 +62,60 @@ describe('db helpers', () => {
     expect(row).toBeTruthy();
   });
 
+  it('initSchema creates offer table as singleton with empty row seeded', async () => {
+    await import('../../../src/core/db/index.js').then(m => m.initSchema());
+    const db = (await import('../../../src/core/db/index.js')).getDb();
+    const tblRow = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='offer'`).get();
+    expect(tblRow).toBeTruthy();
+    const seeded = db.prepare('SELECT * FROM offer WHERE id = 1').get();
+    expect(seeded).toBeTruthy();
+    expect(seeded.problem).toBeNull();
+  });
+
+  it('initSchema creates icp_profile table as singleton with empty row seeded', async () => {
+    await import('../../../src/core/db/index.js').then(m => m.initSchema());
+    const db = (await import('../../../src/core/db/index.js')).getDb();
+    const tblRow = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='icp_profile'`).get();
+    expect(tblRow).toBeTruthy();
+    const seeded = db.prepare('SELECT * FROM icp_profile WHERE id = 1').get();
+    expect(seeded).toBeTruthy();
+    expect(seeded.industries).toBeNull();
+  });
+
+  it('initSchema adds new leads columns idempotently', async () => {
+    const { initSchema, getDb } = await import('../../../src/core/db/index.js');
+    initSchema();
+    initSchema();  // second call must not throw
+    const cols = getDb().prepare(`PRAGMA table_info(leads)`).all().map(c => c.name);
+    expect(cols).toContain('icp_breakdown');
+    expect(cols).toContain('icp_key_matches');
+    expect(cols).toContain('icp_key_gaps');
+    expect(cols).toContain('icp_disqualifiers');
+    expect(cols).toContain('employees_estimate');
+    expect(cols).toContain('business_stage');
+  });
+
+  it('seedConfigDefaults includes icp_weights and upgrades thresholds to 0-100', async () => {
+    const { initSchema, seedConfigDefaults, getDb } = await import('../../../src/core/db/index.js');
+    initSchema();
+    seedConfigDefaults();
+    const row = (k) => getDb().prepare('SELECT value FROM config WHERE key = ?').get(k)?.value;
+    expect(Number(row('icp_threshold_a'))).toBe(70);
+    expect(Number(row('icp_threshold_b'))).toBe(40);
+    const weights = JSON.parse(row('icp_weights'));
+    expect(weights).toEqual({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 });
+  });
+
+  it('seedConfigDefaults upgrades pre-existing 0-10 thresholds to 0-100', async () => {
+    const { initSchema, seedConfigDefaults, getDb } = await import('../../../src/core/db/index.js');
+    initSchema();
+    getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_a', '7')`).run();
+    getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_b', '4')`).run();
+    seedConfigDefaults();
+    expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get().value)).toBe(70);
+    expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_b'`).get().value)).toBe(40);
+  });
+
   it('getConfigMap returns empty object when config table is empty', async () => {
     const { getConfigMap } = await import('../../../src/core/db/index.js');
     const cfg = getConfigMap();

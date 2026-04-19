@@ -22,9 +22,25 @@ export function resetDb() {
   if (_db) { _db.close(); _db = null; }
 }
 
+function addColumnIfMissing(db, table, column, type) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all();
+  if (!cols.some(c => c.name === column)) {
+    db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`).run();
+  }
+}
+
 export function initSchema() {
   const sql = readFileSync(join(__dirname, '../../../db/schema.sql'), 'utf8');
-  getDb().exec(sql);
+  const db = getDb();
+  db.exec(sql);
+
+  // Idempotent column adds for live prod DBs (ICP v2 framework)
+  addColumnIfMissing(db, 'leads', 'icp_breakdown',     'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_key_matches',   'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_key_gaps',      'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_disqualifiers', 'TEXT');
+  addColumnIfMissing(db, 'leads', 'employees_estimate', 'TEXT');
+  addColumnIfMissing(db, 'leads', 'business_stage',    'TEXT');
 }
 
 export function today() {
@@ -109,8 +125,9 @@ export function seedConfigDefaults() {
     ['send_emails_enabled', '1'],
     ['send_followups_enabled', '1'],
     ['check_replies_enabled', '1'],
-    ['icp_threshold_a', '7'],
-    ['icp_threshold_b', '4'],
+    ['icp_threshold_a', '70'],
+    ['icp_threshold_b', '40'],
+    ['icp_weights', JSON.stringify({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 })],
     ['find_leads_per_batch', '30'],
     ['find_leads_cities',        '["Mumbai","Bangalore","Delhi NCR","Pune"]'],
     ['find_leads_business_size', 'msme'],
@@ -124,6 +141,14 @@ export function seedConfigDefaults() {
   ];
   const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
   for (const [key, value] of defaults) stmt.run(key, value);
+
+  // One-off upgrade: prod DBs still have 0-10 thresholds. Detect by value and flip.
+  // Idempotent — runs harmlessly on already-upgraded DBs.
+  const threshA = Number(db.prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get()?.value);
+  if (threshA && threshA <= 10) {
+    db.prepare(`UPDATE config SET value='70' WHERE key='icp_threshold_a'`).run();
+    db.prepare(`UPDATE config SET value='40' WHERE key='icp_threshold_b'`).run();
+  }
 }
 
 export function seedNichesAndIcpRules() {

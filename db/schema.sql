@@ -46,9 +46,9 @@ CREATE TABLE IF NOT EXISTS leads (
 
   -- Pipeline status
   status                TEXT DEFAULT 'discovered',
-  -- discovered → extraction_failed → judge_skipped → email_not_found
-  -- → email_invalid → icp_c → deduped → ready → queued → sent
-  -- → replied → unsubscribed → bounced → nurture
+  -- discovered / extraction_failed / judge_skipped / email_not_found /
+  -- email_invalid / icp_c / deduped / ready / queued / sent / replied /
+  -- unsubscribed / bounced / nurture / disqualified
 
   -- Stage 8: Dedup
   domain_last_contacted DATETIME,
@@ -59,7 +59,15 @@ CREATE TABLE IF NOT EXISTS leads (
   gemini_cost_usd       REAL,
   discovery_model       TEXT,
   extraction_model      TEXT,
-  judge_model           TEXT
+  judge_model           TEXT,
+
+  -- ICP v2 framework (0-100 score with breakdown)
+  icp_breakdown         TEXT,
+  icp_key_matches       TEXT,
+  icp_key_gaps          TEXT,
+  icp_disqualifiers     TEXT,
+  employees_estimate    TEXT,
+  business_stage        TEXT
 );
 
 -- ── EMAILS ─────────────────────────────────────────────────
@@ -299,3 +307,53 @@ CREATE TABLE IF NOT EXISTS icp_rules (
   enabled     INTEGER DEFAULT 1,
   sort_order  INTEGER DEFAULT 0
 );
+
+-- ── OFFER (singleton) ──────────────────────────────────────
+CREATE TABLE IF NOT EXISTS offer (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  problem         TEXT,
+  outcome         TEXT,
+  category        TEXT,
+  use_cases       TEXT,  -- JSON array
+  triggers        TEXT,  -- JSON array
+  alternatives    TEXT,  -- JSON array
+  differentiation TEXT,
+  price_range     TEXT,
+  sales_cycle     TEXT,
+  criticality     TEXT,
+  inaction_cost   TEXT,
+  required_inputs TEXT,  -- JSON array
+  proof_points    TEXT,  -- JSON array
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ── ICP PROFILE (singleton) ───────────────────────────────
+CREATE TABLE IF NOT EXISTS icp_profile (
+  id                     INTEGER PRIMARY KEY CHECK (id = 1),
+  industries             TEXT,  -- JSON array
+  company_size           TEXT,
+  revenue_range          TEXT,
+  geography              TEXT,  -- JSON array
+  stage                  TEXT,  -- JSON array
+  tech_stack             TEXT,  -- JSON array
+  internal_capabilities  TEXT,  -- JSON array
+  budget_range           TEXT,
+  problem_frequency      TEXT,
+  problem_cost           TEXT,
+  impacted_kpis          TEXT,  -- JSON array
+  initiator_roles        TEXT,  -- JSON array
+  decision_roles         TEXT,  -- JSON array
+  objections             TEXT,  -- JSON array
+  buying_process         TEXT,
+  intent_signals         TEXT,  -- JSON array
+  current_tools          TEXT,  -- JSON array
+  workarounds            TEXT,  -- JSON array
+  frustrations           TEXT,  -- JSON array
+  switching_barriers     TEXT,  -- JSON array
+  hard_disqualifiers     TEXT,  -- JSON array
+  updated_at             DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Seed exactly one row per singleton; IGNORE keeps existing data intact.
+INSERT OR IGNORE INTO offer (id) VALUES (1);
+INSERT OR IGNORE INTO icp_profile (id) VALUES (1);
