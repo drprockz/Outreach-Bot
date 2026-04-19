@@ -108,7 +108,7 @@ Semantic change: `icp_score` now represents 0–100 (was 0–10). No column rena
 
 ### 3.3 New `status` value
 
-`leads.status` gains `'disqualified'` alongside existing `ready`/`sent`/`replied`/`nurture`/`email_invalid`/`bounced`. Leads with disqualifiers from the scorer are inserted with this status; they are *not* nurtured (distinct from C-priority).
+`leads.status` gains `'disqualified'` alongside existing statuses. The authoritative enum is the comment block at `db/schema.sql:49-51` (currently: `discovered/extraction_failed/judge_skipped/email_not_found/email_invalid/icp_c/deduped/ready/queued/sent/replied/unsubscribed/bounced/nurture`). Migration updates that comment to include `disqualified`. Leads with disqualifiers from the scorer are inserted with this status; they are *not* nurtured (distinct from C-priority).
 
 ### 3.4 Config additions
 
@@ -118,7 +118,7 @@ New rows in `config` table (populated by `initSchema`):
 |---|---|
 | `icp_threshold_a` | `70` |
 | `icp_threshold_b` | `40` |
-| `icp_weights` | `{"firmographic":20,"problem":20,"intent":15,"tech":15,"economic":15,"buying":15}` (JSON) |
+| `icp_weights` | `{"firmographic":20,"problem":20,"intent":15,"tech":15,"economic":15,"buying":15}` (JSON — values must sum to 100; validated at PUT time via `/api/config`) |
 
 ### 3.5 Deprecation
 
@@ -138,9 +138,17 @@ export function loadScoringContext(db) {
   const offer = db.prepare('SELECT * FROM offer WHERE id = 1').get();
   const icp   = db.prepare('SELECT * FROM icp_profile WHERE id = 1').get();
   if (!offer || !icp) {
-    throw new Error('ICP scoring requires offer + icp_profile rows to be configured');
+    throw new Error('ICP scoring requires offer + icp_profile rows to exist');
   }
-  return { offer: parseJsonFields(offer, OFFER_JSON_FIELDS), icp: parseJsonFields(icp, ICP_JSON_FIELDS) };
+  const parsedOffer = parseJsonFields(offer, OFFER_JSON_FIELDS);
+  const parsedIcp   = parseJsonFields(icp, ICP_JSON_FIELDS);
+
+  // Configured-ness check (see §6.2) — rows exist but may be seeded-empty.
+  // Require the two smell-test fields to be non-empty before the engine will run.
+  if (!parsedOffer.problem || !Array.isArray(parsedIcp.industries) || parsedIcp.industries.length === 0) {
+    throw new Error('ICP scoring requires offer.problem and icp_profile.industries to be configured');
+  }
+  return { offer: parsedOffer, icp: parsedIcp };
 }
 
 // Score one lead
@@ -205,7 +213,7 @@ Return JSON ONLY:
 
 ### 4.3 Gate 3 rewrite in `findLeads.js`
 
-Replaces the current C-priority nurture block (`src/engines/findLeads.js:361-395`):
+Replaces the current ICP worker (`src/engines/findLeads.js:349-395`; nurture INSERT block at `:362-386`):
 
 ```js
 const icp = await scoreLead(lead, ctx);
@@ -234,7 +242,53 @@ bumpMetric('leads_icp_ab');
 return lead;
 ```
 
-`insertLead()` is a small helper extracted from the two nearly-identical INSERT blocks in current findLeads (nurture insert + ready insert). Reduces duplication and makes the disqualified/nurture/ready fork easier to read.
+`insertLead()` is a new helper in `src/engines/findLeads.js` that centralizes the three-status fork (ready/nurture/disqualified) and reduces the ~25-column-INSERT duplication. Signature:
+
+```js
+// status ∈ {'ready', 'nurture', 'disqualified'}
+// Ready leads additionally require hook/body/subject to be generated (by Stage 10/11)
+// and insert into BOTH `leads` and `emails` tables. Helper handles only the `leads` INSERT;
+// the emails INSERT stays inline in the ready branch since it's status-specific.
+function insertLead(db, lead, niche, status) {
+  return db.prepare(`
+    INSERT INTO leads (
+      business_name, website_url, category, city, country, search_query,
+      tech_stack, website_problems, last_updated, has_ssl, has_analytics,
+      owner_name, owner_role, business_signals, social_active,
+      website_quality_score, judge_reason,
+      contact_name, contact_email, contact_confidence, contact_source,
+      email_status, email_verified_at,
+      employees_estimate, business_stage,
+      icp_score, icp_priority, icp_reason,
+      icp_breakdown, icp_key_matches, icp_key_gaps, icp_disqualifiers,
+      status, gemini_cost_usd, discovery_model, extraction_model
+    ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              CASE WHEN ? = 'ready' THEN datetime('now') ELSE NULL END,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gemini-2.5-flash', 'gemini-2.5-flash')
+  `).run(
+    lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
+    JSON.stringify(lead.tech_stack || []), JSON.stringify(lead.website_problems || []),
+    lead.last_updated, lead.has_ssl, lead.has_analytics,
+    lead.owner_name, lead.owner_role,
+    JSON.stringify(lead.business_signals || []), lead.social_active,
+    lead.website_quality_score, lead.judge_reason,
+    lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
+    lead.email_status, status,
+    lead.employees_estimate || 'unknown', lead.business_stage || 'unknown',
+    lead.icp_score, lead.icp_priority, lead.icp_reason,
+    JSON.stringify(lead.icp_breakdown || null),
+    JSON.stringify(lead.icp_key_matches || []),
+    JSON.stringify(lead.icp_key_gaps || []),
+    JSON.stringify(lead.icp_disqualifiers || []),
+    status,
+    (lead.extractCost || 0) + (lead.icpCost || 0)
+  );
+}
+```
+
+Column-set coverage:
+- All three statuses write the same columns. Disqualified/nurture have `email_verified_at = NULL` (never proceeded to verification context of a live campaign), ready gets `datetime('now')`. This is a minor difference from current behavior — today nurture leads get `email_verified_at` set; the change is intentional (the lead didn't enter the sending pipeline, so the verification timestamp is semantically wrong to carry).
+- For `ready`, the separate `INSERT INTO emails (...)` for hook/body/subject stays inline after the `insertLead()` call (same structure as today at `findLeads.js:465-476`).
 
 ### 4.4 Stage 2–6 extraction changes
 
@@ -364,7 +418,7 @@ Fine. Means no hard disqualifiers configured; scorer still emits soft `key_gaps`
 
 ### 6.6 Breakdown sum ≠ score
 
-Don't validate. `score` is authoritative; `breakdown` is analytical. UI shows both as returned.
+Don't validate. `score` is authoritative; `breakdown` is analytical. UI shows both as returned. Because Gemini can produce an overall `score` that doesn't numerically match the sum of its own `breakdown`, the LeadPipeline drawer (§5.5) includes a subtle caption under the breakdown bars — e.g. "Per-factor evidence from scorer (may not sum exactly to score)" — to avoid user confusion.
 
 ### 6.7 New telemetry counters
 
@@ -392,7 +446,7 @@ Added to `db/schema.sql` and `src/core/db/index.js` `initSchema()`:
    ```
 
 3. Call `addColumnIfMissing` for all 6 new `leads` columns (4 scoring + 2 extraction)
-4. Seed `offer` and `icp_profile` with a single row of **null/empty fields** if the table is empty — human must fill them in via dashboard before pipeline runs. Seeded-empty > seeded-wrong.
+4. Seed `offer` and `icp_profile` with a single row of **null/empty fields** if the table is empty, using `INSERT OR IGNORE INTO offer (id) VALUES (1)` (and the same for `icp_profile`). This guarantees exactly one row exists so the dashboard always has something to PUT against. The `loadScoringContext` check in §4.1 rejects the seeded-empty state by requiring `offer.problem` and `icp_profile.industries` to be non-empty — so the engine refuses to score until the human has filled minimum fields via the dashboard.
 5. Insert default config rows for `icp_threshold_a`, `icp_threshold_b`, `icp_weights` if missing.
 
 ### 7.2 Rescore script
@@ -409,10 +463,12 @@ Added to `db/schema.sql` and `src/core/db/index.js` `initSchema()`:
    - UPDATE leads SET icp_score, icp_priority, icp_breakdown,
                       icp_key_matches, icp_key_gaps,
                       icp_disqualifiers, icp_reason WHERE id = ?
-   - Do NOT change status, even if disqualifiers surface on sent/replied leads
-     (history is sacred — you already contacted them)
+   - Status handling when rescoring surfaces a disqualifier:
+     - `sent` / `replied` / `bounced` / `unsubscribed` → DO NOT change status (history is sacred — already contacted)
+     - `nurture` → DO NOT change status (keep the distinction between "C-priority" and "disqualified" only for *newly* scored leads)
+     - `ready` → **move to `disqualified`** (not yet contacted; having the disqualifier means we shouldn't send). Also delete the corresponding row in `emails` where `status='pending'` so `sendEmails.js` won't pick it up.
 4. Print progress every 50 leads
-5. Final summary: A/B/C/disqualified counts + total Gemini cost
+5. Final summary: A/B/C/disqualified counts + total Gemini cost + `ready→disqualified` transitions
 ```
 
 Cost bound: ~$0.001 × N Gemini Flash calls. Re-runnable (UPDATE-only).
@@ -421,17 +477,30 @@ Cost bound: ~$0.001 × N Gemini Flash calls. Re-runnable (UPDATE-only).
 
 | Step | Action | Gate |
 |---|---|---|
-| 1 | Merge schema + migration helper | backward-compatible (columns nullable) |
-| 2 | Merge `offer` + `icp_profile` routes + dashboard pages | deployable standalone |
+| 0 | **Human:** set `config.find_leads_enabled=0` via dashboard | prevents cron from running during rollout |
+| 1 | Merge schema + migration helper (creates offer/icp_profile tables, seeded empty + new lead columns) | backward-compatible; `find_leads_enabled=0` blocks cron |
+| 2 | Merge `offer` + `icp_profile` API routes + dashboard *edit* pages (not FunnelAnalytics/LeadPipeline color changes) | dashboard editable |
 | 3 | **Human:** fill in OFFER and ICP_PROFILE via dashboard | manual gate |
-| 4 | **Human:** run `scripts/rescoreLeads.js` once against prod DB | manual |
-| 5 | Merge new `findLeads.js` scorer + gate logic | requires step 3 done |
-| 6 | Verify next 09:00 IST `findLeads` run produces sensible scores | observation |
-| 7 | Follow-up PR: remove deprecated `icp_rules` table + route | cleanup |
+| 4 | **Human:** run `scripts/rescoreLeads.js` once against prod DB | rescores all leads to 0–100 scale |
+| 5 | Merge new `findLeads.js` scorer + gate logic + dashboard visualization updates (LeadPipeline breakdown drawer, FunnelAnalytics 70/40 color thresholds) | must happen together — score scale flip is a cliff |
+| 6 | **Human:** set `config.find_leads_enabled=1` via dashboard | re-enable cron |
+| 7 | Verify next 09:00 IST `findLeads` run produces sensible scores | observation |
+| 8 | Follow-up PR: remove deprecated `icp_rules` table + route | cleanup |
+
+The `find_leads_enabled=0` toggle at step 0 is not optional — without it, the 09:00 IST cron between steps 1 and 6 will run the old scorer against leads whose scores are about to be rewritten to 0–100 by the rescore script, producing inconsistent data. The existing config-driven enable flag at `src/engines/findLeads.js:167` already supports this.
 
 ### 7.4 Rollback plan
 
-New leads columns are additive and nullable. Reverting `findLeads.js` to the pre-refactor commit works immediately — but because `icp_score` values are now on the 0–100 scale, a reverted scorer would also need its threshold constants flipped back, OR a second rescore-reverse script. Keep the revert commit + a reverse-rescore procedure documented.
+New leads columns are additive and nullable. Rollback procedure if the new scorer misbehaves in prod after step 5:
+
+1. `config.find_leads_enabled=0` via dashboard (stops the cron immediately)
+2. `git revert` the step-5 commit (restores old `findLeads.js` + old dashboard thresholds)
+3. Run `scripts/rescoreLeads.js --legacy` — a flag that re-runs the *old* rubric-based scorer (kept intact during migration; `icp_rules` table still exists) and writes 0–10 scores back into `icp_score`. Cost bound is the same as forward rescore (~$0.001 × N).
+4. `config.find_leads_enabled=1`
+
+The `--legacy` flag is added to `rescoreLeads.js` as part of step-4 deliverables specifically to enable this reversal. Without it, rollback is not clean because `icp_score` values are stuck on the 0–100 scale.
+
+Budget the rollback rescore at ~$0.50 for 500 leads — cheap enough that we don't bother storing a shadow `icp_score_v1` column.
 
 ---
 
@@ -477,6 +546,14 @@ All tests use vitest, mirror the existing `tests/` layout.
 **`tests/core/db/db.test.js`**
 - `initSchema creates offer and icp_profile tables`
 - `initSchema adds new leads columns idempotently` (runs initSchema twice without error)
+- `initSchema seeds offer and icp_profile with one empty row each`
+- `initSchema seeds default icp_weights, icp_threshold_a, icp_threshold_b config rows`
+
+**`tests/engines/insertLead.test.js`** (new file, small)
+- `status='ready'` inserts all columns correctly and sets `email_verified_at=now()`
+- `status='nurture'` inserts with `email_verified_at=NULL`
+- `status='disqualified'` inserts with `email_verified_at=NULL`, stores disqualifiers JSON array
+- Missing optional fields default to safe values (e.g. `employees_estimate` → `'unknown'`)
 
 **`tests/engines/sendFollowups.test.js`** (`:43`)
 - Rescale seed: `icp_score: 5` → `icp_score: 50`
@@ -490,7 +567,7 @@ The dashboard forms are straightforward controlled inputs over validated APIs. v
 
 ### 8.4 Test count delta
 
-Current: 109 tests. Target post-change: ~124 tests (+15 new, ~5 updated).
+Current: 109 tests. Target post-change: ~130 tests (+21 new, ~5 updated).
 
 ---
 
@@ -506,17 +583,22 @@ Current: 109 tests. Target post-change: ~124 tests (+15 new, ~5 updated).
 - `tests/core/ai/icpScorer.test.js`
 - `tests/api/offer.test.js`
 - `tests/api/icpProfile.test.js`
+- `tests/engines/insertLead.test.js`
 - `tests/scripts/rescoreLeads.test.js`
 
 **Modified files:**
-- `db/schema.sql` — add `offer`, `icp_profile`, new leads columns
+- `db/schema.sql` — add `offer`, `icp_profile`, new leads columns; update `status` enum comment to include `disqualified`
 - `src/core/db/index.js` — `initSchema()` seeds + `addColumnIfMissing` helper + default config rows
 - `src/engines/findLeads.js` — replace `stage9_icpScore` + `buildIcpRubric`; extend `stages2to6_extract`; rewrite Gate 3; extract `insertLead` helper
 - `src/api/server.js` — mount new routes
+- `src/api/routes/config.js` — add `icp_weights` sum-to-100 validation at PUT
 - `web/src/App.jsx` — nav entries (replace `ICP Rules` with `Offer` + `ICP Profile`)
 - `web/src/pages/LeadPipeline.jsx` — detail drawer shows breakdown/matches/gaps/disqualifiers
 - `web/src/pages/FunnelAnalytics.jsx:240` — color thresholds 7/4 → 70/40
-- `tests/engines/findLeads.test.js`, `tests/engines/sendFollowups.test.js`, `tests/engines/sendEmails.test.js`, `tests/core/db/db.test.js` — rescale + new tests
+- `tests/engines/findLeads.test.js` — rescale + new disqualified test
+- `tests/engines/sendFollowups.test.js` — rescale seed
+- `tests/engines/sendEmails.test.js` — rescale seed (3 occurrences)
+- `tests/core/db/db.test.js` — new migration/seed tests
 
 **Deprecated (removed in follow-up PR):**
 - `src/api/routes/icpRules.js`
