@@ -14,13 +14,15 @@ const EMPTY = {
 
 export default function IcpProfile() {
   const [profile, setProfile] = useState(EMPTY);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    api.getIcpProfile().then(r => {
-      setProfile({ ...EMPTY, ...(r?.profile || {}) });
-    });
+    api.getIcpProfile()
+      .then(r => setProfile({ ...EMPTY, ...(r?.profile || {}) }))
+      .catch(e => setMsg(`Load failed: ${e.message}`))
+      .finally(() => setLoading(false));
   }, []);
 
   const set = (k) => (v) => setProfile(p => ({ ...p, [k]: v }));
@@ -38,6 +40,15 @@ export default function IcpProfile() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (loading) {
+    return (
+      <div className="page icp-profile-page">
+        <h2>ICP Profile</h2>
+        <p className="muted">Loading…</p>
+      </div>
+    );
   }
 
   return (

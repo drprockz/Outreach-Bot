@@ -10,13 +10,15 @@ const EMPTY = {
 
 export default function Offer() {
   const [offer, setOffer] = useState(EMPTY);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState('');
 
   useEffect(() => {
-    api.getOffer().then(r => {
-      setOffer({ ...EMPTY, ...(r?.offer || {}) });
-    });
+    api.getOffer()
+      .then(r => setOffer({ ...EMPTY, ...(r?.offer || {}) }))
+      .catch(e => setMsg(`Load failed: ${e.message}`))
+      .finally(() => setLoading(false));
   }, []);
 
   const set = (k) => (v) => setOffer(o => ({ ...o, [k]: v }));
@@ -34,6 +36,15 @@ export default function Offer() {
     } finally {
       setSaving(false);
     }
+  }
+
+  if (loading) {
+    return (
+      <div className="page offer-page">
+        <h2>Offer</h2>
+        <p className="muted">Loading…</p>
+      </div>
+    );
   }
 
   return (
