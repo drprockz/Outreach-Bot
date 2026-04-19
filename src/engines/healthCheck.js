@@ -1,81 +1,91 @@
 import 'dotenv/config';
 import { writeFileSync, readFileSync } from 'fs';
-import { getDb, logCron, finishCron, logError, bumpMetric, today } from '../core/db/index.js';
+import { prisma, logCron, finishCron, logError, today } from '../core/db/index.js';
 import { checkDomain } from '../core/integrations/blacklistCheck.js';
 import { sendAlert } from '../core/integrations/telegram.js';
 
 const DOMAIN = process.env.OUTREACH_DOMAIN || 'trysimpleinc.com';
 
-export default async function healthCheck() {
-  const cronId = logCron('healthCheck');
+async function forceDailySendLimitZero() {
+  // Persist to .env so PM2 restarts keep the pause
   try {
-    const db = getDb();
-    const d = today();
+    const envPath = process.env.ENV_PATH || '.env';
+    let envContent = readFileSync(envPath, 'utf8');
+    envContent = envContent.replace(/^DAILY_SEND_LIMIT=\d+/m, 'DAILY_SEND_LIMIT=0');
+    writeFileSync(envPath, envContent);
+  } catch {
+    // If .env write fails, at least set process env + config
+  }
+  process.env.DAILY_SEND_LIMIT = '0';
+  // Also persist in config so getConfigMap-based readers see it
+  await prisma.config.upsert({
+    where: { key: 'daily_send_limit' },
+    create: { key: 'daily_send_limit', value: '0' },
+    update: { value: '0' },
+  });
+}
 
-    // Ensure daily_metrics row exists
-    db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
+export default async function healthCheck() {
+  const cronId = await logCron('healthCheck');
+  try {
+    const d = today();
 
     // DNS blacklist check
     const { clean, zones } = await checkDomain(DOMAIN);
 
-    // Store blacklist results in daily_metrics
-    db.prepare(`UPDATE daily_metrics SET domain_blacklisted=?, blacklist_zones=? WHERE date=?`).run(
-      clean ? 0 : 1,
-      clean ? null : zones.join(', '),
-      d
-    );
+    // Store blacklist results in daily_metrics (upsert — ensures row exists)
+    await prisma.dailyMetrics.upsert({
+      where: { date: d },
+      create: {
+        date: d,
+        domainBlacklisted: !clean,
+        blacklistZones: clean ? null : zones,
+      },
+      update: {
+        domainBlacklisted: !clean,
+        blacklistZones: clean ? null : zones,
+      },
+    });
 
     if (!clean) {
       await sendAlert(`🚨 BLACKLIST: ${DOMAIN} listed on: ${zones.join(', ')} — sending paused`);
-      // Persist DAILY_SEND_LIMIT=0 by writing to .env file so it survives PM2 restarts
-      try {
-        const envPath = process.env.ENV_PATH || '.env';
-        let envContent = readFileSync(envPath, 'utf8');
-        envContent = envContent.replace(/^DAILY_SEND_LIMIT=\d+/m, 'DAILY_SEND_LIMIT=0');
-        writeFileSync(envPath, envContent);
-      } catch {
-        // If .env write fails, at least set process env
-      }
-      process.env.DAILY_SEND_LIMIT = '0';
-      logError('healthCheck.blacklist', new Error(`Domain ${DOMAIN} listed on ${zones.join(', ')}`), { jobName: 'healthCheck', errorType: 'smtp_error' });
+      await forceDailySendLimitZero();
+      await logError('healthCheck.blacklist', new Error(`Domain ${DOMAIN} listed on ${zones.join(', ')}`), { jobName: 'healthCheck', errorType: 'smtp_error' });
     }
 
-    // Bounce rate check (7-day rolling) — use correct column names
-    const rows = db.prepare(`
-      SELECT SUM(emails_sent) as sent, SUM(emails_hard_bounced) as bounced
-      FROM daily_metrics
-      WHERE date >= date('now', '-7 days')
-    `).get();
-    const bounceRate = rows?.sent > 0 ? (rows.bounced / rows.sent) : 0;
+    // Bounce rate check (7-day rolling)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const rows = await prisma.dailyMetrics.findMany({
+      where: { date: { gte: sevenDaysAgo } },
+      select: { emailsSent: true, emailsHardBounced: true },
+    });
+    const sent = rows.reduce((a, r) => a + (r.emailsSent || 0), 0);
+    const bounced = rows.reduce((a, r) => a + (r.emailsHardBounced || 0), 0);
+    const bounceRate = sent > 0 ? bounced / sent : 0;
     if (bounceRate > parseFloat(process.env.BOUNCE_RATE_HARD_STOP || '0.02')) {
       await sendAlert(`🚨 BOUNCE RATE ${(bounceRate * 100).toFixed(2)}% exceeds threshold — sending paused`);
-      try {
-        const envPath = process.env.ENV_PATH || '.env';
-        let envContent = readFileSync(envPath, 'utf8');
-        envContent = envContent.replace(/^DAILY_SEND_LIMIT=\d+/m, 'DAILY_SEND_LIMIT=0');
-        writeFileSync(envPath, envContent);
-      } catch { /* best effort */ }
-      process.env.DAILY_SEND_LIMIT = '0';
+      await forceDailySendLimitZero();
     }
 
-    // Unsub rate check (7-day rolling) — use correct column name 'category'
-    const replyRows = db.prepare(`
-      SELECT COUNT(*) as unsubs
-      FROM replies
-      WHERE category = 'unsubscribe'
-        AND received_at >= datetime('now', '-7 days')
-    `).get();
-    const unsubRate = rows?.sent > 0 ? ((replyRows?.unsubs || 0) / rows.sent) : 0;
+    // Unsub rate check (7-day rolling)
+    const sevenDaysAgoDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const unsubs = await prisma.reply.count({
+      where: {
+        category: 'unsubscribe',
+        receivedAt: { gte: sevenDaysAgoDate },
+      },
+    });
+    const unsubRate = sent > 0 ? unsubs / sent : 0;
     if (unsubRate > 0.01) {
       await sendAlert(`⚠️ UNSUB RATE ${(unsubRate * 100).toFixed(2)}% exceeds 1.0% — monitor closely`);
     }
 
     const summary = `healthCheck: blacklist=${clean ? 'clean' : 'LISTED'}, bounce=${(bounceRate * 100).toFixed(2)}%, unsub=${(unsubRate * 100).toFixed(2)}%`;
     await sendAlert(summary);
-    finishCron(cronId, { status: 'success' });
+    await finishCron(cronId, { status: 'success' });
   } catch (err) {
-    logError('healthCheck', err, { jobName: 'healthCheck' });
-    finishCron(cronId, { status: 'failed', error: err.message });
+    await logError('healthCheck', err, { jobName: 'healthCheck' });
+    await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`healthCheck error: ${err.message}`);
   }
 }
