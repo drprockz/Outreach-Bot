@@ -225,7 +225,7 @@ Object.assign(lead, icp);
 
 // NEW: disqualifiers override score (Decision 4)
 if (icp.icp_disqualifiers.length > 0) {
-  insertLead(lead, niche, 'disqualified');
+  insertLead(db, lead, niche, 'disqualified');
   bumpMetric('leads_disqualified');
   leadsSkipped++;
   return null;
@@ -233,7 +233,7 @@ if (icp.icp_disqualifiers.length > 0) {
 
 // Bucketing by score (Decision 1)
 if (icp.icp_priority === 'C') {
-  insertLead(lead, niche, 'nurture');
+  insertLead(db, lead, niche, 'nurture');
   leadsSkipped++;
   return null;
 }
