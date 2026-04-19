@@ -1,16 +1,30 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
 const VALID_POINTS = [-3, -2, -1, 1, 2, 3];
 
-router.get('/', (req, res) => {
-  const rules = getDb().prepare('SELECT * FROM icp_rules ORDER BY sort_order, id').all();
-  res.json({ rules });
+function serialize(r) {
+  if (!r) return null;
+  return {
+    id: r.id,
+    label: r.label,
+    points: r.points,
+    description: r.description,
+    enabled: r.enabled ? 1 : 0,
+    sort_order: r.sortOrder,
+  };
+}
+
+router.get('/', async (req, res) => {
+  const rules = await prisma.icpRule.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+  });
+  res.json({ rules: rules.map(serialize) });
 });
 
-router.put('/', (req, res) => {
+router.put('/', async (req, res) => {
   const rules = req.body;
   if (!Array.isArray(rules)) return res.status(400).json({ error: 'body must be an array' });
 
@@ -19,17 +33,22 @@ router.put('/', (req, res) => {
     if (!VALID_POINTS.includes(r.points)) return res.status(400).json({ error: `invalid points value: ${r.points}` });
   }
 
-  const db = getDb();
-  const replaceFn = db.transaction((rulesArr) => {
-    db.prepare('DELETE FROM icp_rules').run();
-    rulesArr.forEach((r, i) => {
-      db.prepare(
-        'INSERT INTO icp_rules (label, points, description, enabled, sort_order) VALUES (?, ?, ?, ?, ?)'
-      ).run(r.label, r.points, r.description ?? null, r.enabled ?? 1, i);
-    });
+  await prisma.$transaction(async (tx) => {
+    await tx.icpRule.deleteMany({});
+    for (let i = 0; i < rules.length; i++) {
+      const r = rules[i];
+      await tx.icpRule.create({
+        data: {
+          label: r.label,
+          points: r.points,
+          description: r.description ?? null,
+          enabled: r.enabled === undefined ? true : !!r.enabled,
+          sortOrder: i,
+        },
+      });
+    }
   });
 
-  replaceFn(rules);
   res.json({ ok: true });
 });
 

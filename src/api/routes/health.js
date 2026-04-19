@@ -1,76 +1,77 @@
 import { Router } from 'express';
-import { getDb, today } from '../../core/db/index.js';
+import { prisma, today } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+router.get('/', async (req, res) => {
   const d = today();
 
-  const todayMetrics = db.prepare(`SELECT * FROM daily_metrics WHERE date = ?`).get(d);
-  const emailsSent = todayMetrics?.emails_sent || 0;
-  const bounces = todayMetrics?.emails_hard_bounced || 0;
+  const todayMetrics = await prisma.dailyMetrics.findUnique({ where: { date: d } });
+  const emailsSent = todayMetrics?.emailsSent || 0;
+  const bounces = todayMetrics?.emailsHardBounced || 0;
   const bounceRate = emailsSent > 0 ? (bounces / emailsSent * 100).toFixed(2) : '0.00';
 
-  const weekReplies = db.prepare(`
-    SELECT
-      COUNT(*) AS total,
-      SUM(CASE WHEN category = 'unsubscribe' THEN 1 ELSE 0 END) AS unsubs
-    FROM replies
-    WHERE received_at >= date('now', '-7 days')
-  `).get();
-  const unsubRate = weekReplies.total > 0
-    ? (weekReplies.unsubs / weekReplies.total * 100).toFixed(2)
-    : '0.00';
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const weekReplyRows = await prisma.reply.findMany({
+    where: { receivedAt: { gte: sevenDaysAgo } },
+    select: { category: true },
+  });
+  const weekTotal = weekReplyRows.length;
+  const weekUnsubs = weekReplyRows.filter(r => r.category === 'unsubscribe').length;
+  const unsubRate = weekTotal > 0 ? (weekUnsubs / weekTotal * 100).toFixed(2) : '0.00';
 
   const inbox1Email = process.env.INBOX_1_USER || 'darshan@trysimpleinc.com';
   const inbox2Email = process.env.INBOX_2_USER || 'hello@trysimpleinc.com';
 
-  const lastSendInbox1 = db.prepare(
-    `SELECT sent_at FROM emails WHERE inbox_used = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`
-  ).get(inbox1Email);
+  const lastSendInbox1 = await prisma.email.findFirst({
+    where: { inboxUsed: inbox1Email, status: 'sent' },
+    orderBy: { sentAt: 'desc' },
+    select: { sentAt: true },
+  });
+  const lastSendInbox2 = await prisma.email.findFirst({
+    where: { inboxUsed: inbox2Email, status: 'sent' },
+    orderBy: { sentAt: 'desc' },
+    select: { sentAt: true },
+  });
 
-  const lastSendInbox2 = db.prepare(
-    `SELECT sent_at FROM emails WHERE inbox_used = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`
-  ).get(inbox2Email);
+  const rejectCount = await prisma.rejectList.count();
 
-  const rejectCount = db.prepare(`SELECT COUNT(*) AS count FROM reject_list`).get();
+  const blacklisted = todayMetrics?.domainBlacklisted === true;
+  const blacklistZones = todayMetrics?.blacklistZones || null;
 
-  const blacklistStatus = todayMetrics?.domain_blacklisted || 0;
-  const blacklistZones = todayMetrics?.blacklist_zones || null;
-
-  const mailTester = db.prepare(`
-    SELECT mail_tester_score, date FROM daily_metrics
-    WHERE mail_tester_score IS NOT NULL
-    ORDER BY date DESC LIMIT 1
-  `).get();
+  const mailTester = await prisma.dailyMetrics.findFirst({
+    where: { mailTesterScore: { not: null } },
+    orderBy: { date: 'desc' },
+    select: { mailTesterScore: true, date: true },
+  });
 
   res.json({
     bounceRate: parseFloat(bounceRate),
     unsubscribeRate: parseFloat(unsubRate),
     domain: process.env.OUTREACH_DOMAIN || 'trysimpleinc.com',
-    blacklisted: blacklistStatus === 1,
+    blacklisted,
     blacklistZones,
-    postmasterReputation: todayMetrics?.postmaster_reputation || null,
-    mailTesterScore: mailTester?.mail_tester_score || null,
+    postmasterReputation: todayMetrics?.postmasterReputation || null,
+    mailTesterScore: mailTester?.mailTesterScore ?? null,
     mailTesterDate: mailTester?.date || null,
     inboxes: {
-      inbox1: { email: inbox1Email, lastSend: lastSendInbox1?.sent_at || null },
-      inbox2: { email: inbox2Email, lastSend: lastSendInbox2?.sent_at || null }
+      inbox1: { email: inbox1Email, lastSend: lastSendInbox1?.sentAt || null },
+      inbox2: { email: inbox2Email, lastSend: lastSendInbox2?.sentAt || null }
     },
-    rejectListSize: rejectCount?.count || 0
+    rejectListSize: rejectCount
   });
 });
 
-router.patch('/mail-tester', (req, res) => {
-  const db = getDb();
+router.patch('/mail-tester', async (req, res) => {
   const { score } = req.body || {};
-
   if (score === undefined || score === null) return res.status(400).json({ error: 'score is required' });
 
   const d = today();
-  db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-  db.prepare(`UPDATE daily_metrics SET mail_tester_score = ? WHERE date = ?`).run(parseFloat(score), d);
+  await prisma.dailyMetrics.upsert({
+    where: { date: d },
+    create: { date: d, mailTesterScore: parseFloat(score) },
+    update: { mailTesterScore: parseFloat(score) },
+  });
   res.json({ ok: true });
 });
 

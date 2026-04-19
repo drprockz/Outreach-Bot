@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const rows = getDb().prepare('SELECT key, value FROM config').all();
+router.get('/', async (req, res) => {
+  const rows = await prisma.config.findMany();
   res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
 });
 
-router.put('/', (req, res) => {
+router.put('/', async (req, res) => {
   const updates = req.body || {};
 
   // Validate icp_weights JSON structure if provided
@@ -26,9 +26,12 @@ router.put('/', (req, res) => {
     }
   }
 
-  const stmt = getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(updates)) {
-    stmt.run(key, String(value));
+    await prisma.config.upsert({
+      where: { key },
+      create: { key, value: String(value) },
+      update: { value: String(value) },
+    });
   }
   res.json({ ok: true });
 });

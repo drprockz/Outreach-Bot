@@ -1,23 +1,26 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma } from '../helpers/testDb.js';
 
-let tmpDir, server, baseUrl, token;
+let server, baseUrl, token;
 
 beforeAll(async () => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-  process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
   process.env.DASHBOARD_PASSWORD = 'testpass';
   process.env.JWT_SECRET = 'testsecret64charslongpadded00000000000000000000000000000000000000';
   process.env.JWT_EXPIRES_IN = '7d';
   process.env.NODE_ENV = 'test';
-  const { resetDb, initSchema } = await import('../../src/core/db/index.js');
-  resetDb();
-  initSchema();
+
   const mod = await import('../../src/api/server.js');
   server = mod.app.listen(0);
   baseUrl = `http://localhost:${server.address().port}`;
+});
+
+beforeEach(async () => {
+  await truncateAll();
+  const { resetDb, seedConfigDefaults, seedNichesAndIcpRules } = await import('../../src/core/db/index.js');
+  await resetDb();
+  await seedConfigDefaults();
+  await seedNichesAndIcpRules();
+
   const r = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -29,8 +32,8 @@ beforeAll(async () => {
 afterAll(async () => {
   if (server) server.close();
   const { resetDb } = await import('../../src/core/db/index.js');
-  resetDb();
-  rmSync(tmpDir, { recursive: true });
+  await resetDb();
+  await closeTestPrisma();
 });
 
 const authHeaders = () => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` });

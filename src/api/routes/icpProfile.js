@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, logError } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -9,30 +9,42 @@ const ARRAY_FIELDS = [
   'intent_signals', 'current_tools', 'workarounds', 'frustrations',
   'switching_barriers', 'hard_disqualifiers'
 ];
-const SCALAR_FIELDS = [
-  'company_size', 'revenue_range', 'budget_range',
-  'problem_frequency', 'problem_cost', 'buying_process'
-];
 
 function serialize(row) {
   if (!row) return null;
-  const out = { ...row };
-  for (const f of ARRAY_FIELDS) {
-    try { out[f] = out[f] ? JSON.parse(out[f]) : []; }
-    catch (err) {
-      logError('api.icpProfile.serialize', err, { rawField: f, rawValue: String(out[f]).slice(0, 200) });
-      out[f] = [];
-    }
-  }
-  return out;
+  return {
+    id: row.id,
+    industries: row.industries || [],
+    company_size: row.companySize,
+    revenue_range: row.revenueRange,
+    geography: row.geography || [],
+    stage: row.stage || [],
+    tech_stack: row.techStack || [],
+    internal_capabilities: row.internalCapabilities || [],
+    budget_range: row.budgetRange,
+    problem_frequency: row.problemFrequency,
+    problem_cost: row.problemCost,
+    impacted_kpis: row.impactedKpis || [],
+    initiator_roles: row.initiatorRoles || [],
+    decision_roles: row.decisionRoles || [],
+    objections: row.objections || [],
+    buying_process: row.buyingProcess,
+    intent_signals: row.intentSignals || [],
+    current_tools: row.currentTools || [],
+    workarounds: row.workarounds || [],
+    frustrations: row.frustrations || [],
+    switching_barriers: row.switchingBarriers || [],
+    hard_disqualifiers: row.hardDisqualifiers || [],
+    updated_at: row.updatedAt,
+  };
 }
 
-router.get('/', (req, res) => {
-  const row = getDb().prepare('SELECT * FROM icp_profile WHERE id = 1').get();
+router.get('/', async (req, res) => {
+  const row = await prisma.icpProfile.findUnique({ where: { id: 1 } });
   res.json({ profile: serialize(row) });
 });
 
-router.put('/', (req, res) => {
+router.put('/', async (req, res) => {
   const body = req.body || {};
 
   for (const f of ARRAY_FIELDS) {
@@ -41,24 +53,36 @@ router.put('/', (req, res) => {
     }
   }
 
-  const values = {};
-  for (const f of SCALAR_FIELDS) values[f] = body[f] ?? null;
-  for (const f of ARRAY_FIELDS) values[f] = JSON.stringify(body[f] || []);
+  const data = {
+    industries: body.industries || [],
+    companySize: body.company_size ?? null,
+    revenueRange: body.revenue_range ?? null,
+    geography: body.geography || [],
+    stage: body.stage || [],
+    techStack: body.tech_stack || [],
+    internalCapabilities: body.internal_capabilities || [],
+    budgetRange: body.budget_range ?? null,
+    problemFrequency: body.problem_frequency ?? null,
+    problemCost: body.problem_cost ?? null,
+    impactedKpis: body.impacted_kpis || [],
+    initiatorRoles: body.initiator_roles || [],
+    decisionRoles: body.decision_roles || [],
+    objections: body.objections || [],
+    buyingProcess: body.buying_process ?? null,
+    intentSignals: body.intent_signals || [],
+    currentTools: body.current_tools || [],
+    workarounds: body.workarounds || [],
+    frustrations: body.frustrations || [],
+    switchingBarriers: body.switching_barriers || [],
+    hardDisqualifiers: body.hard_disqualifiers || [],
+    updatedAt: new Date(),
+  };
 
-  getDb().prepare(`
-    UPDATE icp_profile SET
-      industries=@industries, company_size=@company_size, revenue_range=@revenue_range,
-      geography=@geography, stage=@stage, tech_stack=@tech_stack,
-      internal_capabilities=@internal_capabilities, budget_range=@budget_range,
-      problem_frequency=@problem_frequency, problem_cost=@problem_cost,
-      impacted_kpis=@impacted_kpis, initiator_roles=@initiator_roles,
-      decision_roles=@decision_roles, objections=@objections,
-      buying_process=@buying_process, intent_signals=@intent_signals,
-      current_tools=@current_tools, workarounds=@workarounds,
-      frustrations=@frustrations, switching_barriers=@switching_barriers,
-      hard_disqualifiers=@hard_disqualifiers, updated_at=datetime('now')
-    WHERE id = 1
-  `).run(values);
+  await prisma.icpProfile.upsert({
+    where: { id: 1 },
+    create: { id: 1, ...data },
+    update: data,
+  });
 
   res.json({ ok: true });
 });
