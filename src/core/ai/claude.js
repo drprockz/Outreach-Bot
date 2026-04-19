@@ -1,12 +1,12 @@
 import Anthropic from '@anthropic-ai/sdk';
 import 'dotenv/config';
-import { getDb, today, logError } from '../db/index.js';
+import { getPrisma, bumpCostMetric, today, logError } from '../db/index.js';
 
 // Pricing per 1M tokens (Haiku 4.5: $1.00/$5.00, Sonnet 4: $3.00/$15.00)
 const PRICING = {
   sonnet:   { input: 3.00, output: 15.00 },
   haiku:    { input: 1.00, output: 5.00  },
-  classify: { input: 1.00, output: 5.00  }  // same as haiku; independently switchable via MODEL_CLASSIFY
+  classify: { input: 1.00, output: 5.00  }
 };
 
 const MODEL_IDS = {
@@ -23,13 +23,14 @@ function getClient() {
 
 async function checkSpendCap() {
   const cap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '3.00');
-  const row = getDb().prepare(
-    `SELECT sonnet_cost_usd, haiku_cost_usd FROM daily_metrics WHERE date=?`
-  ).get(today());
-  const spent = (row?.sonnet_cost_usd || 0) + (row?.haiku_cost_usd || 0);
+  const row = await getPrisma().dailyMetrics.findUnique({
+    where: { date: today() },
+    select: { sonnetCostUsd: true, haikuCostUsd: true },
+  });
+  const spent = Number(row?.sonnetCostUsd || 0) + Number(row?.haikuCostUsd || 0);
   if (spent >= cap) {
     const err = new Error(`Claude daily spend cap ($${cap}) reached — spent $${spent.toFixed(4)}`);
-    logError('claude.spendCap', err);
+    await logError('claude.spendCap', err);
     throw err;
   }
 }
@@ -61,13 +62,9 @@ export async function callClaude(model, prompt, { systemPrompt, maxTokens = 1024
   const costUsd = (inputTokens / 1_000_000) * pricing.input
                 + (outputTokens / 1_000_000) * pricing.output;
 
-  // Write cost to daily_metrics
-  const db = getDb();
-  const d = today();
-  db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-  const col = model === 'sonnet' ? 'sonnet_cost_usd' : 'haiku_cost_usd'; // classify uses haiku pricing
-  db.prepare(`UPDATE daily_metrics SET ${col}=${col}+?, total_api_cost_usd=total_api_cost_usd+? WHERE date=?`)
-    .run(costUsd, costUsd, d);
+  // Write cost to daily_metrics via consolidated helper
+  const field = model === 'sonnet' ? 'sonnetCostUsd' : 'haikuCostUsd';
+  await bumpCostMetric(field, costUsd);
 
   return { text, costUsd, inputTokens, outputTokens, model: MODEL_IDS[model] };
 }

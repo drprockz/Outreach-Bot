@@ -1,6 +1,6 @@
 import axios from 'axios';
 import 'dotenv/config';
-import { getDb, today } from '../db/index.js';
+import { bumpCostMetric } from '../db/index.js';
 
 const MEV_BASE = 'https://api.myemailverifier.com/verify';
 
@@ -21,16 +21,11 @@ export async function verifyEmail(email) {
       timeout: 10000
     });
 
-    // Log MEV cost to daily_metrics
+    // Log MEV cost to daily_metrics — best-effort; don't break verification on DB errors
     try {
-      const db = getDb();
-      const d = today();
-      db.prepare(`INSERT INTO daily_metrics (date) VALUES (?) ON CONFLICT(date) DO NOTHING`).run(d);
-      db.prepare(`UPDATE daily_metrics SET mev_cost_usd=mev_cost_usd+?, total_api_cost_usd=total_api_cost_usd+? WHERE date=?`)
-        .run(MEV_COST_PER_VERIFY, MEV_COST_PER_VERIFY, d);
-    } catch { /* don't let metrics logging break verification */ }
+      await bumpCostMetric('mevCostUsd', MEV_COST_PER_VERIFY);
+    } catch { /* swallow */ }
 
-    // status: 'valid' | 'invalid' | 'disposable' | 'unknown'
     const confidence = data.score ?? (data.status === 'valid' ? 0.9 : 0);
     return { status: data.status, confidence };
   } catch (err) {
