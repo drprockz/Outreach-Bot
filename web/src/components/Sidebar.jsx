@@ -16,10 +16,12 @@ const navItems = [
 ];
 
 const settingsItems = [
-  { path: '/settings/niches',  label: 'Niches' },
-  { path: '/settings/engines', label: 'Engines' },
-  { path: '/settings/icp',     label: 'ICP Rubric' },
-  { path: '/settings/persona', label: 'Persona' },
+  { path: '/settings/niches',      label: 'Niches' },
+  { path: '/settings/engines',     label: 'Engines' },
+  { path: '/settings/offer',       label: 'Offer' },
+  { path: '/settings/icp-profile', label: 'ICP Profile' },
+  { path: '/settings/icp',         label: 'ICP Rubric (legacy)' },
+  { path: '/settings/persona',     label: 'Persona' },
 ];
 
 export default function Sidebar() {

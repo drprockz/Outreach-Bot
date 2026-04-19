@@ -1312,3 +1312,156 @@ tbody tr:hover { background: var(--bg-elevated); }
 .persona-form { display: flex; flex-direction: column; gap: 14px; }
 .persona-field { display: flex; align-items: center; gap: 16px; }
 .persona-field .engine-field-label { width: 140px; flex-shrink: 0; }
+
+/* ── ChipInput ────────────────────────────────────────────── */
+.chip-input { display: flex; flex-direction: column; gap: 6px; }
+.chip-input .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip-input .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-1);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.chip-input .chip button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.chip-input .chip button:hover { color: var(--red); }
+.chip-input-row { display: flex; gap: 6px; }
+.chip-input-row input {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+.chip-input-row input:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-dim);
+}
+.chip-input-row button {
+  padding: 6px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chip-input-row button:hover {
+  border-color: var(--border-light);
+  color: var(--text-1);
+}
+
+/* ── Offer / ICP Profile form pages ───────────────────────── */
+.offer-page, .icp-profile-page { max-width: 720px; }
+.offer-page h2, .icp-profile-page h2 {
+  font-family: var(--font-display);
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 4px;
+  letter-spacing: -0.3px;
+}
+.offer-page h3, .icp-profile-page h3 {
+  font-family: var(--font-display);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  margin-bottom: var(--space-md);
+}
+.offer-page .muted, .icp-profile-page .muted {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-bottom: var(--space-lg);
+}
+.offer-page section, .icp-profile-page section {
+  margin-bottom: var(--space-xl);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--border);
+}
+.offer-page section:last-of-type, .icp-profile-page section:last-of-type {
+  border-bottom: none;
+}
+.offer-page label, .icp-profile-page label {
+  display: block;
+  margin-bottom: var(--space-md);
+  font-size: 11px;
+  color: var(--text-2);
+  font-weight: 500;
+}
+.offer-page input[type="text"],
+.offer-page input:not([type]),
+.offer-page textarea,
+.offer-page select,
+.icp-profile-page input[type="text"],
+.icp-profile-page input:not([type]),
+.icp-profile-page textarea,
+.icp-profile-page select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-1);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: normal;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.offer-page textarea, .icp-profile-page textarea {
+  resize: vertical;
+  min-height: 44px;
+}
+.offer-page input:focus, .offer-page textarea:focus, .offer-page select:focus,
+.icp-profile-page input:focus, .icp-profile-page textarea:focus, .icp-profile-page select:focus {
+  border-color: var(--green);
+  box-shadow: 0 0 0 3px var(--green-dim);
+}
+
+.save-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: var(--space-lg);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--border);
+}
+.save-bar button {
+  padding: 8px 18px;
+  background: var(--green);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--bg-deep);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.5px;
+}
+.save-bar button:hover:not(:disabled) { background: var(--green-bright); }
+.save-bar button:disabled { opacity: 0.5; cursor: default; }
+.save-bar .msg {
+  color: var(--green-bright);
+  font-size: 11px;
+}

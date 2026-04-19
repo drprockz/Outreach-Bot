@@ -49,4 +49,8 @@ export const api = {
   deleteNiche:    (id)        => request(`/niches/${id}`, { method: 'DELETE' }),
   getIcpRules:    ()          => request('/icp-rules'),
   updateIcpRules: (rules)     => request('/icp-rules', { method: 'PUT', body: JSON.stringify(rules) }),
+  getOffer:         ()     => request('/offer'),
+  updateOffer:      (data) => request('/offer', { method: 'PUT', body: JSON.stringify(data) }),
+  getIcpProfile:    ()     => request('/icp-profile'),
+  updateIcpProfile: (data) => request('/icp-profile', { method: 'PUT', body: JSON.stringify(data) }),
 };
