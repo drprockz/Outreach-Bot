@@ -17,6 +17,20 @@ function parseJson(val) {
   try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
 }
 
+function ChipList({ label, json, colorVar }) {
+  let arr;
+  try { arr = JSON.parse(json); } catch { arr = []; }
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return (
+    <div className="chip-list">
+      <strong>{label}:</strong>
+      {arr.map((s, i) => (
+        <span key={i} className="chip" style={{ background: `var(${colorVar})`, opacity: 0.15, color: `var(${colorVar})` }}>{s}</span>
+      ))}
+    </div>
+  );
+}
+
 export default function LeadPipeline() {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
@@ -219,7 +233,36 @@ export default function LeadPipeline() {
 
             <div className="detail-label">ICP Score / Priority</div>
             <div className="detail-value">
-              {selectedLead.icp_score ?? '-'} / {selectedLead.icp_priority || '-'}
+              <div className="icp-details">
+                <div><strong>Score:</strong> {selectedLead.icp_score ?? '-'} / 100 ({selectedLead.icp_priority || '-'})</div>
+                {selectedLead.icp_breakdown && (
+                  <div className="icp-breakdown">
+                    <strong>Breakdown</strong>
+                    <small className="muted"> (per-factor evidence; may not sum exactly to score)</small>
+                    {(() => {
+                      let b;
+                      try { b = JSON.parse(selectedLead.icp_breakdown); } catch { b = null; }
+                      if (!b) return null;
+                      return Object.entries(b).map(([k, v]) => (
+                        <div key={k} className="breakdown-row">
+                          <span className="label">{k}</span>
+                          <span className="bar" style={{ width: `${(v / 20) * 100}%` }} />
+                          <span className="val">{v}</span>
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                )}
+                {selectedLead.icp_key_matches && (
+                  <ChipList label="Matches" json={selectedLead.icp_key_matches} colorVar="--green" />
+                )}
+                {selectedLead.icp_key_gaps && (
+                  <ChipList label="Gaps" json={selectedLead.icp_key_gaps} colorVar="--text-muted" />
+                )}
+                {selectedLead.icp_disqualifiers && (
+                  <ChipList label="Disqualifiers" json={selectedLead.icp_disqualifiers} colorVar="--red" />
+                )}
+              </div>
               {selectedLead.icp_reason && <div className="td-dim" style={{ marginTop: '4px' }}>{selectedLead.icp_reason}</div>}
             </div>
 

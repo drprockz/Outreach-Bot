@@ -1465,3 +1465,10 @@ tbody tr:hover { background: var(--bg-elevated); }
   color: var(--green-bright);
   font-size: 11px;
 }
+
+/* ── ICP Details (LeadPipeline drawer) ────────────────────── */
+.icp-details { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.icp-breakdown .breakdown-row { display: grid; grid-template-columns: 100px 1fr 40px; align-items: center; gap: 6px; font-size: 0.85em; }
+.icp-breakdown .bar { height: 8px; background: var(--green); border-radius: 4px; }
+.chip-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+.chip-list .chip { padding: 2px 6px; border-radius: 999px; font-size: 0.8em; }
