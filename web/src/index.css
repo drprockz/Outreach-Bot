@@ -1471,4 +1471,14 @@ tbody tr:hover { background: var(--bg-elevated); }
 .icp-breakdown .breakdown-row { display: grid; grid-template-columns: 100px 1fr 40px; align-items: center; gap: 6px; font-size: 0.85em; }
 .icp-breakdown .bar { height: 8px; background: var(--green); border-radius: 4px; }
 .chip-list { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
-.chip-list .chip { padding: 2px 6px; border-radius: 999px; font-size: 0.8em; }
+.icp-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.8em;
+  font-weight: 500;
+}
+.icp-chip-match { background: var(--green-dim); color: var(--green-bright); }
+.icp-chip-gap   { background: var(--bg-elevated); color: var(--text-3); }
+.icp-chip-dq    { background: var(--red-dim); color: var(--red); }
