@@ -1,47 +1,66 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
+import { serializeEmail } from './leads.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+router.get('/', async (req, res) => {
   const page = Math.max(1, parseInt(req.query.page) || 1);
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
-  const conditions = [];
-  const params = [];
+  const where = {};
+  if (req.query.status) where.status = req.query.status;
+  if (req.query.inbox) where.inboxUsed = req.query.inbox;
+  if (req.query.step !== undefined) where.sequenceStep = parseInt(req.query.step);
+  if (req.query.date_from) where.sentAt = { ...(where.sentAt || {}), gte: new Date(req.query.date_from) };
+  if (req.query.date_to) where.sentAt = { ...(where.sentAt || {}), lte: new Date(req.query.date_to) };
 
-  if (req.query.status) { conditions.push('e.status = ?'); params.push(req.query.status); }
-  if (req.query.inbox) { conditions.push('e.inbox_used = ?'); params.push(req.query.inbox); }
-  if (req.query.step !== undefined) { conditions.push('e.sequence_step = ?'); params.push(parseInt(req.query.step)); }
-  if (req.query.date_from) { conditions.push('e.sent_at >= ?'); params.push(req.query.date_from); }
-  if (req.query.date_to) { conditions.push('e.sent_at <= ?'); params.push(req.query.date_to); }
+  const [total, rows] = await Promise.all([
+    prisma.email.count({ where }),
+    prisma.email.findMany({
+      where,
+      orderBy: { id: 'desc' },
+      take: limit,
+      skip: offset,
+      include: { lead: { select: { businessName: true, contactName: true, contactEmail: true } } },
+    }),
+  ]);
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const emails = rows.map(e => ({
+    ...serializeEmail(e),
+    business_name: e.lead?.businessName ?? null,
+    contact_name: e.lead?.contactName ?? null,
+    contact_email: e.lead?.contactEmail ?? null,
+  }));
 
-  const total = db.prepare(`SELECT COUNT(*) AS count FROM emails e ${whereClause}`).get(...params).count;
-
-  const emails = db.prepare(`
-    SELECT e.*, l.business_name, l.contact_name, l.contact_email
-    FROM emails e
-    LEFT JOIN leads l ON l.id = e.lead_id
-    ${whereClause}
-    ORDER BY e.id DESC
-    LIMIT ? OFFSET ?
-  `).all(...params, limit, offset);
-
-  const agg = db.prepare(`
-    SELECT
-      COUNT(*) AS total_sent,
-      SUM(CASE WHEN e.status = 'hard_bounce' THEN 1 ELSE 0 END) AS hard_bounces,
-      SUM(CASE WHEN e.status = 'soft_bounce' THEN 1 ELSE 0 END) AS soft_bounces,
-      SUM(CASE WHEN e.status = 'content_rejected' THEN 1 ELSE 0 END) AS content_rejected,
-      COALESCE(AVG(e.send_duration_ms), 0) AS avg_duration_ms,
-      COALESCE(SUM(e.total_cost_usd), 0) AS total_cost
-    FROM emails e
-    ${whereClause}
-  `).get(...params);
+  // Aggregates
+  const allRows = await prisma.email.findMany({
+    where,
+    select: {
+      status: true,
+      sendDurationMs: true,
+      totalCostUsd: true,
+    },
+  });
+  const totalSent = allRows.length;
+  let hardBounces = 0, softBounces = 0, contentRejected = 0;
+  let durSum = 0, durCount = 0, costSum = 0;
+  for (const e of allRows) {
+    if (e.status === 'hard_bounce') hardBounces++;
+    if (e.status === 'soft_bounce') softBounces++;
+    if (e.status === 'content_rejected') contentRejected++;
+    if (e.sendDurationMs !== null && e.sendDurationMs !== undefined) { durSum += e.sendDurationMs; durCount++; }
+    if (e.totalCostUsd !== null && e.totalCostUsd !== undefined) costSum += Number(e.totalCostUsd);
+  }
+  const agg = {
+    total_sent: totalSent,
+    hard_bounces: hardBounces,
+    soft_bounces: softBounces,
+    content_rejected: contentRejected,
+    avg_duration_ms: durCount > 0 ? durSum / durCount : 0,
+    total_cost: costSum,
+  };
 
   res.json({ emails, total, page, limit, aggregates: agg });
 });

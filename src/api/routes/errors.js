@@ -1,41 +1,52 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+function serialize(e) {
+  if (!e) return null;
+  return {
+    id: e.id,
+    occurred_at: e.occurredAt,
+    source: e.source,
+    job_name: e.jobName,
+    error_type: e.errorType,
+    error_code: e.errorCode,
+    error_message: e.errorMessage,
+    stack_trace: e.stackTrace,
+    lead_id: e.leadId,
+    email_id: e.emailId,
+    resolved: e.resolved ? 1 : 0,
+    resolved_at: e.resolvedAt,
+  };
+}
 
-  const conditions = [];
-  const params = [];
+router.get('/', async (req, res) => {
+  const where = {};
+  if (req.query.source) where.source = req.query.source;
+  if (req.query.error_type) where.errorType = req.query.error_type;
+  if (req.query.resolved !== undefined) where.resolved = parseInt(req.query.resolved) === 1;
+  if (req.query.date_from) where.occurredAt = { ...(where.occurredAt || {}), gte: new Date(req.query.date_from) };
+  if (req.query.date_to) where.occurredAt = { ...(where.occurredAt || {}), lte: new Date(req.query.date_to) };
 
-  if (req.query.source) { conditions.push('source = ?'); params.push(req.query.source); }
-  if (req.query.error_type) { conditions.push('error_type = ?'); params.push(req.query.error_type); }
-  if (req.query.resolved !== undefined) { conditions.push('resolved = ?'); params.push(parseInt(req.query.resolved)); }
-  if (req.query.date_from) { conditions.push('occurred_at >= ?'); params.push(req.query.date_from); }
-  if (req.query.date_to) { conditions.push('occurred_at <= ?'); params.push(req.query.date_to); }
+  const [rows, unresolvedCount] = await Promise.all([
+    prisma.errorLog.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 200 }),
+    prisma.errorLog.count({ where: { resolved: false } }),
+  ]);
 
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  const errors = db.prepare(`
-    SELECT * FROM error_log ${whereClause}
-    ORDER BY occurred_at DESC
-    LIMIT 200
-  `).all(...params);
-
-  const unresolvedCount = db.prepare(`SELECT COUNT(*) AS count FROM error_log WHERE resolved = 0`).get();
-
-  res.json({ errors, unresolvedCount: unresolvedCount?.count || 0 });
+  res.json({ errors: rows.map(serialize), unresolvedCount });
 });
 
-router.patch('/:id/resolve', (req, res) => {
-  const db = getDb();
+router.patch('/:id/resolve', async (req, res) => {
   const id = parseInt(req.params.id);
 
-  const err = db.prepare(`SELECT id FROM error_log WHERE id = ?`).get(id);
+  const err = await prisma.errorLog.findUnique({ where: { id }, select: { id: true } });
   if (!err) return res.status(404).json({ error: 'Error not found' });
 
-  db.prepare(`UPDATE error_log SET resolved = 1, resolved_at = datetime('now') WHERE id = ?`).run(id);
+  await prisma.errorLog.update({
+    where: { id },
+    data: { resolved: true, resolvedAt: new Date() },
+  });
   res.json({ ok: true });
 });
 

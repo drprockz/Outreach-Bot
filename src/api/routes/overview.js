@@ -1,52 +1,136 @@
 import { Router } from 'express';
-import { getDb, today } from '../../core/db/index.js';
+import { prisma, today } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+function datesWithin(nDays) {
+  const out = [];
+  const now = new Date();
+  for (let i = nDays; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
+
+// Map DailyMetrics row to snake_case response shape
+function metricsToSnake(m) {
+  return {
+    id: m.id,
+    date: m.date,
+    leads_discovered: m.leadsDiscovered,
+    leads_extracted: m.leadsExtracted,
+    leads_judge_passed: m.leadsJudgePassed,
+    leads_email_found: m.leadsEmailFound,
+    leads_email_valid: m.leadsEmailValid,
+    leads_icp_ab: m.leadsIcpAb,
+    leads_ready: m.leadsReady,
+    leads_disqualified: m.leadsDisqualified,
+    emails_attempted: m.emailsAttempted,
+    emails_sent: m.emailsSent,
+    emails_hard_bounced: m.emailsHardBounced,
+    emails_soft_bounced: m.emailsSoftBounced,
+    emails_content_rejected: m.emailsContentRejected,
+    sent_inbox_1: m.sentInbox1,
+    sent_inbox_2: m.sentInbox2,
+    replies_total: m.repliesTotal,
+    replies_hot: m.repliesHot,
+    replies_schedule: m.repliesSchedule,
+    replies_soft_no: m.repliesSoftNo,
+    replies_unsubscribe: m.repliesUnsubscribe,
+    replies_ooo: m.repliesOoo,
+    replies_other: m.repliesOther,
+    bounce_rate: m.bounceRate,
+    reply_rate: m.replyRate,
+    unsubscribe_rate: m.unsubscribeRate,
+    gemini_cost_usd: Number(m.geminiCostUsd),
+    sonnet_cost_usd: Number(m.sonnetCostUsd),
+    haiku_cost_usd: Number(m.haikuCostUsd),
+    mev_cost_usd: Number(m.mevCostUsd),
+    total_api_cost_usd: Number(m.totalApiCostUsd),
+    total_api_cost_inr: Number(m.totalApiCostInr),
+    domain_blacklisted: m.domainBlacklisted ? 1 : 0,
+    blacklist_zones: m.blacklistZones,
+    mail_tester_score: m.mailTesterScore,
+    postmaster_reputation: m.postmasterReputation,
+    icp_parse_errors: m.icpParseErrors,
+    followups_sent: m.followupsSent,
+    created_at: m.createdAt,
+  };
+}
+
+async function sumWindow(nDays) {
+  const windowStart = datesWithin(nDays)[0];
+  const rows = await prisma.dailyMetrics.findMany({
+    where: { date: { gte: windowStart } },
+    select: {
+      leadsDiscovered: true,
+      emailsSent: true,
+      emailsHardBounced: true,
+      repliesTotal: true,
+      repliesHot: true,
+      totalApiCostUsd: true,
+    },
+  });
+  const out = {
+    leads_discovered: 0,
+    emails_sent: 0,
+    emails_hard_bounced: 0,
+    replies_total: 0,
+    replies_hot: 0,
+    total_api_cost_usd: 0,
+  };
+  for (const r of rows) {
+    out.leads_discovered += r.leadsDiscovered;
+    out.emails_sent += r.emailsSent;
+    out.emails_hard_bounced += r.emailsHardBounced;
+    out.replies_total += r.repliesTotal;
+    out.replies_hot += r.repliesHot;
+    out.total_api_cost_usd += Number(r.totalApiCostUsd);
+  }
+  return out;
+}
+
+router.get('/', async (req, res) => {
   const d = today();
 
-  const todayMetrics = db.prepare(`SELECT * FROM daily_metrics WHERE date = ?`).get(d) || {};
+  const todayRow = await prisma.dailyMetrics.findUnique({ where: { date: d } });
+  const todayMetrics = todayRow ? metricsToSnake(todayRow) : {};
 
-  const weekMetrics = db.prepare(`
-    SELECT
-      COALESCE(SUM(leads_discovered), 0) AS leads_discovered,
-      COALESCE(SUM(emails_sent), 0) AS emails_sent,
-      COALESCE(SUM(emails_hard_bounced), 0) AS emails_hard_bounced,
-      COALESCE(SUM(replies_total), 0) AS replies_total,
-      COALESCE(SUM(replies_hot), 0) AS replies_hot,
-      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd
-    FROM daily_metrics
-    WHERE date >= date('now', '-7 days')
-  `).get();
+  const weekMetrics = await sumWindow(7);
+  const monthMetrics = await sumWindow(30);
 
-  const monthMetrics = db.prepare(`
-    SELECT
-      COALESCE(SUM(leads_discovered), 0) AS leads_discovered,
-      COALESCE(SUM(emails_sent), 0) AS emails_sent,
-      COALESCE(SUM(emails_hard_bounced), 0) AS emails_hard_bounced,
-      COALESCE(SUM(replies_total), 0) AS replies_total,
-      COALESCE(SUM(replies_hot), 0) AS replies_hot,
-      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd
-    FROM daily_metrics
-    WHERE date >= date('now', '-30 days')
-  `).get();
+  const leads = await prisma.lead.findMany({
+    select: {
+      status: true,
+      websiteQualityScore: true,
+      contactEmail: true,
+      emailStatus: true,
+      icpPriority: true,
+    },
+  });
 
-  const funnel = db.prepare(`
-    SELECT
-      COUNT(*) AS total,
-      SUM(CASE WHEN status NOT IN ('discovered', 'extraction_failed') THEN 1 ELSE 0 END) AS extracted,
-      SUM(CASE WHEN website_quality_score IS NOT NULL THEN 1 ELSE 0 END) AS judged,
-      SUM(CASE WHEN contact_email IS NOT NULL THEN 1 ELSE 0 END) AS email_found,
-      SUM(CASE WHEN email_status = 'valid' OR email_status = 'catch-all' THEN 1 ELSE 0 END) AS email_valid,
-      SUM(CASE WHEN icp_priority IN ('A','B') THEN 1 ELSE 0 END) AS icp_ab,
-      SUM(CASE WHEN status IN ('sent','replied') THEN 1 ELSE 0 END) AS sent,
-      SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied
-    FROM leads
-  `).get();
+  const funnel = {
+    total: leads.length,
+    extracted: 0,
+    judged: 0,
+    email_found: 0,
+    email_valid: 0,
+    icp_ab: 0,
+    sent: 0,
+    replied: 0,
+  };
+  for (const l of leads) {
+    if (l.status !== 'discovered' && l.status !== 'extraction_failed') funnel.extracted++;
+    if (l.websiteQualityScore !== null) funnel.judged++;
+    if (l.contactEmail !== null) funnel.email_found++;
+    if (l.emailStatus === 'valid' || l.emailStatus === 'catch-all') funnel.email_valid++;
+    if (l.icpPriority === 'A' || l.icpPriority === 'B') funnel.icp_ab++;
+    if (l.status === 'sent' || l.status === 'replied') funnel.sent++;
+    if (l.status === 'replied') funnel.replied++;
+  }
 
-  const activeSeq = db.prepare(`SELECT COUNT(*) AS count FROM sequence_state WHERE status = 'active'`).get();
+  const activeSeq = await prisma.sequenceState.count({ where: { status: 'active' } });
 
   const replyRate = weekMetrics.emails_sent > 0
     ? (weekMetrics.replies_total / weekMetrics.emails_sent * 100).toFixed(1)
@@ -56,18 +140,20 @@ router.get('/', (req, res) => {
     ? ((todayMetrics.emails_hard_bounced || 0) / todayMetrics.emails_sent * 100).toFixed(1)
     : '0.0';
 
-  const sendActivity = db.prepare(`
-    SELECT date, emails_sent FROM daily_metrics
-    WHERE date >= date('now', '-90 days')
-    ORDER BY date ASC
-  `).all();
+  const windowStart = datesWithin(90)[0];
+  const sendRows = await prisma.dailyMetrics.findMany({
+    where: { date: { gte: windowStart } },
+    orderBy: { date: 'asc' },
+    select: { date: true, emailsSent: true },
+  });
+  const sendActivity = sendRows.map(r => ({ date: r.date, emails_sent: r.emailsSent }));
 
   res.json({
     metrics: {
       today: todayMetrics,
       week: weekMetrics,
       month: monthMetrics,
-      activeSequences: activeSeq?.count || 0,
+      activeSequences: activeSeq,
       replyRate7d: parseFloat(replyRate),
       bounceRateToday: parseFloat(bounceRate)
     },

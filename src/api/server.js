@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import 'dotenv/config';
 
-import { initSchema, seedConfigDefaults, seedNichesAndIcpRules } from '../core/db/index.js';
+import { seedConfigDefaults, seedNichesAndIcpRules } from '../core/db/index.js';
 import { requireAuth } from './middleware/auth.js';
 
 import authRoutes from './routes/auth.js';
@@ -30,9 +30,19 @@ const repoRoot = resolve(__dirname, '../..');
 const app = express();
 app.use(express.json());
 
-initSchema();
-seedConfigDefaults();
-seedNichesAndIcpRules();
+// Schema is applied via prisma migrations; seeds are idempotent (createMany skipDuplicates
+// + upserts) and safe to run on every boot. In the test environment we skip seeding so
+// tests can control their own seed state via tests/helpers/testDb.js.
+if (process.env.NODE_ENV !== 'test') {
+  (async () => {
+    try {
+      await seedConfigDefaults();
+      await seedNichesAndIcpRules();
+    } catch (err) {
+      console.error('seed failed:', err);
+    }
+  })();
+}
 
 // Auth-free routes
 app.use('/api/auth', authRoutes);

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, today } from '../../core/db/index.js';
+import { prisma, today } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -15,15 +15,35 @@ const JOB_SCHEDULE = [
   { name: 'backup', time: '02:00' }
 ];
 
-router.get('/', (req, res) => {
-  const db = getDb();
+function serializeLog(l) {
+  if (!l) return null;
+  return {
+    id: l.id,
+    job_name: l.jobName,
+    scheduled_at: l.scheduledAt,
+    started_at: l.startedAt,
+    completed_at: l.completedAt,
+    duration_ms: l.durationMs,
+    status: l.status,
+    error_message: l.errorMessage,
+    records_processed: l.recordsProcessed,
+    records_skipped: l.recordsSkipped,
+    cost_usd: l.costUsd !== null && l.costUsd !== undefined ? Number(l.costUsd) : null,
+    notes: l.notes,
+  };
+}
+
+router.get('/', async (req, res) => {
   const d = today();
 
-  const todayLogs = db.prepare(`
-    SELECT * FROM cron_log
-    WHERE date(started_at) = ?
-    ORDER BY started_at ASC
-  `).all(d);
+  // Today bounds — startedAt is a Timestamptz, so we need a range
+  const dayStart = new Date(`${d}T00:00:00.000Z`);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+
+  const todayLogs = await prisma.cronLog.findMany({
+    where: { startedAt: { gte: dayStart, lt: dayEnd } },
+    orderBy: { startedAt: 'asc' },
+  });
 
   const now = new Date();
   const istOffset = 5.5 * 60 * 60 * 1000;
@@ -33,7 +53,7 @@ router.get('/', (req, res) => {
   const currentIstTime = currentIstHour * 60 + currentIstMinute;
 
   const jobs = JOB_SCHEDULE.map((sched, idx) => {
-    const matching = todayLogs.filter(l => l.job_name === sched.name);
+    const matching = todayLogs.filter(l => l.jobName === sched.name);
     let log;
     if (sched.name === 'checkReplies' && sched.pass) {
       log = matching[sched.pass - 1];
@@ -53,21 +73,19 @@ router.get('/', (req, res) => {
       }
     }
 
-    return { ...sched, id: idx, log: log || null, status };
+    return { ...sched, id: idx, log: log ? serializeLog(log) : null, status };
   });
 
   res.json({ jobs, date: d });
 });
 
-router.get('/:job/history', (req, res) => {
-  const history = getDb().prepare(`
-    SELECT * FROM cron_log
-    WHERE job_name = ?
-    ORDER BY started_at DESC
-    LIMIT 30
-  `).all(req.params.job);
-
-  res.json({ history });
+router.get('/:job/history', async (req, res) => {
+  const history = await prisma.cronLog.findMany({
+    where: { jobName: req.params.job },
+    orderBy: { startedAt: 'desc' },
+    take: 30,
+  });
+  res.json({ history: history.map(serializeLog) });
 });
 
 export default router;

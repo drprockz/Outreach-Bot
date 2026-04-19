@@ -1,110 +1,162 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+function datesWithin(nDays) {
+  const out = [];
+  const now = new Date();
+  for (let i = nDays; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
 
-  const stages = db.prepare(`
-    SELECT
-      COUNT(*) AS discovered,
-      SUM(CASE WHEN status NOT IN ('discovered','extraction_failed') THEN 1 ELSE 0 END) AS extracted,
-      SUM(CASE WHEN website_quality_score IS NOT NULL THEN 1 ELSE 0 END) AS judge_passed,
-      SUM(CASE WHEN contact_email IS NOT NULL THEN 1 ELSE 0 END) AS email_found,
-      SUM(CASE WHEN email_status IN ('valid','catch-all') THEN 1 ELSE 0 END) AS email_valid,
-      SUM(CASE WHEN icp_priority IN ('A','B') THEN 1 ELSE 0 END) AS icp_ab,
-      SUM(CASE WHEN status = 'nurture' THEN 1 ELSE 0 END) AS nurture,
-      SUM(CASE WHEN status = 'ready' THEN 1 ELSE 0 END) AS ready,
-      SUM(CASE WHEN status IN ('sent','replied','bounced') THEN 1 ELSE 0 END) AS sent,
-      SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied,
-      SUM(CASE WHEN status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed,
-      SUM(CASE WHEN icp_priority = 'A' THEN 1 ELSE 0 END) AS icp_a,
-      SUM(CASE WHEN icp_priority = 'B' THEN 1 ELSE 0 END) AS icp_b,
-      SUM(CASE WHEN icp_priority = 'C' THEN 1 ELSE 0 END) AS icp_c
-    FROM leads
-  `).get();
+router.get('/', async (req, res) => {
+  // Aggregate over every lead — easiest to fetch lean projection and fold in JS
+  const leads = await prisma.lead.findMany({
+    select: {
+      status: true,
+      websiteQualityScore: true,
+      contactEmail: true,
+      emailStatus: true,
+      icpPriority: true,
+      icpScore: true,
+      judgeSkip: true,
+      category: true,
+      city: true,
+      contactConfidence: true,
+    },
+  });
 
-  const dropReasons = db.prepare(`
-    SELECT
-      SUM(CASE WHEN status = 'extraction_failed' THEN 1 ELSE 0 END) AS extraction_failed,
-      SUM(CASE WHEN judge_skip = 1 THEN 1 ELSE 0 END) AS gate1_modern_stack,
-      SUM(CASE WHEN website_quality_score IS NOT NULL AND contact_email IS NULL THEN 1 ELSE 0 END) AS no_email,
-      SUM(CASE WHEN email_status IN ('invalid','disposable') THEN 1 ELSE 0 END) AS email_invalid,
-      SUM(CASE WHEN status = 'deduped' THEN 1 ELSE 0 END) AS deduped,
-      SUM(CASE WHEN icp_priority = 'C' THEN 1 ELSE 0 END) AS icp_c_nurture,
-      SUM(CASE WHEN status = 'email_not_found' THEN 1 ELSE 0 END) AS email_not_found
-    FROM leads
-  `).get();
+  const stages = {
+    discovered: leads.length,
+    extracted: 0,
+    judge_passed: 0,
+    email_found: 0,
+    email_valid: 0,
+    icp_ab: 0,
+    nurture: 0,
+    ready: 0,
+    sent: 0,
+    replied: 0,
+    unsubscribed: 0,
+    icp_a: 0,
+    icp_b: 0,
+    icp_c: 0,
+  };
 
-  const dailyTrend = db.prepare(`
-    SELECT
-      date,
-      COALESCE(leads_discovered, 0) AS discovered,
-      COALESCE(leads_extracted, 0) AS extracted,
-      COALESCE(leads_judge_passed, 0) AS judge_passed,
-      COALESCE(leads_email_found, 0) AS email_found,
-      COALESCE(leads_email_valid, 0) AS email_valid,
-      COALESCE(leads_icp_ab, 0) AS icp_ab,
-      COALESCE(leads_ready, 0) AS ready,
-      COALESCE(emails_sent, 0) AS sent
-    FROM daily_metrics
-    WHERE date >= date('now', '-30 days')
-    ORDER BY date ASC
-  `).all();
+  const dropReasons = {
+    extraction_failed: 0,
+    gate1_modern_stack: 0,
+    no_email: 0,
+    email_invalid: 0,
+    deduped: 0,
+    icp_c_nurture: 0,
+    email_not_found: 0,
+  };
 
-  const byCategory = db.prepare(`
-    SELECT
-      COALESCE(category, 'unknown') AS category,
-      COUNT(*) AS total,
-      SUM(CASE WHEN icp_priority = 'A' THEN 1 ELSE 0 END) AS icp_a,
-      SUM(CASE WHEN icp_priority = 'B' THEN 1 ELSE 0 END) AS icp_b,
-      SUM(CASE WHEN icp_priority = 'C' THEN 1 ELSE 0 END) AS icp_c,
-      SUM(CASE WHEN status IN ('ready','sent','replied') THEN 1 ELSE 0 END) AS ready_or_sent
-    FROM leads
-    GROUP BY category
-    ORDER BY total DESC
-    LIMIT 10
-  `).all();
+  const categoryMap = new Map();
+  const cityMap = new Map();
+  const icpScoreMap = new Map();
+  const emailStatusMap = new Map();
+  const confidenceMap = new Map();
 
-  const byCity = db.prepare(`
-    SELECT
-      COALESCE(city, 'unknown') AS city,
-      COUNT(*) AS total,
-      SUM(CASE WHEN status IN ('ready','sent','replied') THEN 1 ELSE 0 END) AS ready_or_sent
-    FROM leads
-    GROUP BY city
-    ORDER BY total DESC
-    LIMIT 8
-  `).all();
+  for (const l of leads) {
+    if (l.status !== 'discovered' && l.status !== 'extraction_failed') stages.extracted++;
+    if (l.websiteQualityScore !== null) stages.judge_passed++;
+    if (l.contactEmail !== null) stages.email_found++;
+    if (l.emailStatus === 'valid' || l.emailStatus === 'catch-all') stages.email_valid++;
+    if (l.icpPriority === 'A' || l.icpPriority === 'B') stages.icp_ab++;
+    if (l.status === 'nurture') stages.nurture++;
+    if (l.status === 'ready') stages.ready++;
+    if (l.status === 'sent' || l.status === 'replied' || l.status === 'bounced') stages.sent++;
+    if (l.status === 'replied') stages.replied++;
+    if (l.status === 'unsubscribed') stages.unsubscribed++;
+    if (l.icpPriority === 'A') stages.icp_a++;
+    if (l.icpPriority === 'B') stages.icp_b++;
+    if (l.icpPriority === 'C') stages.icp_c++;
 
-  const icpDistribution = db.prepare(`
-    SELECT icp_score, COUNT(*) AS count
-    FROM leads
-    WHERE icp_score IS NOT NULL
-    GROUP BY icp_score
-    ORDER BY icp_score ASC
-  `).all();
+    if (l.status === 'extraction_failed') dropReasons.extraction_failed++;
+    if (l.judgeSkip) dropReasons.gate1_modern_stack++;
+    if (l.websiteQualityScore !== null && l.contactEmail === null) dropReasons.no_email++;
+    if (l.emailStatus === 'invalid' || l.emailStatus === 'disposable') dropReasons.email_invalid++;
+    if (l.status === 'deduped') dropReasons.deduped++;
+    if (l.icpPriority === 'C') dropReasons.icp_c_nurture++;
+    if (l.status === 'email_not_found') dropReasons.email_not_found++;
 
-  const emailStatusBreakdown = db.prepare(`
-    SELECT
-      COALESCE(email_status, 'unknown') AS status,
-      COUNT(*) AS count
-    FROM leads
-    WHERE contact_email IS NOT NULL
-    GROUP BY email_status
-    ORDER BY count DESC
-  `).all();
+    // byCategory
+    const cat = l.category || 'unknown';
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, icp_a: 0, icp_b: 0, icp_c: 0, ready_or_sent: 0 });
+    const catRow = categoryMap.get(cat);
+    catRow.total++;
+    if (l.icpPriority === 'A') catRow.icp_a++;
+    if (l.icpPriority === 'B') catRow.icp_b++;
+    if (l.icpPriority === 'C') catRow.icp_c++;
+    if (l.status === 'ready' || l.status === 'sent' || l.status === 'replied') catRow.ready_or_sent++;
 
-  const confidenceBreakdown = db.prepare(`
-    SELECT
-      COALESCE(contact_confidence, 'unknown') AS confidence,
-      COUNT(*) AS count
-    FROM leads
-    WHERE contact_email IS NOT NULL
-    GROUP BY contact_confidence
-    ORDER BY count DESC
-  `).all();
+    // byCity
+    const city = l.city || 'unknown';
+    if (!cityMap.has(city)) cityMap.set(city, { city, total: 0, ready_or_sent: 0 });
+    const cityRow = cityMap.get(city);
+    cityRow.total++;
+    if (l.status === 'ready' || l.status === 'sent' || l.status === 'replied') cityRow.ready_or_sent++;
+
+    // icpDistribution
+    if (l.icpScore !== null && l.icpScore !== undefined) {
+      icpScoreMap.set(l.icpScore, (icpScoreMap.get(l.icpScore) || 0) + 1);
+    }
+
+    // emailStatusBreakdown (only for rows with a contact_email)
+    if (l.contactEmail !== null) {
+      const s = l.emailStatus || 'unknown';
+      emailStatusMap.set(s, (emailStatusMap.get(s) || 0) + 1);
+      const c = l.contactConfidence || 'unknown';
+      confidenceMap.set(c, (confidenceMap.get(c) || 0) + 1);
+    }
+  }
+
+  const byCategory = [...categoryMap.values()].sort((a, b) => b.total - a.total).slice(0, 10);
+  const byCity = [...cityMap.values()].sort((a, b) => b.total - a.total).slice(0, 8);
+  const icpDistribution = [...icpScoreMap.entries()]
+    .map(([icp_score, count]) => ({ icp_score, count }))
+    .sort((a, b) => a.icp_score - b.icp_score);
+  const emailStatusBreakdown = [...emailStatusMap.entries()]
+    .map(([status, count]) => ({ status, count }))
+    .sort((a, b) => b.count - a.count);
+  const confidenceBreakdown = [...confidenceMap.entries()]
+    .map(([confidence, count]) => ({ confidence, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Daily trend (30 days)
+  const windowStart = datesWithin(30)[0];
+  const dm = await prisma.dailyMetrics.findMany({
+    where: { date: { gte: windowStart } },
+    orderBy: { date: 'asc' },
+    select: {
+      date: true,
+      leadsDiscovered: true,
+      leadsExtracted: true,
+      leadsJudgePassed: true,
+      leadsEmailFound: true,
+      leadsEmailValid: true,
+      leadsIcpAb: true,
+      leadsReady: true,
+      emailsSent: true,
+    },
+  });
+  const dailyTrend = dm.map(r => ({
+    date: r.date,
+    discovered: r.leadsDiscovered || 0,
+    extracted: r.leadsExtracted || 0,
+    judge_passed: r.leadsJudgePassed || 0,
+    email_found: r.leadsEmailFound || 0,
+    email_valid: r.leadsEmailValid || 0,
+    icp_ab: r.leadsIcpAb || 0,
+    ready: r.leadsReady || 0,
+    sent: r.emailsSent || 0,
+  }));
 
   res.json({ stages, dropReasons, dailyTrend, byCategory, byCity, icpDistribution, emailStatusBreakdown, confidenceBreakdown });
 });
