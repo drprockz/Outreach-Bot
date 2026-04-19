@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma, getTestPrisma } from '../helpers/testDb.js';
 
 vi.mock('../../src/core/email/mailer.js', () => ({
   verifyConnections: vi.fn(async () => {}),
@@ -12,103 +10,125 @@ vi.mock('../../src/core/ai/claude.js', () => ({
     text: 'Hey just wanted to check if my last email landed in your inbox. Would love to chat about your website if you have a few minutes this week. Let me know either way and I will stop bugging you.',
     costUsd: 0.001,
     inputTokens: 50,
-    outputTokens: 30
+    outputTokens: 30,
+    model: 'claude-haiku-4-5-20251001'
   }))
 }));
 vi.mock('../../src/core/integrations/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
 vi.mock('../../src/core/email/contentValidator.js', () => ({ validate: vi.fn(() => ({ valid: true })) }));
 vi.mock('../../src/core/lib/sleep.js', () => ({ sleep: vi.fn(async () => {}) }));
 
-let tmpDir;
 beforeEach(async () => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-  process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
+  // Pin Date only — Prisma needs real setTimeout. Tuesday mid-window, not holiday.
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-04-21T06:30:00Z'));
+  await truncateAll();
   process.env.OUTREACH_DOMAIN = 'trysimpleinc.com';
   process.env.INBOX_1_USER = 'darshan@trysimpleinc.com';
   process.env.INBOX_2_USER = 'hello@trysimpleinc.com';
-  const { resetDb, initSchema, getDb, seedConfigDefaults } = await import('../../src/core/db/index.js');
-  resetDb();
-  initSchema();
-  seedConfigDefaults();
-  const cfgDb = getDb();
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '10');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_followups_enabled', '1');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('bounce_rate_hard_stop', '0.02');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_window_start', '0');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_window_end', '23');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_delay_min_ms', '1');
-  cfgDb.prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('send_delay_max_ms', '2');
+  const { resetDb, seedConfigDefaults } = await import('../../src/core/db/index.js');
+  await resetDb();
+  await seedConfigDefaults();
+
+  const prisma = getTestPrisma();
+  await prisma.config.update({ where: { key: 'daily_send_limit' }, data: { value: '10' } });
+  await prisma.config.update({ where: { key: 'send_followups_enabled' }, data: { value: '1' } });
+  await prisma.config.update({ where: { key: 'bounce_rate_hard_stop' }, data: { value: '0.02' } });
+  await prisma.config.update({ where: { key: 'send_window_start' }, data: { value: '0' } });
+  await prisma.config.update({ where: { key: 'send_window_end' }, data: { value: '23' } });
+  await prisma.config.update({ where: { key: 'send_delay_min_ms' }, data: { value: '1' } });
+  await prisma.config.update({ where: { key: 'send_delay_max_ms' }, data: { value: '2' } });
+
   // Insert a sent lead with active sequence due today
-  getDb().prepare(`
-    INSERT INTO leads (id, business_name, contact_email, contact_name, category, icp_priority, icp_score, status)
-    VALUES (1, 'Acme', 'john@acme.com', 'John', 'restaurant', 'A', 80, 'sent')
-  `).run();
-  getDb().prepare(`
-    INSERT INTO emails (lead_id, sequence_step, subject, body, hook, status, message_id, inbox_used)
-    VALUES (1, 0, 'Quick question', 'Hi John...', 'Your site looks dated.', 'sent', '<original@test.com>', 'darshan@trysimpleinc.com')
-  `).run();
-  getDb().prepare(`
-    INSERT INTO sequence_state (lead_id, current_step, next_send_date, last_message_id, last_subject, status)
-    VALUES (1, 0, date('now'), '<original@test.com>', 'Quick question', 'active')
-  `).run();
+  await prisma.lead.create({
+    data: {
+      id: 1,
+      businessName: 'Acme',
+      contactEmail: 'john@acme.com',
+      contactName: 'John',
+      category: 'restaurant',
+      icpPriority: 'A',
+      icpScore: 80,
+      status: 'sent',
+      emails: {
+        create: {
+          sequenceStep: 0,
+          subject: 'Quick question',
+          body: 'Hi John...',
+          hook: 'Your site looks dated.',
+          status: 'sent',
+          messageId: '<original@test.com>',
+          inboxUsed: 'darshan@trysimpleinc.com',
+        },
+      },
+    },
+  });
+  await prisma.sequenceState.create({
+    data: {
+      leadId: 1,
+      currentStep: 0,
+      nextSendDate: new Date(),
+      lastMessageId: '<original@test.com>',
+      lastSubject: 'Quick question',
+      status: 'active',
+    },
+  });
 });
 
 afterEach(async () => {
   const { resetDb } = await import('../../src/core/db/index.js');
-  resetDb();
-  rmSync(tmpDir, { recursive: true });
+  await resetDb();
+  vi.useRealTimers();
 });
+
+afterAll(async () => { await closeTestPrisma(); });
 
 describe('sendFollowups', () => {
   it('sends follow-up for due sequences and advances step', async () => {
     const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../../src/core/db/index.js');
+    const prisma = getTestPrisma();
 
-    // Email should be sent
-    const emails = getDb().prepare(`SELECT * FROM emails WHERE sequence_step=1`).all();
+    const emails = await prisma.email.findMany({ where: { sequenceStep: 1 } });
     expect(emails.length).toBe(1);
     expect(emails[0].status).toBe('sent');
     expect(emails[0].subject).toBe('Re: Quick question');
-    expect(emails[0].message_id).toBe('<followup-123@test.com>');
+    expect(emails[0].messageId).toBe('<followup-123@test.com>');
 
-    // Sequence state should advance
-    const seq = getDb().prepare(`SELECT * FROM sequence_state WHERE lead_id=1`).get();
-    expect(seq.current_step).toBe(1);
+    const seq = await prisma.sequenceState.findUnique({ where: { leadId: 1 } });
+    expect(seq.currentStep).toBe(1);
     expect(seq.status).toBe('active');
-    expect(seq.last_message_id).toBe('<followup-123@test.com>');
+    expect(seq.lastMessageId).toBe('<followup-123@test.com>');
   });
 
   it('skips when DAILY_SEND_LIMIT is 0', async () => {
-    const { getDb } = await import('../../src/core/db/index.js');
-    getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '0');
+    const prisma = getTestPrisma();
+    await prisma.config.update({ where: { key: 'daily_send_limit' }, data: { value: '0' } });
     const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    // Only the pre-seeded step-0 email should exist — no follow-ups sent
-    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    const followups = await prisma.email.findMany({ where: { sequenceStep: { gt: 0 } } });
     expect(followups.length).toBe(0);
   });
 
   it('skips rejected leads and marks sequence as unsubscribed', async () => {
     const { addToRejectList } = await import('../../src/core/db/index.js');
-    addToRejectList('john@acme.com', 'unsubscribe');
+    await addToRejectList('john@acme.com', 'unsubscribe');
     const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../../src/core/db/index.js');
-    const seq = getDb().prepare(`SELECT * FROM sequence_state WHERE lead_id=1`).get();
+    const prisma = getTestPrisma();
+    const seq = await prisma.sequenceState.findUnique({ where: { leadId: 1 } });
     expect(seq.status).toBe('unsubscribed');
-    // Only the pre-seeded step-0 email should exist — no follow-ups sent
-    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    const followups = await prisma.email.findMany({ where: { sequenceStep: { gt: 0 } } });
     expect(followups.length).toBe(0);
   });
 
   it('does not send follow-ups for future sequences', async () => {
-    const { getDb } = await import('../../src/core/db/index.js');
-    getDb().prepare(`UPDATE sequence_state SET next_send_date = date('now', '+10 days') WHERE lead_id=1`).run();
+    const prisma = getTestPrisma();
+    const tenDaysOut = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+    await prisma.sequenceState.update({ where: { leadId: 1 }, data: { nextSendDate: tenDaysOut } });
     const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    // Only the pre-seeded step-0 email should exist — no follow-ups sent
-    const followups = getDb().prepare(`SELECT * FROM emails WHERE sequence_step > 0`).all();
+    const followups = await prisma.email.findMany({ where: { sequenceStep: { gt: 0 } } });
     expect(followups.length).toBe(0);
   });
 
@@ -128,8 +148,8 @@ describe('sendFollowups', () => {
   it('logs to cron_log', async () => {
     const sendFollowups = (await import('../../src/engines/sendFollowups.js')).default;
     await sendFollowups();
-    const { getDb } = await import('../../src/core/db/index.js');
-    const cronEntries = getDb().prepare(`SELECT * FROM cron_log WHERE job_name='sendFollowups'`).all();
+    const prisma = getTestPrisma();
+    const cronEntries = await prisma.cronLog.findMany({ where: { jobName: 'sendFollowups' } });
     expect(cronEntries.length).toBe(1);
     expect(cronEntries[0].status).toBe('success');
   });
