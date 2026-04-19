@@ -38,26 +38,28 @@
 
 **Commit cadence:** one commit for schema + initSchema changes + tests.
 
-### Task 1.1: Write failing test — `initSchema` creates `offer` and `icp_profile` tables
+### Task 1.1: Write failing test — `initSchema` creates `offer` and `icp_profile` tables (seeded via schema.sql)
+
+**Context:** `initSchema()` in `src/core/db/index.js:25-28` only runs `db.exec(schemaSql)` — no JS-based seeding. Existing singleton-like seeds for niches/icp_rules live in `seedNichesAndIcpRules()` (line 129), called separately by consumers. We will put the new tables' CREATE + singleton INSERT directly in `db/schema.sql` so `db.exec()` handles both in one shot.
 
 - [ ] **Step 1: Open `tests/core/db/db.test.js`** and find the existing `initSchema creates icp_rules table` test near line 59. Add two parallel tests after it:
 
 ```js
-it('initSchema creates offer table as singleton', async () => {
+it('initSchema creates offer table as singleton with empty row seeded', async () => {
   await import('../../../src/core/db/index.js').then(m => m.initSchema());
   const db = (await import('../../../src/core/db/index.js')).getDb();
-  const row = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='offer'`).get();
-  expect(row).toBeTruthy();
+  const tblRow = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='offer'`).get();
+  expect(tblRow).toBeTruthy();
   const seeded = db.prepare('SELECT * FROM offer WHERE id = 1').get();
   expect(seeded).toBeTruthy();
   expect(seeded.problem).toBeNull();
 });
 
-it('initSchema creates icp_profile table as singleton', async () => {
+it('initSchema creates icp_profile table as singleton with empty row seeded', async () => {
   await import('../../../src/core/db/index.js').then(m => m.initSchema());
   const db = (await import('../../../src/core/db/index.js')).getDb();
-  const row = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='icp_profile'`).get();
-  expect(row).toBeTruthy();
+  const tblRow = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='icp_profile'`).get();
+  expect(tblRow).toBeTruthy();
   const seeded = db.prepare('SELECT * FROM icp_profile WHERE id = 1').get();
   expect(seeded).toBeTruthy();
   expect(seeded.industries).toBeNull();
@@ -124,15 +126,15 @@ CREATE TABLE IF NOT EXISTS icp_profile (
 );
 ```
 
-- [ ] **Step 2: Edit `src/core/db/index.js`** `initSchema()` function (currently ends ~line 161). After the `icp_rules` seed block, add:
+- [ ] **Step 2: Append singleton-row seeds to `db/schema.sql`** so they fire inside `db.exec(schemaSql)`. Immediately after the `CREATE TABLE IF NOT EXISTS icp_profile (...)` statement:
 
-```js
-// Seed offer singleton row (empty — human fills via dashboard)
-db.prepare('INSERT OR IGNORE INTO offer (id) VALUES (1)').run();
-
-// Seed icp_profile singleton row (empty)
-db.prepare('INSERT OR IGNORE INTO icp_profile (id) VALUES (1)').run();
+```sql
+-- Seed exactly one row per singleton; IGNORE keeps existing data intact.
+INSERT OR IGNORE INTO offer (id) VALUES (1);
+INSERT OR IGNORE INTO icp_profile (id) VALUES (1);
 ```
+
+No changes to `src/core/db/index.js` for this step — `initSchema()` already calls `db.exec(schemaSql)` which will run the INSERTs.
 
 - [ ] **Step 3: Re-run the two tests**
 
@@ -182,17 +184,25 @@ function addColumnIfMissing(db, table, column, type) {
 }
 ```
 
-- [ ] **Step 2: Inside `initSchema()`**, after the DDL load (`db.exec(schemaSql)`), and before the niche seed, add:
+- [ ] **Step 2: Edit `initSchema()`** in `src/core/db/index.js:25-28` (currently just `db.exec(sql)`). Expand it to also run the idempotent column adds for live prod migration:
 
 ```js
-// Idempotent column adds for ICP framework refactor
-addColumnIfMissing(db, 'leads', 'icp_breakdown',     'TEXT');
-addColumnIfMissing(db, 'leads', 'icp_key_matches',   'TEXT');
-addColumnIfMissing(db, 'leads', 'icp_key_gaps',      'TEXT');
-addColumnIfMissing(db, 'leads', 'icp_disqualifiers', 'TEXT');
-addColumnIfMissing(db, 'leads', 'employees_estimate', 'TEXT');
-addColumnIfMissing(db, 'leads', 'business_stage',    'TEXT');
+export function initSchema() {
+  const sql = readFileSync(join(__dirname, '../../../db/schema.sql'), 'utf8');
+  const db = getDb();
+  db.exec(sql);
+
+  // Idempotent column adds for live prod DBs (ICP v2 framework)
+  addColumnIfMissing(db, 'leads', 'icp_breakdown',     'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_key_matches',   'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_key_gaps',      'TEXT');
+  addColumnIfMissing(db, 'leads', 'icp_disqualifiers', 'TEXT');
+  addColumnIfMissing(db, 'leads', 'employees_estimate', 'TEXT');
+  addColumnIfMissing(db, 'leads', 'business_stage',    'TEXT');
+}
 ```
+
+For fresh databases, the columns are also declared in the leads CREATE TABLE in `db/schema.sql` (Step 3 below) so `db.exec(sql)` handles them. For existing prod DBs, the columns don't yet exist in the table, so the ALTER runs once.
 
 - [ ] **Step 3: Update `db/schema.sql`** `leads` table to include these columns so fresh databases also have them. Find the `leads` CREATE (around line 20) and add the 6 columns at the end of the column list (before `created_at`):
 
@@ -223,19 +233,33 @@ npm test -- core/db/db.test.js 2>&1 | tail -10
 
 Expected: PASS.
 
-### Task 1.5: Write failing test — `initSchema` seeds default config rows for ICP v2
+### Task 1.5: Write failing test — `seedConfigDefaults` seeds ICP v2 defaults
+
+**Context:** Config seeding lives in `seedConfigDefaults()` (`src/core/db/index.js:97-127`) — separate from `initSchema()`. Consumers call both explicitly (see `tests/engines/findLeads.test.js:98-100`). Tests must call both.
 
 - [ ] **Step 1: Add test** to `tests/core/db/db.test.js`:
 
 ```js
-it('initSchema seeds default icp_weights and thresholds config rows', async () => {
-  const { initSchema, getDb } = await import('../../../src/core/db/index.js');
+it('seedConfigDefaults includes icp_weights and upgrades thresholds to 0-100', async () => {
+  const { initSchema, seedConfigDefaults, getDb } = await import('../../../src/core/db/index.js');
   initSchema();
+  seedConfigDefaults();
   const row = (k) => getDb().prepare('SELECT value FROM config WHERE key = ?').get(k)?.value;
   expect(Number(row('icp_threshold_a'))).toBe(70);
   expect(Number(row('icp_threshold_b'))).toBe(40);
   const weights = JSON.parse(row('icp_weights'));
   expect(weights).toEqual({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 });
+});
+
+it('seedConfigDefaults upgrades pre-existing 0-10 thresholds to 0-100', async () => {
+  const { initSchema, seedConfigDefaults, getDb } = await import('../../../src/core/db/index.js');
+  initSchema();
+  // Simulate old prod state before upgrade
+  getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_a', '7')`).run();
+  getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_b', '4')`).run();
+  seedConfigDefaults();
+  expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get().value)).toBe(70);
+  expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_b'`).get().value)).toBe(40);
 });
 ```
 
@@ -245,73 +269,64 @@ it('initSchema seeds default icp_weights and thresholds config rows', async () =
 npm test -- core/db/db.test.js 2>&1 | tail -10
 ```
 
-### Task 1.6: Seed ICP v2 config defaults
+### Task 1.6: Add ICP v2 config defaults + one-off threshold upgrade
 
-- [ ] **Step 1: Find `seedConfigDefaults` in `src/core/db/index.js`** (or if config seeding happens inline in `initSchema`). Inspect the current shape first:
-
-```bash
-grep -n "seedConfigDefaults\|config.*INSERT\|INSERT.*config" /Users/drprockz/Projects/Outreach/src/core/db/index.js
-```
-
-- [ ] **Step 2: Add to the config seed block** (wherever `icp_threshold_a` / `icp_threshold_b` are already set — they may exist as plain integer defaults; if not, add them):
+- [ ] **Step 1: Edit `seedConfigDefaults()`** in `src/core/db/index.js:97-127`. Update the `defaults` array and add upgrade logic after the INSERT loop:
 
 ```js
-const configDefaults = [
-  // ... existing defaults
-  ['icp_threshold_a', '70'],
-  ['icp_threshold_b', '40'],
-  ['icp_weights', JSON.stringify({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 })],
-];
+export function seedConfigDefaults() {
+  const db = getDb();
+  const defaults = [
+    ['daily_send_limit', '0'],
+    ['max_per_inbox', '17'],
+    ['send_delay_min_ms', '180000'],
+    ['send_delay_max_ms', '420000'],
+    ['send_window_start', '9'],
+    ['send_window_end', '17'],
+    ['bounce_rate_hard_stop', '0.02'],
+    ['claude_daily_spend_cap', '3.00'],
+    ['find_leads_enabled', '1'],
+    ['send_emails_enabled', '1'],
+    ['send_followups_enabled', '1'],
+    ['check_replies_enabled', '1'],
+    ['icp_threshold_a', '70'],   // was '7' — new default for 0-100 scale
+    ['icp_threshold_b', '40'],   // was '4'
+    ['icp_weights', JSON.stringify({ firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 })],
+    ['find_leads_per_batch', '30'],
+    ['find_leads_cities', '["Mumbai","Bangalore","Delhi NCR","Pune"]'],
+    ['find_leads_business_size', 'msme'],
+    ['find_leads_count', '150'],
+    ['persona_name', 'Darshan Parmar'],
+    ['persona_role', 'Full-Stack Developer'],
+    ['persona_company', 'Simple Inc'],
+    ['persona_website', 'simpleinc.in'],
+    ['persona_tone', 'professional but direct'],
+    ['persona_services', 'Full-stack web development, redesigns, performance optimisation, custom React apps, API integrations'],
+  ];
+  const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
+  for (const [key, value] of defaults) stmt.run(key, value);
 
-const stmt = db.prepare('INSERT OR IGNORE INTO config (key, value) VALUES (?, ?)');
-configDefaults.forEach(([k, v]) => stmt.run(k, v));
-```
-
-Use `INSERT OR IGNORE` so existing prod values are preserved. If `icp_threshold_a=7` already exists from old default, it will NOT be overwritten — see Task 1.7.
-
-- [ ] **Step 3: Run tests** — they will still fail if the config seed isn't reached by `initSchema`. Wire it up if needed.
-
-### Task 1.7: Write and implement one-off config upgrade for existing prod DBs
-
-**Context:** Prod already has `icp_threshold_a=7` (0–10 scale). The `INSERT OR IGNORE` won't overwrite it. We need a one-time upgrade that detects the old scale and flips it to the new defaults.
-
-- [ ] **Step 1: Write failing test** in `tests/core/db/db.test.js`:
-
-```js
-it('initSchema upgrades icp thresholds from 0-10 scale to 0-100 scale', async () => {
-  const { initSchema, getDb } = await import('../../../src/core/db/index.js');
-  initSchema();
-  // Simulate old prod state
-  getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_a', '7')`).run();
-  getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('icp_threshold_b', '4')`).run();
-  initSchema();  // run migration again
-  expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get().value)).toBe(70);
-  expect(Number(getDb().prepare(`SELECT value FROM config WHERE key='icp_threshold_b'`).get().value)).toBe(40);
-});
-```
-
-- [ ] **Step 2: Run — verify fail**
-
-- [ ] **Step 3: Implement the upgrade in `initSchema()`** after the config defaults seed:
-
-```js
-// One-off upgrade: if thresholds are still on 0-10 scale, flip to 0-100 defaults
-const threshA = Number(db.prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get()?.value);
-if (threshA && threshA <= 10) {
-  db.prepare(`UPDATE config SET value='70' WHERE key='icp_threshold_a'`).run();
-  db.prepare(`UPDATE config SET value='40' WHERE key='icp_threshold_b'`).run();
+  // One-off upgrade: prod DBs still have 0-10 thresholds. Detect by value and flip.
+  // Idempotent — runs harmlessly on already-upgraded DBs.
+  const threshA = Number(db.prepare(`SELECT value FROM config WHERE key='icp_threshold_a'`).get()?.value);
+  if (threshA && threshA <= 10) {
+    db.prepare(`UPDATE config SET value='70' WHERE key='icp_threshold_a'`).run();
+    db.prepare(`UPDATE config SET value='40' WHERE key='icp_threshold_b'`).run();
+  }
 }
 ```
 
-- [ ] **Step 4: Run all db tests**
+Note: the threshold-upgrade UPDATE intentionally runs outside the `INSERT OR IGNORE` loop because we need to overwrite an existing row, not insert a new one.
+
+- [ ] **Step 2: Run tests**
 
 ```bash
 npm test -- core/db/db.test.js
 ```
 
-Expected: all PASS.
+Expected: all db tests PASS.
 
-### Task 1.8: Run full test suite to catch regressions
+### Task 1.7: Run full test suite to catch regressions
 
 - [ ] **Step 1:**
 
@@ -321,7 +336,7 @@ cd /Users/drprockz/Projects/Outreach && npm test 2>&1 | tail -20
 
 Expected: all existing 109 tests still pass + ~5 new tests.
 
-### Task 1.9: Commit Chunk 1
+### Task 1.8: Commit Chunk 1
 
 - [ ] **Step 1:**
 
@@ -1418,6 +1433,8 @@ npm test -- engines/insertLead.test.js
 
 ### Task 5.2: Implement `insertLead` helper and export it
 
+**Note on named params:** The INSERT binds 35 columns by position. If miscounting feels likely, rewrite using better-sqlite3 named parameters (`@col`) — the `.run({col: val, ...})` form is safer. The positional version is shown below to keep diff-friendly with the existing style in this file.
+
 - [ ] **Step 1: Edit `src/engines/findLeads.js`** — add after the existing helper functions (after `buildIcpRubric`, before `stage1_discover`):
 
 ```js
@@ -1499,13 +1516,13 @@ npm test -- engines/findLeads.test.js
 import { loadScoringContext, scoreLead } from '../core/ai/icpScorer.js';
 ```
 
-- [ ] **Step 2: Delete** the old `stage9_icpScore` function (currently at lines 86-110) and `buildIcpRubric` (lines 16-19). Also delete the old `rubric`/`threshA`/`threshB` computation in the main pipeline where it prepares the old prompt (approx lines 204-206).
+- [ ] **Step 2: Delete** the old `stage9_icpScore` function (currently at lines 86-110) and `buildIcpRubric` (lines 16-19). Also delete the old `rubric` assignment in the main pipeline (line 204: `const rubric = buildIcpRubric(db);`). The existing `threshA`/`threshB` `getConfigInt` calls at lines 205-206 can be kept and reused — Step 3 just augments them with the scoringCtx object rather than re-declaring.
 
-- [ ] **Step 3: At the top of the `findLeads()` try block** (after `const db = getDb()`), add:
+- [ ] **Step 3: Replace the old `threshA` / `threshB` default values** in the `getConfigInt` calls (currently `7` and `4` at lines 205-206) with `70` and `40` respectively. Then immediately after those two lines, add the weights + scoring context assembly:
 
 ```js
-const threshA   = getConfigInt(cfg, 'icp_threshold_a', 70);
-const threshB   = getConfigInt(cfg, 'icp_threshold_b', 40);
+const threshA   = getConfigInt(cfg, 'icp_threshold_a', 70);  // changed: 7 → 70
+const threshB   = getConfigInt(cfg, 'icp_threshold_b', 40);  // changed: 4 → 40
 let icpWeights;
 try {
   icpWeights = JSON.parse(getConfigStr(cfg, 'icp_weights', '{}'));
@@ -1518,7 +1535,7 @@ scoringCtx.threshA = threshA;
 scoringCtx.threshB = threshB;
 ```
 
-This line throws if offer/icp_profile are unconfigured — caught by the outer try/catch which calls `logError` + `sendAlert` + `finishCron(failed)`.
+`loadScoringContext(db)` throws if offer/icp_profile are unconfigured — caught by the existing outer try/catch which calls `logError` + `finishCron(failed)` + `sendAlert`. Placement is early in the pipeline, BEFORE Stage 1 discovery runs, so no Gemini cost is wasted when config is missing.
 
 - [ ] **Step 4: Replace** the `Stage 9: ICP scoring` worker (currently at lines 349-395) with:
 
@@ -1588,15 +1605,15 @@ if (prompt.includes('You are an ICP scoring engine')) {
 
 Remove the old `prompt.includes('Score this lead')` branch — it won't be hit.
 
-- [ ] **Step 2: Seed `offer` + `icp_profile` rows** in `beforeEach`:
+- [ ] **Step 2: Seed `offer` + `icp_profile` rows** in `beforeEach` — add these lines AFTER the existing `seedConfigDefaults()` / `seedNichesAndIcpRules()` calls (approximately around line 100 of the existing test file):
 
 ```js
-const { getDb } = await import('../../src/core/db/index.js');
+// Configure offer + icp_profile so loadScoringContext passes the non-empty check
 getDb().prepare(`UPDATE offer SET problem='outdated sites' WHERE id=1`).run();
 getDb().prepare(`UPDATE icp_profile SET industries=? WHERE id=1`).run(JSON.stringify(['restaurants','salons']));
 ```
 
-Without this, `loadScoringContext` throws and `findLeads()` fails.
+The singleton rows themselves are auto-created by `initSchema()` via the `INSERT OR IGNORE` in `schema.sql` (Task 1.2 Step 2). Without the UPDATE, `loadScoringContext` throws the "offer.problem" error and `findLeads()` fails fast.
 
 - [ ] **Step 3: Update existing tests with hardcoded `icp_score` values**:
 
@@ -1662,7 +1679,7 @@ it('fails fast when offer.problem is empty', async () => {
 
   const row = getDb().prepare(`SELECT * FROM cron_log ORDER BY id DESC LIMIT 1`).get();
   expect(row.status).toBe('failed');
-  expect(row.error).toMatch(/offer\.problem/);
+  expect(row.error_message).toMatch(/offer\.problem/);
 });
 ```
 
