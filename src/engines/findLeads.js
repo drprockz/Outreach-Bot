@@ -5,6 +5,7 @@ import { callClaude } from '../core/ai/claude.js';
 import { verifyEmail } from '../core/integrations/mev.js';
 import { sendAlert } from '../core/integrations/telegram.js';
 import { withConcurrency } from '../core/lib/concurrency.js';
+import { loadScoringContext, scoreLead } from '../core/ai/icpScorer.js';
 
 // ── Niche rotation: DB-backed ─────────────────────────────
 function getNicheForToday(db) {
@@ -13,9 +14,41 @@ function getNicheForToday(db) {
     || db.prepare('SELECT * FROM niches WHERE enabled = 1 ORDER BY sort_order LIMIT 1').get();
 }
 
-function buildIcpRubric(db) {
-  const rules = db.prepare('SELECT * FROM icp_rules WHERE enabled = 1 ORDER BY sort_order').all();
-  return rules.map(r => `${r.points > 0 ? '+' : ''}${r.points}  ${r.label}`).join('\n');
+// Exported for unit testing
+export function insertLead(db, lead, niche, status) {
+  return db.prepare(`
+    INSERT INTO leads (
+      business_name, website_url, category, city, country, search_query,
+      tech_stack, website_problems, last_updated, has_ssl, has_analytics,
+      owner_name, owner_role, business_signals, social_active,
+      website_quality_score, judge_reason,
+      contact_name, contact_email, contact_confidence, contact_source,
+      email_status, email_verified_at,
+      employees_estimate, business_stage,
+      icp_score, icp_priority, icp_reason,
+      icp_breakdown, icp_key_matches, icp_key_gaps, icp_disqualifiers,
+      status, gemini_cost_usd, discovery_model, extraction_model
+    ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              CASE WHEN ? = 'ready' THEN datetime('now') ELSE NULL END,
+              ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gemini-2.5-flash', 'gemini-2.5-flash')
+  `).run(
+    lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
+    JSON.stringify(lead.tech_stack || []), JSON.stringify(lead.website_problems || []),
+    lead.last_updated, lead.has_ssl, lead.has_analytics,
+    lead.owner_name, lead.owner_role,
+    JSON.stringify(lead.business_signals || []), lead.social_active,
+    lead.website_quality_score, lead.judge_reason,
+    lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
+    lead.email_status, status,
+    lead.employees_estimate || 'unknown', lead.business_stage || 'unknown',
+    lead.icp_score, lead.icp_priority, lead.icp_reason,
+    JSON.stringify(lead.icp_breakdown || null),
+    JSON.stringify(lead.icp_key_matches || []),
+    JSON.stringify(lead.icp_key_gaps || []),
+    JSON.stringify(lead.icp_disqualifiers || []),
+    status,
+    (lead.extractCost || 0) + (lead.icpCost || 0)
+  );
 }
 
 // Strip markdown code fences Gemini sometimes wraps JSON in
@@ -71,6 +104,8 @@ async function stages2to6_extract(lead) {
 - social_active: 1 if active social media but neglected website, 0 otherwise (number)
 - website_quality_score: 1-10 where 1=terrible needs complete rebuild, 10=excellent modern site (number)
 - judge_reason: one sentence explaining the quality score (string)
+- employees_estimate: "1-10" | "10-50" | "50-200" | "unknown" (string). Use team/about page clues.
+- business_stage: "owner-operated" | "growing" | "established" | "unknown" (string).
 
 Business: ${lead.business_name}, Website: ${lead.website_url}, City: ${lead.city}
 
@@ -80,32 +115,6 @@ Return only valid JSON, no markdown.`;
     return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
   } catch {
     return { data: null, costUsd: result.costUsd };
-  }
-}
-
-// ── Stage 9: ICP scorer — Gemini ─────────────────────────
-async function stage9_icpScore(lead, rubric, threshA, threshB) {
-  const prompt = `Score this lead on the ICP rubric and return JSON {icp_score: number, icp_priority: "A"|"B"|"C", icp_reason: "brief explanation"}.
-
-Rubric:
-${rubric}
-
-Priority: A=${threshA}-10, B=${threshB}-${threshA - 1}, C=below ${threshB} (including negative)
-
-Lead data:
-Company: ${lead.business_name}
-Tech stack: ${JSON.stringify(lead.tech_stack) || 'unknown'}
-Business signals: ${JSON.stringify(lead.business_signals) || 'none'}
-City: ${lead.city}
-Category: ${lead.category}
-Quality score: ${lead.website_quality_score}
-
-Return only valid JSON.`;
-  const result = await callGemini(prompt);
-  try {
-    return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
-  } catch {
-    return { data: { icp_score: 0, icp_priority: 'C', icp_reason: 'parse error' }, costUsd: result.costUsd };
   }
 }
 
@@ -201,9 +210,18 @@ export default async function findLeads() {
     const leadsCount = Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
     const perBatch = getConfigInt(cfg, 'find_leads_per_batch', 30);
     const batches = Math.ceil(leadsCount / perBatch);
-    const rubric = buildIcpRubric(db);
-    const threshA = getConfigInt(cfg, 'icp_threshold_a', 7);
-    const threshB = getConfigInt(cfg, 'icp_threshold_b', 4);
+    const threshA = getConfigInt(cfg, 'icp_threshold_a', 70);
+    const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
+    let icpWeights;
+    try {
+      icpWeights = JSON.parse(getConfigStr(cfg, 'icp_weights', '{}'));
+    } catch {
+      icpWeights = { firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 };
+    }
+    const scoringCtx = loadScoringContext(db);
+    scoringCtx.weights = icpWeights;
+    scoringCtx.threshA = threshA;
+    scoringCtx.threshB = threshB;
     const persona = {
       name:     getConfigStr(cfg, 'persona_name',     'Darshan Parmar'),
       role:     getConfigStr(cfg, 'persona_role',     'Full-Stack Developer'),
@@ -348,39 +366,24 @@ export default async function findLeads() {
     // ── Stage 9: ICP scoring ─────────────────────────────────────────────
     const scoredLeads = await withConcurrency(gate2Passed, 20, async (lead) => {
       try {
-        const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead, rubric, threshA, threshB);
-        totalCost += icpCost;
-        bumpMetric('gemini_cost_usd', icpCost);
-        bumpMetric('total_api_cost_usd', icpCost);
+        const icp = await scoreLead(lead, scoringCtx);
+        totalCost += icp.costUsd;
+        bumpMetric('gemini_cost_usd', icp.costUsd);
+        bumpMetric('total_api_cost_usd', icp.costUsd);
 
-        lead.icp_score = icp.icp_score;
-        lead.icp_priority = icp.icp_priority;
-        lead.icp_reason = icp.icp_reason;
-        lead.icpCost = icpCost;
+        Object.assign(lead, icp, { icpCost: icp.costUsd });
 
-        // Gate 3: C-priority → nurture (not discarded)
+        // Hard disqualifiers override score
+        if (icp.icp_disqualifiers.length > 0) {
+          insertLead(db, lead, niche, 'disqualified');
+          bumpMetric('leads_disqualified');
+          leadsSkipped++;
+          return null;
+        }
+
+        // C-priority → nurture
         if (icp.icp_priority === 'C') {
-          db.prepare(`
-            INSERT INTO leads (
-              business_name, website_url, category, city, country, search_query,
-              tech_stack, website_problems, last_updated, has_ssl, has_analytics,
-              owner_name, owner_role, business_signals, social_active,
-              website_quality_score, judge_reason,
-              contact_name, contact_email, contact_confidence, contact_source,
-              email_status, icp_score, icp_priority, icp_reason,
-              status, gemini_cost_usd
-            ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nurture', ?)
-          `).run(
-            lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
-            JSON.stringify(lead.tech_stack), JSON.stringify(lead.website_problems),
-            lead.last_updated, lead.has_ssl, lead.has_analytics,
-            lead.owner_name, lead.owner_role,
-            JSON.stringify(lead.business_signals), lead.social_active,
-            lead.website_quality_score, lead.judge_reason,
-            lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
-            lead.email_status, lead.icp_score, lead.icp_priority, lead.icp_reason,
-            lead.extractCost + icpCost
-          );
+          insertLead(db, lead, niche, 'nurture');
           leadsSkipped++;
           return null;
         }
@@ -433,32 +436,8 @@ export default async function findLeads() {
         }
         bumpMetric('total_api_cost_usd', hookResult.costUsd + bodyCost);
 
-        const geminiCost = lead.extractCost + lead.icpCost;
-
         // Insert lead
-        const leadInsert = db.prepare(`
-          INSERT INTO leads (
-            business_name, website_url, category, city, country, search_query,
-            tech_stack, website_problems, last_updated, has_ssl, has_analytics,
-            owner_name, owner_role, business_signals, social_active,
-            website_quality_score, judge_reason,
-            contact_name, contact_email, contact_confidence, contact_source,
-            email_status, email_verified_at,
-            icp_score, icp_priority, icp_reason,
-            status, gemini_cost_usd, discovery_model, extraction_model
-          ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, 'ready', ?, 'gemini-2.5-flash', 'gemini-2.5-flash')
-        `).run(
-          lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
-          JSON.stringify(lead.tech_stack), JSON.stringify(lead.website_problems),
-          lead.last_updated, lead.has_ssl, lead.has_analytics,
-          lead.owner_name, lead.owner_role,
-          JSON.stringify(lead.business_signals), lead.social_active,
-          lead.website_quality_score, lead.judge_reason,
-          lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
-          lead.email_status,
-          lead.icp_score, lead.icp_priority, lead.icp_reason,
-          geminiCost
-        );
+        const leadInsert = insertLead(db, lead, niche, 'ready');
 
         // Insert pre-generated email
         const leadId = leadInsert.lastInsertRowid;

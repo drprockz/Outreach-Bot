@@ -41,7 +41,7 @@ beforeEach(async () => {
   // Insert a sent lead with active sequence due today
   getDb().prepare(`
     INSERT INTO leads (id, business_name, contact_email, contact_name, category, icp_priority, icp_score, status)
-    VALUES (1, 'Acme', 'john@acme.com', 'John', 'restaurant', 'A', 8, 'sent')
+    VALUES (1, 'Acme', 'john@acme.com', 'John', 'restaurant', 'A', 80, 'sent')
   `).run();
   getDb().prepare(`
     INSERT INTO emails (lead_id, sequence_step, subject, body, hook, status, message_id, inbox_used)

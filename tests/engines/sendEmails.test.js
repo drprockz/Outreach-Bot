@@ -34,7 +34,7 @@ beforeEach(async () => {
   // Insert a ready lead with a corresponding pre-generated email in the emails table
   getDb().prepare(`
     INSERT INTO leads (id, business_name, contact_email, contact_name, icp_priority, icp_score, status)
-    VALUES (1, 'Acme', 'john@acme.com', 'John', 'A', 8, 'ready')
+    VALUES (1, 'Acme', 'john@acme.com', 'John', 'A', 80, 'ready')
   `).run();
   getDb().prepare(`
     INSERT INTO emails (lead_id, sequence_step, subject, body, word_count, hook, status)
@@ -97,7 +97,7 @@ describe('sendEmails', () => {
     getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('daily_send_limit', '1');
     getDb().prepare(`
       INSERT INTO leads (id, business_name, contact_email, contact_name, icp_priority, icp_score, status)
-      VALUES (2, 'Beta', 'jane@beta.com', 'Jane', 'A', 9, 'ready')
+      VALUES (2, 'Beta', 'jane@beta.com', 'Jane', 'A', 90, 'ready')
     `).run();
     getDb().prepare(`
       INSERT INTO emails (lead_id, sequence_step, subject, body, word_count, hook, status)
@@ -114,7 +114,7 @@ describe('sendEmails', () => {
     const { getDb } = await import('../../src/core/db/index.js');
     getDb().prepare(`
       INSERT INTO leads (id, business_name, contact_email, contact_name, icp_priority, icp_score, status)
-      VALUES (2, 'Beta', 'jane@beta.com', 'Jane', 'B', 7, 'ready')
+      VALUES (2, 'Beta', 'jane@beta.com', 'Jane', 'B', 70, 'ready')
     `).run();
     getDb().prepare(`
       INSERT INTO emails (lead_id, sequence_step, subject, body, word_count, hook, status)

@@ -36,20 +36,27 @@ vi.mock('../../src/core/ai/gemini.js', () => ({
           business_signals: ['low reviews', 'no booking', 'dated design'],
           social_active: 1,
           website_quality_score: 4,
-          judge_reason: 'Outdated WordPress site with no booking system'
+          judge_reason: 'Outdated WordPress site with no booking system',
+          employees_estimate: '1-10',
+          business_stage: 'owner-operated'
         }),
         costUsd: 0.001,
         inputTokens: 100,
         outputTokens: 50
       };
     }
-    if (prompt.includes('Score this lead')) {
-      // Stage 9 ICP scoring
+    if (prompt.includes('You are an ICP scoring engine')) {
       return {
-        text: JSON.stringify({ icp_score: 7, icp_priority: 'A' }),
+        text: JSON.stringify({
+          score: 75,
+          breakdown: { firmographic: 18, problem: 17, intent: 10, tech: 12, economic: 10, buying: 8 },
+          key_matches: ['industry match', 'geo match'],
+          key_gaps: [],
+          disqualifiers: []
+        }),
         costUsd: 0.001,
         inputTokens: 50,
-        outputTokens: 20
+        outputTokens: 20,
       };
     }
     return { text: '{}', costUsd: 0, inputTokens: 0, outputTokens: 0 };
@@ -102,6 +109,9 @@ beforeEach(async () => {
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_count', '50');
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_per_batch', '50');
   getDb().prepare('INSERT OR REPLACE INTO config (key, value) VALUES (?, ?)').run('find_leads_enabled', '1');
+  // Configure offer + icp_profile so loadScoringContext passes
+  getDb().prepare(`UPDATE offer SET problem='outdated sites' WHERE id=1`).run();
+  getDb().prepare(`UPDATE icp_profile SET industries=? WHERE id=1`).run(JSON.stringify(['restaurants','salons']));
 });
 
 afterEach(async () => {
@@ -154,9 +164,15 @@ describe('findLeads', () => {
     // Override ICP scoring to return C priority
     const originalImpl = callGemini.getMockImplementation();
     callGemini.mockImplementation(async (prompt, opts) => {
-      if (prompt.includes('Score this lead')) {
+      if (prompt.includes('You are an ICP scoring engine')) {
         return {
-          text: JSON.stringify({ icp_score: 2, icp_priority: 'C' }),
+          text: JSON.stringify({
+            score: 20,
+            breakdown: {},
+            key_matches: [],
+            key_gaps: ['low quality'],
+            disqualifiers: []
+          }),
           costUsd: 0.001,
           inputTokens: 50,
           outputTokens: 20
@@ -233,5 +249,46 @@ describe('findLeads', () => {
     const metrics = getDb().prepare(`SELECT * FROM daily_metrics WHERE date=?`).get(today());
     expect(metrics).toBeTruthy();
     expect(metrics.leads_discovered).toBeGreaterThan(0);
+  });
+
+  it('inserts lead with status=disqualified when scorer emits disqualifiers', async () => {
+    const { callGemini } = await import('../../src/core/ai/gemini.js');
+    callGemini.mockImplementation(async (prompt) => {
+      if (prompt.toLowerCase().includes('discover')) {
+        return { text: JSON.stringify([{ business_name: 'X', website_url: 'https://x.com', city: 'Mumbai', category: 'restaurant' }]), costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      }
+      if (prompt.includes('Analyze this business')) {
+        return { text: JSON.stringify({ owner_name: 'J', owner_role: 'F', contact_email: 'j@x.com', contact_confidence: 'medium', contact_source: 'guess', tech_stack: ['WP'], website_problems: [], last_updated: '2022', has_ssl: 1, has_analytics: 0, business_signals: [], social_active: 0, website_quality_score: 4, judge_reason: 'ok', employees_estimate: '1-10', business_stage: 'owner-operated' }), costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      }
+      if (prompt.includes('You are an ICP scoring engine')) {
+        return { text: JSON.stringify({ score: 80, breakdown: {}, key_matches: [], key_gaps: [], disqualifiers: ['locked-in 3yr contract'] }), costUsd: 0, inputTokens: 0, outputTokens: 0 };
+      }
+      return { text: '{}', costUsd: 0, inputTokens: 0, outputTokens: 0 };
+    });
+
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
+    await findLeads();
+
+    const { getDb } = await import('../../src/core/db/index.js');
+    const disqualified = getDb().prepare(`SELECT * FROM leads WHERE status='disqualified'`).all();
+    expect(disqualified.length).toBeGreaterThanOrEqual(1);
+    expect(JSON.parse(disqualified[0].icp_disqualifiers)).toContain('locked-in 3yr contract');
+    const ready = getDb().prepare(`SELECT * FROM leads WHERE status='ready'`).all();
+    expect(ready.length).toBe(0);  // hook/body stages should not have run
+  });
+
+  it('fails fast when offer.problem is empty', async () => {
+    const { getDb } = await import('../../src/core/db/index.js');
+    // outer beforeEach seeded offer.problem + industries; clear them for this test
+    getDb().prepare(`UPDATE offer SET problem=NULL WHERE id=1`).run();
+    getDb().prepare(`UPDATE icp_profile SET industries=NULL WHERE id=1`).run();
+    getDb().prepare(`INSERT OR REPLACE INTO config (key, value) VALUES ('find_leads_enabled','1')`).run();
+
+    const { default: findLeads } = await import('../../src/engines/findLeads.js');
+    await findLeads();  // must not throw (caught internally)
+
+    const row = getDb().prepare(`SELECT * FROM cron_log ORDER BY id DESC LIMIT 1`).get();
+    expect(row.status).toBe('failed');
+    expect(row.error_message).toMatch(/offer\.problem/);
   });
 });
