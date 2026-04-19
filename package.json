@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:db:reset": "DATABASE_URL=\"$DATABASE_URL_TEST\" prisma migrate reset --force --skip-seed"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
