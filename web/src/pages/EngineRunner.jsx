@@ -19,6 +19,7 @@ export default function EngineRunner() {
   const [activeRun, setActiveRun] = useState(null);  // { cronLogId, startedAt }
   const [status, setStatus] = useState(null);        // response from engineStatus
   const [latest, setLatest] = useState(null);        // last completed run
+  const [stats, setStats] = useState(null);          // rolling per-lead avg from history
   const [error, setError] = useState('');
   const [starting, setStarting] = useState(false);
   const pollRef = useRef(null);
@@ -30,7 +31,14 @@ export default function EngineRunner() {
     } catch (e) { /* non-fatal */ }
   }
 
-  useEffect(() => { loadLatest(); }, []);
+  async function loadStats() {
+    try {
+      const s = await api.engineStats('findLeads', 10);
+      setStats(s);
+    } catch (e) { /* non-fatal */ }
+  }
+
+  useEffect(() => { loadLatest(); loadStats(); }, []);
 
   // Polling loop when a run is active
   useEffect(() => {
@@ -43,9 +51,10 @@ export default function EngineRunner() {
         if (cancelled) return;
         setStatus(s);
         if (s?.cron_log?.status && s.cron_log.status !== 'running') {
-          // Run finished — stop polling, refresh the "latest" card too
+          // Run finished — stop polling, refresh the "latest" card + stats
           setActiveRun(null);
           await loadLatest();
+          await loadStats();  // new successful run updates the rolling avg
           return;
         }
       } catch (e) {
@@ -128,9 +137,34 @@ export default function EngineRunner() {
           </label>
           <small className="muted">
             Dashboard-triggered runs bypass the cron's 50-lead minimum floor.
-            Gemini-grounded discovery costs ~$0.0003/lead; extraction ~$0.0008/lead;
-            scoring ~$0.0005/lead. A run of 3 costs roughly $0.005.
           </small>
+          {(() => {
+            const n = Math.max(0, Number(leadsCount) || 0);
+            if (stats && stats.sample_size > 0 && stats.avg_cost_per_lead_usd != null) {
+              const perLead = Number(stats.avg_cost_per_lead_usd);
+              const median = Number(stats.median_cost_per_lead_usd);
+              const projected = perLead * n;
+              const avgDurationS = stats.avg_duration_ms ? Math.round(stats.avg_duration_ms / 1000) : null;
+              return (
+                <div className="cost-projection">
+                  <div>
+                    Projected cost for <strong>{n}</strong> leads: <strong>{fmtUsd(projected)}</strong> <span className="muted">({fmtInr(projected)})</span>
+                  </div>
+                  <small className="muted">
+                    Based on last {stats.sample_size} completed run{stats.sample_size === 1 ? '' : 's'}:
+                    avg {fmtUsd(perLead)}/lead (median {fmtUsd(median)}/lead)
+                    {avgDurationS ? `, avg run ${avgDurationS}s` : ''}.
+                  </small>
+                </div>
+              );
+            }
+            return (
+              <small className="muted">
+                No prior runs yet — first run will establish the baseline cost/lead.
+                Gemini Flash rough order: ~$0.002/lead (~₹0.17/lead).
+              </small>
+            );
+          })()}
           <button
             className="btn-primary"
             onClick={startRun}

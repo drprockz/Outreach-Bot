@@ -80,5 +80,6 @@ export const api = {
     requestWithStatus(`/run-engine/${engineName}`, { method: 'POST', body: JSON.stringify(override) }),
   engineStatus:     (cronLogId) => request(`/run-engine/status/${cronLogId}`),
   engineLatest:     (engineName) => request(`/run-engine/latest/${engineName}`),
+  engineStats:      (engineName, sample = 10) => request(`/run-engine/stats/${engineName}?sample=${sample}`),
   todayCosts:       () => request('/run-engine/today-costs'),
 };

@@ -213,6 +213,52 @@ describe('GET /api/run-engine/today-costs', () => {
   });
 });
 
+describe('GET /api/run-engine/stats/:engineName', () => {
+  it('requires auth', async () => {
+    const r = await fetch(`${baseUrl}/api/run-engine/stats/findLeads`);
+    expect(r.status).toBe(401);
+  });
+
+  it('returns zeros when no completed runs exist', async () => {
+    const r = await fetch(`${baseUrl}/api/run-engine/stats/findLeads`, { headers: authHeaders() });
+    const body = await r.json();
+    expect(body.sample_size).toBe(0);
+    expect(body.avg_cost_per_lead_usd).toBeNull();
+  });
+
+  it('computes weighted avg cost/lead + median from completed runs', async () => {
+    const prisma = getTestPrisma();
+    // Run 1: 10 leads, $0.02 → $0.002/lead
+    // Run 2: 5 leads, $0.015 → $0.003/lead
+    // Run 3 (failed): should be skipped
+    // Run 4 (skipped — 0 processed): should be skipped
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'success', recordsProcessed: 10, costUsd: 0.02, durationMs: 40_000, completedAt: new Date() } });
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'success', recordsProcessed: 5, costUsd: 0.015, durationMs: 20_000, completedAt: new Date() } });
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'failed', recordsProcessed: 0, costUsd: 0, durationMs: 100, completedAt: new Date() } });
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'success', recordsProcessed: 0, costUsd: 0, durationMs: 50, completedAt: new Date() } });
+
+    const r = await fetch(`${baseUrl}/api/run-engine/stats/findLeads`, { headers: authHeaders() });
+    const body = await r.json();
+    expect(body.sample_size).toBe(2);
+    // weighted: (0.02 + 0.015) / (10 + 5) = 0.035 / 15 = 0.002333...
+    expect(body.avg_cost_per_lead_usd).toBeCloseTo(0.002333, 5);
+    // median of [0.002, 0.003] = 0.0025
+    expect(body.median_cost_per_lead_usd).toBeCloseTo(0.0025, 5);
+    expect(body.avg_duration_ms).toBe(30_000);
+  });
+
+  it('honours sample query param', async () => {
+    const prisma = getTestPrisma();
+    // 15 successful runs
+    for (let i = 0; i < 15; i++) {
+      await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'success', recordsProcessed: 1, costUsd: 0.001 * (i + 1), durationMs: 100, completedAt: new Date() } });
+    }
+    const r = await fetch(`${baseUrl}/api/run-engine/stats/findLeads?sample=3`, { headers: authHeaders() });
+    const body = await r.json();
+    expect(body.sample_size).toBe(3);  // only the 3 most recent
+  });
+});
+
 describe('GET /api/run-engine/latest/:engineName', () => {
   it('returns null cron_log when no runs exist', async () => {
     const r = await fetch(`${baseUrl}/api/run-engine/latest/findLeads`, { headers: authHeaders() });

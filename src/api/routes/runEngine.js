@@ -193,6 +193,66 @@ router.get('/latest/:engineName', async (req, res) => {
 });
 
 /**
+ * GET /api/run-engine/stats/:engineName
+ * Rolling per-lead cost averages from the last N completed runs. Used by the
+ * EngineRunner page to show a live cost projection before the user clicks
+ * Generate — replaces a hardcoded estimate with data from their own history.
+ *
+ * Query params:
+ *   sample (optional, default 10): how many most-recent completed runs to average
+ */
+router.get('/stats/:engineName', async (req, res) => {
+  const { engineName } = req.params;
+  if (!ENGINES[engineName]) {
+    return res.status(404).json({ error: `Unknown engine: ${engineName}` });
+  }
+
+  const sample = Math.min(50, Math.max(1, parseInt(req.query.sample, 10) || 10));
+
+  const runs = await prisma.cronLog.findMany({
+    where: {
+      jobName: engineName,
+      status: 'success',
+      // Only runs that actually processed leads (skipped runs would skew the average to 0)
+      recordsProcessed: { gt: 0 },
+      costUsd: { not: null },
+    },
+    orderBy: { id: 'desc' },
+    take: sample,
+    select: { id: true, costUsd: true, recordsProcessed: true, durationMs: true, completedAt: true },
+  });
+
+  if (runs.length === 0) {
+    return res.json({
+      sample_size: 0,
+      avg_cost_per_lead_usd: null,
+      median_cost_per_lead_usd: null,
+      avg_duration_ms: null,
+      most_recent_at: null,
+    });
+  }
+
+  const perLead = runs.map(r => Number(r.costUsd) / r.recordsProcessed);
+  const sumCost = runs.reduce((a, r) => a + Number(r.costUsd), 0);
+  const sumLeads = runs.reduce((a, r) => a + r.recordsProcessed, 0);
+  const sumDur = runs.reduce((a, r) => a + (r.durationMs || 0), 0);
+
+  const sorted = [...perLead].sort((a, b) => a - b);
+  const median = sorted.length % 2 === 0
+    ? (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2
+    : sorted[Math.floor(sorted.length / 2)];
+
+  res.json({
+    sample_size: runs.length,
+    // Weighted average (total cost / total leads) — more accurate than mean of per-run ratios
+    avg_cost_per_lead_usd: sumLeads > 0 ? sumCost / sumLeads : null,
+    median_cost_per_lead_usd: median,
+    avg_duration_ms: runs.length > 0 ? Math.round(sumDur / runs.length) : null,
+    most_recent_at: runs[0]?.completedAt,
+  });
+});
+
+/**
  * GET /api/run-engine/today-costs
  * Lightweight endpoint for the CostTracker page's "today live" card.
  * Returns just today's running cost totals.
