@@ -1,9 +1,12 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList,
+import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList,
          getConfigMap, getConfigInt, getConfigFloat } from '../core/db/index.js';
 import { verifyConnections, sendMail } from '../core/email/mailer.js';
 import { validate } from '../core/email/contentValidator.js';
 import { callClaude } from '../core/ai/claude.js';
+import { callGemini } from '../core/ai/gemini.js';
+
+const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
 import { sendAlert } from '../core/integrations/telegram.js';
 import { sleep } from '../core/lib/sleep.js';
 
@@ -137,8 +140,7 @@ export default async function sendEmails() {
       if (!validation.valid) {
         // Regenerate once on content validation failure
         try {
-          const { text: newBody, costUsd } = await callClaude('haiku',
-            `Write a cold email from Darshan Parmar (Full-Stack Developer, Simple Inc) to ${lead.contactName || lead.ownerName || 'the owner'} at ${lead.businessName}.
+          const regenPrompt = `Write a cold email from Darshan Parmar (Full-Stack Developer, Simple Inc) to ${lead.contactName || lead.ownerName || 'the owner'} at ${lead.businessName}.
 
 Hook to open with: "${email.hook}"
 
@@ -150,11 +152,19 @@ Rules:
 - Professional but direct tone
 - Do not mention price
 
-Return only the email body, no subject line.`,
-            { maxTokens: 200 }
-          );
+Return only the email body, no subject line.`;
+          let newBody, costUsd;
+          if (ANTHROPIC_DISABLED) {
+            const result = await callGemini(regenPrompt);
+            newBody = result.text; costUsd = result.costUsd;
+            // callGemini doesn't write to daily_metrics — do it here
+            await bumpCostMetric('geminiCostUsd', costUsd);
+          } else {
+            const result = await callClaude('haiku', regenPrompt, { maxTokens: 200 });
+            newBody = result.text; costUsd = result.costUsd;
+            // callClaude already writes haikuCostUsd to daily_metrics — no bumpMetric needed
+          }
           totalCost += costUsd;
-          // Note: callClaude already writes haikuCostUsd to daily_metrics — no bumpMetric needed
 
           const retryValidation = validate(emailSubject, newBody, 0);
           if (!retryValidation.valid) {

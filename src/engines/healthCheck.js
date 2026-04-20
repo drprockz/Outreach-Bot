@@ -30,10 +30,11 @@ export default async function healthCheck() {
   try {
     const d = today();
 
-    // DNS blacklist check
-    const { clean, zones } = await checkDomain(DOMAIN);
+    // DNS blacklist check. `unknown` = zones whose query was rate-limited by the DNSBL
+    // provider (sentinel 127.255.255.254/.255) — status is genuinely unknown, not listed.
+    // We pause sending ONLY on a confirmed listing in `zones`, never on `unknown`.
+    const { clean, zones, unknown } = await checkDomain(DOMAIN);
 
-    // Store blacklist results in daily_metrics (upsert — ensures row exists)
     await prisma.dailyMetrics.upsert({
       where: { date: d },
       create: {
@@ -51,6 +52,13 @@ export default async function healthCheck() {
       await sendAlert(`🚨 BLACKLIST: ${DOMAIN} listed on: ${zones.join(', ')} — sending paused`);
       await forceDailySendLimitZero();
       await logError('healthCheck.blacklist', new Error(`Domain ${DOMAIN} listed on ${zones.join(', ')}`), { jobName: 'healthCheck', errorType: 'smtp_error' });
+    } else if (unknown && unknown.length > 0) {
+      // Non-blocking: log rate-limited zones for visibility without pausing sends
+      await logError(
+        'healthCheck.blacklist.unknown',
+        new Error(`DNSBL query rate-limited for ${DOMAIN} on: ${unknown.join(', ')} — manual check recommended via check.spamhaus.org`),
+        { jobName: 'healthCheck', errorType: 'smtp_error' }
+      );
     }
 
     // Bounce rate check (7-day rolling)

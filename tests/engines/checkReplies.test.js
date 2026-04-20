@@ -14,6 +14,10 @@ vi.mock('../../src/core/email/imap.js', () => ({
 vi.mock('../../src/core/ai/claude.js', () => ({
   callClaude: vi.fn(async () => ({ text: '{"category":"hot","sentiment":5}', costUsd: 0.001, inputTokens: 50, outputTokens: 5, model: 'claude-haiku-4-5-20251001' }))
 }));
+// Gemini fallback path (ANTHROPIC_DISABLED=true) — mirror the callClaude shape minus the `model` field
+vi.mock('../../src/core/ai/gemini.js', () => ({
+  callGemini: vi.fn(async () => ({ text: '{"category":"hot","sentiment":5}', costUsd: 0.001, inputTokens: 50, outputTokens: 5 }))
+}));
 vi.mock('../../src/core/integrations/telegram.js', () => ({ sendAlert: vi.fn(async () => {}) }));
 
 beforeEach(async () => {
@@ -97,7 +101,9 @@ describe('checkReplies', () => {
 
   it('handles unsubscribe replies by adding to reject list', async () => {
     const { callClaude } = await import('../../src/core/ai/claude.js');
+    const { callGemini } = await import('../../src/core/ai/gemini.js');
     callClaude.mockResolvedValueOnce({ text: '{"category":"unsubscribe","sentiment":1}', costUsd: 0.001, inputTokens: 50, outputTokens: 5, model: 'claude-haiku-4-5-20251001' });
+    callGemini.mockResolvedValueOnce({ text: '{"category":"unsubscribe","sentiment":1}', costUsd: 0.001, inputTokens: 50, outputTokens: 5 });
     const { fetchUnseen } = await import('../../src/core/email/imap.js');
     fetchUnseen.mockResolvedValueOnce([{
       uid: 1,
@@ -121,7 +127,9 @@ describe('checkReplies', () => {
 
   it('handles soft_no by keeping sequence active with delayed next_send_date', async () => {
     const { callClaude } = await import('../../src/core/ai/claude.js');
+    const { callGemini } = await import('../../src/core/ai/gemini.js');
     callClaude.mockResolvedValueOnce({ text: '{"category":"soft_no","sentiment":3}', costUsd: 0.001, inputTokens: 50, outputTokens: 5, model: 'claude-haiku-4-5-20251001' });
+    callGemini.mockResolvedValueOnce({ text: '{"category":"soft_no","sentiment":3}', costUsd: 0.001, inputTokens: 50, outputTokens: 5 });
 
     const checkReplies = (await import('../../src/engines/checkReplies.js')).default;
     await checkReplies();

@@ -1,7 +1,10 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, bumpMetric, addToRejectList, getConfigMap, getConfigInt } from '../core/db/index.js';
+import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, addToRejectList, getConfigMap, getConfigInt } from '../core/db/index.js';
 import { fetchUnseen } from '../core/email/imap.js';
 import { callClaude } from '../core/ai/claude.js';
+import { callGemini } from '../core/ai/gemini.js';
+
+const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
 import { sendAlert } from '../core/integrations/telegram.js';
 
 // ── Classification prompt ────────────────────────────────
@@ -138,10 +141,19 @@ export default async function checkReplies() {
           });
           if (existing) continue;
 
-          // Classify via Claude Haiku
-          const { text: rawJson, costUsd, model } = await callClaude('classify', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
+          // Classify via Gemini (or Claude Haiku when ANTHROPIC_DISABLED=false)
+          let rawJson, costUsd, model;
+          if (ANTHROPIC_DISABLED) {
+            const result = await callGemini(classifyPrompt(msg.text, msg.subject));
+            rawJson = result.text; costUsd = result.costUsd; model = 'gemini-2.5-flash';
+            // callGemini doesn't write to daily_metrics — do it here
+            await bumpCostMetric('geminiCostUsd', costUsd);
+          } else {
+            const result = await callClaude('classify', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
+            rawJson = result.text; costUsd = result.costUsd; model = result.model;
+            // callClaude already writes haikuCostUsd to daily_metrics — no bumpMetric needed
+          }
           totalCost += costUsd;
-          // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
           // Parse classification result
           let category = 'other';
