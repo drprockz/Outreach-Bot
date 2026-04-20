@@ -251,10 +251,10 @@ psql "postgresql://outreach_user:Drp%402011@127.0.0.1:5432/outreach_db" \
 
 ```bash
 cd ~/radar
-pm2 start infra/ecosystem.config.js
+pm2 start infra/ecosystem.config.cjs
 ```
 
-This launches two processes defined in `infra/ecosystem.config.js`:
+This launches two processes defined in `infra/ecosystem.config.cjs`:
 - `radar-cron` → `src/scheduler/cron.js` (the 9-schedule node-cron)
 - `radar-dashboard` → `src/api/server.js` (Express API on :3001, also serves SPA)
 
@@ -540,7 +540,7 @@ reports automatically.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `pm2 list` shows 'errored' | Prisma binary mismatch | `npx prisma generate` then `pm2 restart` |
-| Dashboard returns 502 | Backend not running | `pm2 start infra/ecosystem.config.js` |
+| Dashboard returns 502 | Backend not running | `pm2 start infra/ecosystem.config.cjs` |
 | Dashboard returns 404 for `/leads` | SPA not built | `cd web && npm run build` |
 | Login returns 401 with correct password | `JWT_SECRET` changed since last login — localStorage token stale | Clear browser localStorage, login again |
 | `findLeads` fail_fast "offer.problem not configured" | Seeder not run on this DB | `node scripts/seedStarterSettings.js` |
@@ -564,7 +564,7 @@ first deploy:
 - [ ] `.env` populated with production secrets (all keys non-empty except `ANTHROPIC_API_KEY`)
 - [ ] `.env` chmod 600
 - [ ] `~/.pgpass` written, chmod 600
-- [ ] `pm2 start infra/ecosystem.config.js` — both processes 'online'
+- [ ] `pm2 start infra/ecosystem.config.cjs` — both processes 'online'
 - [ ] `pm2 save` + `pm2 startup` command run with sudo
 - [ ] Nginx + Certbot — `https://radar.simpleinc.cloud` serves the login page
 - [ ] rclone B2 remote configured, `./infra/backup.sh` tested manually
