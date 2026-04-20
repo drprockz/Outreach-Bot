@@ -4,6 +4,7 @@ import { api } from '../api';
 
 const navItems = [
   { path: '/',          label: 'Overview',   icon: '◉' },
+  { path: '/run',       label: 'Generate',   icon: '▶' },
   { path: '/leads',     label: 'Leads',      icon: '◎' },
   { path: '/funnel',    label: 'Funnel',     icon: '▽' },
   { path: '/send-log',  label: 'Send Log',   icon: '✉' },

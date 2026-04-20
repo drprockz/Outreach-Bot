@@ -18,6 +18,7 @@ import IcpRules from './pages/IcpRules';
 import Offer from './pages/Offer';
 import IcpProfile from './pages/IcpProfile';
 import EmailPersona from './pages/EmailPersona';
+import EngineRunner from './pages/EngineRunner';
 
 function ProtectedLayout() {
   const token = localStorage.getItem('radar_token');
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedLayout />}>
           <Route path="/" element={<Overview />} />
+          <Route path="/run" element={<EngineRunner />} />
           <Route path="/leads" element={<LeadPipeline />} />
           <Route path="/send-log" element={<SendLog />} />
           <Route path="/replies" element={<ReplyFeed />} />

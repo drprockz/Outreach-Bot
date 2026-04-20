@@ -12,12 +12,29 @@ const CHART_COLORS = {
   mev: '#8b5cf6',
 };
 
+const LIVE_POLL_MS = 5000;  // refresh "today live" card every 5s
+
 export default function CostTracker() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [live, setLive] = useState(null);  // today's running totals
 
   useEffect(() => {
     api.costs().then(d => { setData(d); setLoading(false); }).catch(() => setLoading(false));
+  }, []);
+
+  // Live poll today's costs — gives the user a real-time view while findLeads runs
+  useEffect(() => {
+    let cancelled = false;
+    async function tick() {
+      try {
+        const t = await api.todayCosts();
+        if (!cancelled) setLive(t);
+      } catch { /* non-fatal */ }
+      if (!cancelled) setTimeout(tick, LIVE_POLL_MS);
+    }
+    tick();
+    return () => { cancelled = true; };
   }, []);
 
   if (loading) return <div><h1 className="page-title">Cost Tracker</h1><div className="loading">Loading cost data...</div></div>;
@@ -41,6 +58,8 @@ export default function CostTracker() {
     { service: 'MyEmailVerifier', cost: monthly.mev_cost_usd || 0, color: CHART_COLORS.mev },
   ];
 
+  const todayTotal = Number(live?.total_api_cost_usd || 0);
+
   return (
     <div>
       <h1 className="page-title">Cost Tracker</h1>
@@ -49,6 +68,17 @@ export default function CostTracker() {
         <StatCard label="Monthly Total" value={`$${totalCost.toFixed(2)}`} sub={`~INR ${(totalCost * USD_TO_INR).toFixed(0)}`} color="var(--amber)" className="fade-in stagger-1" />
         <StatCard label="Emails Sent (30d)" value={monthly.emails_sent || 0} color="var(--green)" className="fade-in stagger-2" />
         <StatCard label="Per-Email Cost" value={`$${(monthly.perEmailCost || 0).toFixed(4)}`} sub={`~INR ${((monthly.perEmailCost || 0) * USD_TO_INR).toFixed(2)}`} color="var(--blue)" className="fade-in stagger-3" />
+      </div>
+
+      <div className="section-title">Today (live — refreshes every 5s)</div>
+      <div className="stat-grid mb-xl">
+        <StatCard label="Today's total" value={`$${todayTotal.toFixed(4)}`} sub={`~₹${(todayTotal * USD_TO_INR).toFixed(2)}`} color="var(--green-bright)" />
+        <StatCard label="Gemini" value={`$${Number(live?.gemini_cost_usd || 0).toFixed(4)}`} color="var(--blue)" />
+        <StatCard label="Sonnet" value={`$${Number(live?.sonnet_cost_usd || 0).toFixed(4)}`} color="var(--red)" />
+        <StatCard label="Haiku" value={`$${Number(live?.haiku_cost_usd || 0).toFixed(4)}`} color="var(--amber)" />
+        <StatCard label="MEV" value={`$${Number(live?.mev_cost_usd || 0).toFixed(4)}`} color="var(--purple)" />
+        <StatCard label="Leads ready today" value={live?.leads_ready ?? 0} color="var(--green)" />
+        <StatCard label="Emails sent today" value={live?.emails_sent ?? 0} color="var(--green)" />
       </div>
 
       <div className="section-title">Daily Costs (30 Days)</div>

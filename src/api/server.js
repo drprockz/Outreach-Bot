@@ -23,6 +23,7 @@ import costsRoutes from './routes/costs.js';
 import errorsRoutes from './routes/errors.js';
 import offerRoutes from './routes/offer.js';
 import icpProfileRoutes from './routes/icpProfile.js';
+import runEngineRoutes from './routes/runEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
@@ -65,6 +66,7 @@ app.use('/api/costs', costsRoutes);
 app.use('/api/errors', errorsRoutes);
 app.use('/api/offer', offerRoutes);
 app.use('/api/icp-profile', icpProfileRoutes);
+app.use('/api/run-engine', runEngineRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
 const distPath = join(repoRoot, 'web/dist');

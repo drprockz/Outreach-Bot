@@ -182,7 +182,13 @@ async function stage11_subject(lead) {
 }
 
 // ── Main pipeline ────────────────────────────────────────
-export default async function findLeads() {
+/**
+ * @param {{ leadsCount?: number, perBatch?: number }} [override]
+ *   When called from an on-demand dashboard trigger (/api/run-engine/findLeads),
+ *   these override the config-based count + batch size and bypass the
+ *   Math.max(50, ...) floor that applies to the scheduled cron run.
+ */
+export default async function findLeads(override = {}) {
   const cronId = await logCron('findLeads');
 
   const cfg = await getConfigMap();
@@ -220,8 +226,14 @@ export default async function findLeads() {
     const businessSizeRaw = getConfigStr(cfg, 'find_leads_business_size', 'msme');
     const businessSize = VALID_SIZES.includes(businessSizeRaw) ? businessSizeRaw : 'msme';
 
-    const leadsCount = Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
-    const perBatch = getConfigInt(cfg, 'find_leads_per_batch', 30);
+    // Override takes precedence (on-demand dashboard trigger); floor bypassed.
+    // Cron-scheduled runs pass no override and keep the 50-lead floor.
+    const leadsCount = typeof override.leadsCount === 'number' && override.leadsCount > 0
+      ? Math.max(1, Math.floor(override.leadsCount))
+      : Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
+    const perBatch = typeof override.perBatch === 'number' && override.perBatch > 0
+      ? Math.max(1, Math.floor(override.perBatch))
+      : getConfigInt(cfg, 'find_leads_per_batch', 30);
     const batches = Math.ceil(leadsCount / perBatch);
     const threshA = getConfigInt(cfg, 'icp_threshold_a', 70);
     const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);

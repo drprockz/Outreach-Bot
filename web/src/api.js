@@ -21,6 +21,26 @@ async function request(path, opts = {}) {
   return res.json();
 }
 
+// Variant that exposes HTTP status for callers that need 409 / error handling
+// (used by run-engine endpoints to distinguish concurrent-run conflicts).
+async function requestWithStatus(path, opts = {}) {
+  const res = await fetch(`${BASE}${path}`, {
+    ...opts,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${getToken()}`,
+      ...(opts.headers || {})
+    }
+  });
+  if (res.status === 401) {
+    localStorage.removeItem('radar_token');
+    window.location.href = '/login';
+    return { status: 401, body: null };
+  }
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status, ok: res.ok, body };
+}
+
 export const api = {
   login: (password) =>
     fetch(`${BASE}/auth/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) }).then(r => r.json()),
@@ -53,4 +73,12 @@ export const api = {
   updateOffer:      (data) => request('/offer', { method: 'PUT', body: JSON.stringify(data) }),
   getIcpProfile:    ()     => request('/icp-profile'),
   updateIcpProfile: (data) => request('/icp-profile', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // On-demand engine runs (dashboard-triggered, separate from scheduled cron).
+  // runEngine returns { status, ok, body } — caller checks `ok` for 409 etc.
+  runEngine:        (engineName, override = {}) =>
+    requestWithStatus(`/run-engine/${engineName}`, { method: 'POST', body: JSON.stringify(override) }),
+  engineStatus:     (cronLogId) => request(`/run-engine/status/${cronLogId}`),
+  engineLatest:     (engineName) => request(`/run-engine/latest/${engineName}`),
+  todayCosts:       () => request('/run-engine/today-costs'),
 };
