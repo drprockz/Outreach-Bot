@@ -1,29 +1,44 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+function serialize(s) {
+  return {
+    id: s.id,
+    lead_id: s.leadId,
+    current_step: s.currentStep,
+    next_send_date: s.nextSendDate,
+    last_sent_at: s.lastSentAt,
+    last_message_id: s.lastMessageId,
+    last_subject: s.lastSubject,
+    status: s.status,
+    paused_reason: s.pausedReason,
+    updated_at: s.updatedAt,
+    business_name: s.lead?.businessName ?? null,
+    contact_name: s.lead?.contactName ?? null,
+    contact_email: s.lead?.contactEmail ?? null,
+  };
+}
 
-  const sequences = db.prepare(`
-    SELECT s.*, l.business_name, l.contact_name, l.contact_email
-    FROM sequence_state s
-    LEFT JOIN leads l ON l.id = s.lead_id
-    ORDER BY s.updated_at DESC
-  `).all();
+router.get('/', async (req, res) => {
+  const rows = await prisma.sequenceState.findMany({
+    include: { lead: { select: { businessName: true, contactName: true, contactEmail: true } } },
+    orderBy: { updatedAt: 'desc' },
+  });
 
-  const agg = db.prepare(`
-    SELECT
-      SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) AS active,
-      SUM(CASE WHEN status = 'paused' THEN 1 ELSE 0 END) AS paused,
-      SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-      SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied,
-      SUM(CASE WHEN status = 'unsubscribed' THEN 1 ELSE 0 END) AS unsubscribed
-    FROM sequence_state
-  `).get();
+  const counts = await prisma.sequenceState.groupBy({
+    by: ['status'],
+    _count: { _all: true },
+  });
+  const agg = {
+    active: 0, paused: 0, completed: 0, replied: 0, unsubscribed: 0,
+  };
+  for (const c of counts) {
+    if (c.status in agg) agg[c.status] = c._count._all;
+  }
 
-  res.json({ sequences, aggregates: agg });
+  res.json({ sequences: rows.map(serialize), aggregates: agg });
 });
 
 export default router;

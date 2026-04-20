@@ -1,7 +1,10 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, addToRejectList, today, getConfigMap, getConfigInt } from '../core/db/index.js';
+import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, addToRejectList, getConfigMap, getConfigInt } from '../core/db/index.js';
 import { fetchUnseen } from '../core/email/imap.js';
 import { callClaude } from '../core/ai/claude.js';
+import { callGemini } from '../core/ai/gemini.js';
+
+const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
 import { sendAlert } from '../core/integrations/telegram.js';
 
 // ── Classification prompt ────────────────────────────────
@@ -24,78 +27,89 @@ JSON:`;
 }
 
 // ── Actions per classification ───────────────────────────
-async function handleClassification(db, category, lead, replyId) {
+async function handleClassification(category, lead, replyId) {
   let alerted = false;
 
   switch (category) {
     case 'hot': {
-      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
-      db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`🔥 Hot lead: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'replied' } });
+      await prisma.sequenceState.updateMany({
+        where: { leadId: lead.id },
+        data: { status: 'replied' },
+      });
+      await sendAlert(`🔥 Hot lead: ${lead.contactName || lead.businessName} — ${lead.businessName} (${lead.contactEmail})`);
       alerted = true;
-      bumpMetric('replies_hot');
+      await bumpMetric('repliesHot');
       break;
     }
     case 'schedule': {
-      db.prepare(`UPDATE leads SET status='replied' WHERE id=?`).run(lead.id);
-      db.prepare(`UPDATE sequence_state SET status='replied', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`📅 Wants to schedule: ${lead.contact_name || lead.business_name} — ${lead.business_name} (${lead.contact_email})`);
+      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'replied' } });
+      await prisma.sequenceState.updateMany({
+        where: { leadId: lead.id },
+        data: { status: 'replied' },
+      });
+      await sendAlert(`📅 Wants to schedule: ${lead.contactName || lead.businessName} — ${lead.businessName} (${lead.contactEmail})`);
       alerted = true;
-      bumpMetric('replies_schedule');
+      await bumpMetric('repliesSchedule');
       break;
     }
     case 'soft_no': {
       // Do NOT set lead status='replied' — keep current status so lead remains actionable
       // Keep status='active' but push next_send_date +14 days — sendFollowups date gate handles delay naturally
-      db.prepare(`
-        UPDATE sequence_state SET status='active', next_send_date=date('now', '+14 days'), updated_at=datetime('now') WHERE lead_id=?
-      `).run(lead.id);
-      db.prepare(`UPDATE replies SET requeue_date=date('now', '+14 days') WHERE id=?`).run(replyId);
-      bumpMetric('replies_soft_no');
+      const plus14 = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
+      await prisma.sequenceState.updateMany({
+        where: { leadId: lead.id },
+        data: { status: 'active', nextSendDate: plus14 },
+      });
+      await prisma.reply.update({ where: { id: replyId }, data: { requeueDate: plus14 } });
+      await bumpMetric('repliesSoftNo');
       break;
     }
     case 'unsubscribe': {
-      addToRejectList(lead.contact_email, 'unsubscribe');
-      db.prepare(`UPDATE leads SET status='unsubscribed' WHERE id=?`).run(lead.id);
-      db.prepare(`UPDATE sequence_state SET status='unsubscribed', updated_at=datetime('now') WHERE lead_id=?`).run(lead.id);
-      await sendAlert(`🚫 Unsubscribed: ${lead.contact_email} (${lead.business_name})`);
+      await addToRejectList(lead.contactEmail, 'unsubscribe');
+      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed' } });
+      await prisma.sequenceState.updateMany({
+        where: { leadId: lead.id },
+        data: { status: 'unsubscribed' },
+      });
+      await sendAlert(`🚫 Unsubscribed: ${lead.contactEmail} (${lead.businessName})`);
       alerted = true;
-      bumpMetric('replies_unsubscribe');
+      await bumpMetric('repliesUnsubscribe');
       break;
     }
     case 'ooo': {
-      db.prepare(`
-        UPDATE sequence_state SET next_send_date=date('now', '+5 days'), updated_at=datetime('now') WHERE lead_id=?
-      `).run(lead.id);
-      db.prepare(`UPDATE replies SET requeue_date=date('now', '+5 days') WHERE id=?`).run(replyId);
-      bumpMetric('replies_ooo');
+      const plus5 = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000);
+      await prisma.sequenceState.updateMany({
+        where: { leadId: lead.id },
+        data: { nextSendDate: plus5 },
+      });
+      await prisma.reply.update({ where: { id: replyId }, data: { requeueDate: plus5 } });
+      await bumpMetric('repliesOoo');
       break;
     }
     default: {
-      bumpMetric('replies_other');
+      await bumpMetric('repliesOther');
       break;
     }
   }
 
   // Set telegram_alerted flag on the reply
   if (alerted) {
-    db.prepare(`UPDATE replies SET telegram_alerted=1 WHERE id=?`).run(replyId);
+    await prisma.reply.update({ where: { id: replyId }, data: { telegramAlerted: true } });
   }
 }
 
 export default async function checkReplies() {
-  const cronId = logCron('checkReplies');
+  const cronId = await logCron('checkReplies');
   let repliesProcessed = 0;
   let totalCost = 0;
 
   try {
-    const cfg = getConfigMap();
+    const cfg = await getConfigMap();
     if (!getConfigInt(cfg, 'check_replies_enabled', 1)) {
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
-
-    const db = getDb();
 
     // Check both inboxes
     for (const inboxNumber of [1, 2]) {
@@ -103,31 +117,43 @@ export default async function checkReplies() {
       try {
         messages = await fetchUnseen(inboxNumber);
       } catch (imapErr) {
-        logError(`checkReplies.imap.inbox${inboxNumber}`, imapErr, { jobName: 'checkReplies', errorType: 'api_error' });
+        await logError(`checkReplies.imap.inbox${inboxNumber}`, imapErr, { jobName: 'checkReplies', errorType: 'api_error' });
         continue;
       }
-
-      const inboxUser = inboxNumber === 1 ? process.env.INBOX_1_USER : process.env.INBOX_2_USER;
 
       for (const msg of messages) {
         try {
           // Match sender to a lead
-          const lead = db.prepare(`SELECT * FROM leads WHERE contact_email = ?`).get(msg.from);
+          const lead = await prisma.lead.findFirst({ where: { contactEmail: msg.from } });
           if (!lead) continue; // Not from a known lead — skip
 
           // Find matching email we sent (for email_id reference)
-          const sentEmail = db.prepare(`
-            SELECT id FROM emails WHERE lead_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1
-          `).get(lead.id);
+          const sentEmail = await prisma.email.findFirst({
+            where: { leadId: lead.id, status: 'sent' },
+            orderBy: { sentAt: 'desc' },
+            select: { id: true },
+          });
 
           // Skip already-processed replies (dedup by lead_id + raw_text)
-          const existing = db.prepare(`SELECT id FROM replies WHERE lead_id=? AND raw_text=?`).get(lead.id, msg.text);
+          const existing = await prisma.reply.findFirst({
+            where: { leadId: lead.id, rawText: msg.text },
+            select: { id: true },
+          });
           if (existing) continue;
 
-          // Classify via Claude Haiku
-          const { text: rawJson, costUsd, model } = await callClaude('classify', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
+          // Classify via Gemini (or Claude Haiku when ANTHROPIC_DISABLED=false)
+          let rawJson, costUsd, model;
+          if (ANTHROPIC_DISABLED) {
+            const result = await callGemini(classifyPrompt(msg.text, msg.subject));
+            rawJson = result.text; costUsd = result.costUsd; model = 'gemini-2.5-flash';
+            // callGemini doesn't write to daily_metrics — do it here
+            await bumpCostMetric('geminiCostUsd', costUsd);
+          } else {
+            const result = await callClaude('classify', classifyPrompt(msg.text, msg.subject), { maxTokens: 30 });
+            rawJson = result.text; costUsd = result.costUsd; model = result.model;
+            // callClaude already writes haikuCostUsd to daily_metrics — no bumpMetric needed
+          }
           totalCost += costUsd;
-          // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
           // Parse classification result
           let category = 'other';
@@ -145,39 +171,41 @@ export default async function checkReplies() {
 
           // Insert reply record with full spec columns
           // inbox_received_at = timestamp from the email, not the inbox user address
-          const replyRow = db.prepare(`
-            INSERT INTO replies (
-              lead_id, email_id, inbox_received_at, received_at,
-              category, raw_text, classification_model, classification_cost_usd,
-              sentiment_score, telegram_alerted
-            ) VALUES (?, ?, ?, datetime('now'), ?, ?, ?, ?, ?, 0) RETURNING id
-          `).get(
-            lead.id, sentEmail?.id || null,
-            msg.date ? msg.date.toISOString() : new Date().toISOString(),
-            category, msg.text, model || 'claude-haiku-4-5', costUsd,
-            sentimentScore
-          );
+          const replyRow = await prisma.reply.create({
+            data: {
+              leadId: lead.id,
+              emailId: sentEmail?.id || null,
+              inboxReceivedAt: msg.date ? msg.date.toISOString() : new Date().toISOString(),
+              category,
+              rawText: msg.text,
+              classificationModel: model || 'claude-haiku-4-5',
+              classificationCostUsd: costUsd,
+              sentimentScore,
+              telegramAlerted: false,
+            },
+            select: { id: true },
+          });
 
           // Bump metrics
-          bumpMetric('replies_total');
+          await bumpMetric('repliesTotal');
 
           // Handle classification actions (includes telegram_alerted update)
-          await handleClassification(db, category, lead, replyRow.id);
+          await handleClassification(category, lead, replyRow.id);
 
           repliesProcessed++;
         } catch (msgErr) {
-          logError('checkReplies.message', msgErr, { jobName: 'checkReplies' });
+          await logError('checkReplies.message', msgErr, { jobName: 'checkReplies' });
         }
       }
     }
 
-    finishCron(cronId, { status: 'success', recordsProcessed: repliesProcessed, costUsd: totalCost });
+    await finishCron(cronId, { status: 'success', recordsProcessed: repliesProcessed, costUsd: totalCost });
     if (repliesProcessed > 0) {
       await sendAlert(`checkReplies: ${repliesProcessed} replies processed (cost $${totalCost.toFixed(4)})`);
     }
   } catch (err) {
-    logError('checkReplies', err, { jobName: 'checkReplies' });
-    finishCron(cronId, { status: 'failed', error: err.message });
+    await logError('checkReplies', err, { jobName: 'checkReplies' });
+    await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`checkReplies failed: ${err.message}`);
   }
 }

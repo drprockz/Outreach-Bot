@@ -75,7 +75,7 @@ export default function FunnelAnalytics() {
     { key: 'judge_passed', label: 'Gate 1 Passed', value: stages.judge_passed, desc: 'Not modern stack / has signals / quality <7' },
     { key: 'email_found',  label: 'Email Found',   value: stages.email_found,  desc: 'Stage 6: DM finder — pattern or page scrape' },
     { key: 'email_valid',  label: 'Email Valid',   value: stages.email_valid,  desc: 'Stage 7: MEV verification passed' },
-    { key: 'icp_ab',       label: 'ICP A/B',       value: stages.icp_ab,       desc: 'Stage 9: Score ≥4, priority A or B' },
+    { key: 'icp_ab',       label: 'ICP A/B',       value: stages.icp_ab,       desc: 'Stage 9: Score ≥40, priority A or B' },
     { key: 'ready',        label: 'Ready',         value: stages.ready,        desc: 'Hook + email generated, pending send' },
     { key: 'sent',         label: 'Sent',          value: stages.sent,         desc: 'Delivered via SMTP' },
     { key: 'replied',      label: 'Replied',       value: stages.replied,      desc: 'Inbound reply received and classified' },
@@ -237,7 +237,7 @@ export default function FunnelAnalytics() {
                   <Tooltip contentStyle={{ background: 'var(--surface-2)', border: '1px solid var(--border)', borderRadius: 6 }} />
                   <Bar dataKey="count" radius={[3, 3, 0, 0]}>
                     {icpDistribution.map((entry) => (
-                      <Cell key={entry.icp_score} fill={entry.icp_score >= 7 ? 'var(--green)' : entry.icp_score >= 4 ? 'var(--amber)' : 'var(--text-muted)'} />
+                      <Cell key={entry.icp_score} fill={entry.icp_score >= 70 ? 'var(--green)' : entry.icp_score >= 40 ? 'var(--amber)' : 'var(--text-muted)'} />
                     ))}
                   </Bar>
                 </BarChart>

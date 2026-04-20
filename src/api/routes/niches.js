@@ -1,61 +1,92 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const niches = getDb().prepare('SELECT * FROM niches ORDER BY sort_order, id').all();
-  res.json({ niches });
+function serialize(n) {
+  if (!n) return null;
+  return {
+    id: n.id,
+    label: n.label,
+    query: n.query,
+    day_of_week: n.dayOfWeek,
+    enabled: n.enabled ? 1 : 0,
+    sort_order: n.sortOrder,
+    created_at: n.createdAt,
+  };
+}
+
+router.get('/', async (req, res) => {
+  const niches = await prisma.niche.findMany({
+    orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
+  });
+  res.json({ niches: niches.map(serialize) });
 });
 
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   const { label, query, day_of_week = null, enabled = 1 } = req.body || {};
   if (!label || !query) return res.status(400).json({ error: 'label and query are required' });
   if (query.length < 10) return res.status(400).json({ error: 'query must be at least 10 characters' });
 
-  const db = getDb();
-  const maxOrder = db.prepare('SELECT COALESCE(MAX(sort_order), -1) as m FROM niches').get().m;
+  const created = await prisma.$transaction(async (tx) => {
+    const agg = await tx.niche.aggregate({ _max: { sortOrder: true } });
+    const maxOrder = agg._max.sortOrder ?? -1;
 
-  const createFn = db.transaction(() => {
     if (day_of_week !== null) {
-      db.prepare('UPDATE niches SET day_of_week = NULL WHERE day_of_week = ?').run(day_of_week);
+      await tx.niche.updateMany({
+        where: { dayOfWeek: day_of_week },
+        data: { dayOfWeek: null },
+      });
     }
-    const result = db.prepare(
-      'INSERT INTO niches (label, query, day_of_week, enabled, sort_order) VALUES (?, ?, ?, ?, ?)'
-    ).run(label, query, day_of_week, enabled ? 1 : 0, maxOrder + 1);
-    return db.prepare('SELECT * FROM niches WHERE id = ?').get(result.lastInsertRowid);
+    return tx.niche.create({
+      data: {
+        label,
+        query,
+        dayOfWeek: day_of_week,
+        enabled: !!enabled,
+        sortOrder: maxOrder + 1,
+      },
+    });
   });
 
-  res.status(201).json({ niche: createFn() });
+  res.status(201).json({ niche: serialize(created) });
 });
 
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
   const { label, query, day_of_week = null, enabled = 1, sort_order } = req.body || {};
   if (!label || !query) return res.status(400).json({ error: 'label and query are required' });
 
-  const db = getDb();
-  const existing = db.prepare('SELECT * FROM niches WHERE id = ?').get(id);
+  const existing = await prisma.niche.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Niche not found' });
 
-  const updateFn = db.transaction(() => {
+  await prisma.$transaction(async (tx) => {
     if (day_of_week !== null) {
-      db.prepare('UPDATE niches SET day_of_week = NULL WHERE day_of_week = ? AND id != ?').run(day_of_week, id);
+      await tx.niche.updateMany({
+        where: { dayOfWeek: day_of_week, id: { not: id } },
+        data: { dayOfWeek: null },
+      });
     }
-    db.prepare(
-      'UPDATE niches SET label=?, query=?, day_of_week=?, enabled=?, sort_order=? WHERE id=?'
-    ).run(label, query, day_of_week, enabled ? 1 : 0, sort_order ?? existing.sort_order, id);
+    await tx.niche.update({
+      where: { id },
+      data: {
+        label,
+        query,
+        dayOfWeek: day_of_week,
+        enabled: !!enabled,
+        sortOrder: sort_order ?? existing.sortOrder,
+      },
+    });
   });
 
-  updateFn();
   res.json({ ok: true });
 });
 
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
-  const existing = getDb().prepare('SELECT id FROM niches WHERE id = ?').get(id);
+  const existing = await prisma.niche.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Niche not found' });
-  getDb().prepare('DELETE FROM niches WHERE id = ?').run(id);
+  await prisma.niche.delete({ where: { id } });
   res.json({ ok: true });
 });
 

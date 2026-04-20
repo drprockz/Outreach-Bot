@@ -12,9 +12,25 @@ const statusBadge = {
   extraction_failed: 'badge-red', icp_c: 'badge-muted', deduped: 'badge-muted', unsubscribed: 'badge-muted',
 };
 
+const DEFAULT_WEIGHTS = { firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 };
+
 function parseJson(val) {
   if (!val) return [];
   try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+}
+
+function ChipList({ label, json, variant }) {
+  let arr;
+  try { arr = JSON.parse(json); } catch { arr = []; }
+  if (!Array.isArray(arr) || arr.length === 0) return null;
+  return (
+    <div className="chip-list">
+      <strong>{label}:</strong>
+      {arr.map((s, i) => (
+        <span key={i} className={`icp-chip icp-chip-${variant}`}>{s}</span>
+      ))}
+    </div>
+  );
 }
 
 export default function LeadPipeline() {
@@ -219,7 +235,40 @@ export default function LeadPipeline() {
 
             <div className="detail-label">ICP Score / Priority</div>
             <div className="detail-value">
-              {selectedLead.icp_score ?? '-'} / {selectedLead.icp_priority || '-'}
+              <div className="icp-details">
+                <div><strong>Score:</strong> {selectedLead.icp_score ?? '-'} / 100 ({selectedLead.icp_priority || '-'})</div>
+                {selectedLead.icp_breakdown && (
+                  <div className="icp-breakdown">
+                    <strong>Breakdown</strong>
+                    <small className="td-muted"> (per-factor evidence; may not sum exactly to score)</small>
+                    {(() => {
+                      let b;
+                      try { b = JSON.parse(selectedLead.icp_breakdown); } catch { b = null; }
+                      if (!b) return null;
+                      return Object.entries(b).map(([k, v]) => {
+                        const max = DEFAULT_WEIGHTS[k] || 20;
+                        const pct = Math.min(100, (v / max) * 100);
+                        return (
+                          <div key={k} className="breakdown-row">
+                            <span className="label">{k}</span>
+                            <span className="bar" style={{ width: `${pct}%` }} />
+                            <span className="val">{v}</span>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+                {selectedLead.icp_key_matches && (
+                  <ChipList label="Matches" json={selectedLead.icp_key_matches} variant="match" />
+                )}
+                {selectedLead.icp_key_gaps && (
+                  <ChipList label="Gaps" json={selectedLead.icp_key_gaps} variant="gap" />
+                )}
+                {selectedLead.icp_disqualifiers && (
+                  <ChipList label="Disqualifiers" json={selectedLead.icp_disqualifiers} variant="dq" />
+                )}
+              </div>
               {selectedLead.icp_reason && <div className="td-dim" style={{ marginTop: '4px' }}>{selectedLead.icp_reason}</div>}
             </div>
 

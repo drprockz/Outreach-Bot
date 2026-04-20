@@ -1,21 +1,68 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from '../core/db/index.js';
+import { prisma, getPrisma, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from '../core/db/index.js';
 import { callGemini } from '../core/ai/gemini.js';
 import { callClaude } from '../core/ai/claude.js';
 import { verifyEmail } from '../core/integrations/mev.js';
 import { sendAlert } from '../core/integrations/telegram.js';
+import { loadScoringContext, scoreLead } from '../core/ai/icpScorer.js';
 import { withConcurrency } from '../core/lib/concurrency.js';
 
 // ── Niche rotation: DB-backed ─────────────────────────────
-function getNicheForToday(db) {
+async function getNicheForToday() {
   const dow = new Date().getDay();
-  return db.prepare('SELECT * FROM niches WHERE day_of_week = ? AND enabled = 1 LIMIT 1').get(dow)
-    || db.prepare('SELECT * FROM niches WHERE enabled = 1 ORDER BY sort_order LIMIT 1').get();
+  const today = await prisma.niche.findFirst({
+    where: { dayOfWeek: dow, enabled: true },
+    orderBy: { sortOrder: 'asc' },
+  });
+  if (today) return today;
+  return prisma.niche.findFirst({
+    where: { enabled: true },
+    orderBy: { sortOrder: 'asc' },
+  });
 }
 
-function buildIcpRubric(db) {
-  const rules = db.prepare('SELECT * FROM icp_rules WHERE enabled = 1 ORDER BY sort_order').all();
-  return rules.map(r => `${r.points > 0 ? '+' : ''}${r.points}  ${r.label}`).join('\n');
+// Exported for unit testing
+export async function insertLead(lead, niche, status) {
+  return prisma.lead.create({
+    data: {
+      businessName: lead.business_name,
+      websiteUrl: lead.website_url,
+      category: lead.category,
+      city: lead.city,
+      country: 'IN',
+      searchQuery: niche.query,
+      techStack: lead.tech_stack || [],
+      websiteProblems: lead.website_problems || [],
+      lastUpdated: lead.last_updated,
+      hasSsl: Boolean(lead.has_ssl),
+      hasAnalytics: Boolean(lead.has_analytics),
+      ownerName: lead.owner_name,
+      ownerRole: lead.owner_role,
+      businessSignals: lead.business_signals || [],
+      socialActive: Boolean(lead.social_active),
+      websiteQualityScore: lead.website_quality_score,
+      judgeReason: lead.judge_reason,
+      contactName: lead.owner_name,
+      contactEmail: lead.contact_email,
+      contactConfidence: lead.contact_confidence,
+      contactSource: lead.contact_source,
+      emailStatus: lead.email_status,
+      emailVerifiedAt: status === 'ready' ? new Date() : null,
+      employeesEstimate: lead.employees_estimate || 'unknown',
+      businessStage: lead.business_stage || 'unknown',
+      icpScore: lead.icp_score,
+      icpPriority: lead.icp_priority,
+      icpReason: lead.icp_reason,
+      icpBreakdown: lead.icp_breakdown || null,
+      icpKeyMatches: lead.icp_key_matches || [],
+      icpKeyGaps: lead.icp_key_gaps || [],
+      icpDisqualifiers: lead.icp_disqualifiers || [],
+      status,
+      geminiCostUsd: (lead.extractCost || 0) + (lead.icpCost || 0),
+      discoveryModel: 'gemini-2.5-flash',
+      extractionModel: 'gemini-2.5-flash',
+    },
+  });
 }
 
 // Strip markdown code fences Gemini sometimes wraps JSON in
@@ -71,6 +118,8 @@ async function stages2to6_extract(lead) {
 - social_active: 1 if active social media but neglected website, 0 otherwise (number)
 - website_quality_score: 1-10 where 1=terrible needs complete rebuild, 10=excellent modern site (number)
 - judge_reason: one sentence explaining the quality score (string)
+- employees_estimate: "1-10" | "10-50" | "50-200" | "unknown" (string). Use team/about page clues.
+- business_stage: "owner-operated" | "growing" | "established" | "unknown" (string).
 
 Business: ${lead.business_name}, Website: ${lead.website_url}, City: ${lead.city}
 
@@ -80,32 +129,6 @@ Return only valid JSON, no markdown.`;
     return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
   } catch {
     return { data: null, costUsd: result.costUsd };
-  }
-}
-
-// ── Stage 9: ICP scorer — Gemini ─────────────────────────
-async function stage9_icpScore(lead, rubric, threshA, threshB) {
-  const prompt = `Score this lead on the ICP rubric and return JSON {icp_score: number, icp_priority: "A"|"B"|"C", icp_reason: "brief explanation"}.
-
-Rubric:
-${rubric}
-
-Priority: A=${threshA}-10, B=${threshB}-${threshA - 1}, C=below ${threshB} (including negative)
-
-Lead data:
-Company: ${lead.business_name}
-Tech stack: ${JSON.stringify(lead.tech_stack) || 'unknown'}
-Business signals: ${JSON.stringify(lead.business_signals) || 'none'}
-City: ${lead.city}
-Category: ${lead.category}
-Quality score: ${lead.website_quality_score}
-
-Return only valid JSON.`;
-  const result = await callGemini(prompt);
-  try {
-    return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
-  } catch {
-    return { data: { icp_score: 0, icp_priority: 'C', icp_reason: 'parse error' }, costUsd: result.costUsd };
   }
 }
 
@@ -159,13 +182,19 @@ async function stage11_subject(lead) {
 }
 
 // ── Main pipeline ────────────────────────────────────────
-export default async function findLeads() {
-  const cronId = logCron('findLeads');
+/**
+ * @param {{ leadsCount?: number, perBatch?: number }} [override]
+ *   When called from an on-demand dashboard trigger (/api/run-engine/findLeads),
+ *   these override the config-based count + batch size and bypass the
+ *   Math.max(50, ...) floor that applies to the scheduled cron run.
+ */
+export default async function findLeads(override = {}) {
+  const cronId = await logCron('findLeads');
 
-  const cfg = getConfigMap();
+  const cfg = await getConfigMap();
 
   if (!getConfigInt(cfg, 'find_leads_enabled', 1)) {
-    finishCron(cronId, { status: 'skipped' });
+    await finishCron(cronId, { status: 'skipped' });
     return;
   }
 
@@ -175,11 +204,10 @@ export default async function findLeads() {
   let leadsSkipped = 0;
 
   try {
-    const db = getDb();
-    const niche = getNicheForToday(db);
+    const niche = await getNicheForToday();
 
     if (!niche) {
-      finishCron(cronId, { status: 'failed', error: 'No enabled niches configured' });
+      await finishCron(cronId, { status: 'failed', error: 'No enabled niches configured' });
       await sendAlert('findLeads failed: No enabled niches configured');
       return;
     }
@@ -198,12 +226,27 @@ export default async function findLeads() {
     const businessSizeRaw = getConfigStr(cfg, 'find_leads_business_size', 'msme');
     const businessSize = VALID_SIZES.includes(businessSizeRaw) ? businessSizeRaw : 'msme';
 
-    const leadsCount = Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
-    const perBatch = getConfigInt(cfg, 'find_leads_per_batch', 30);
+    // Override takes precedence (on-demand dashboard trigger); floor bypassed.
+    // Cron-scheduled runs pass no override and keep the 50-lead floor.
+    const leadsCount = typeof override.leadsCount === 'number' && override.leadsCount > 0
+      ? Math.max(1, Math.floor(override.leadsCount))
+      : Math.max(50, getConfigInt(cfg, 'find_leads_count', 150));
+    const perBatch = typeof override.perBatch === 'number' && override.perBatch > 0
+      ? Math.max(1, Math.floor(override.perBatch))
+      : getConfigInt(cfg, 'find_leads_per_batch', 30);
     const batches = Math.ceil(leadsCount / perBatch);
-    const rubric = buildIcpRubric(db);
-    const threshA = getConfigInt(cfg, 'icp_threshold_a', 7);
-    const threshB = getConfigInt(cfg, 'icp_threshold_b', 4);
+    const threshA = getConfigInt(cfg, 'icp_threshold_a', 70);
+    const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
+    let icpWeights;
+    try {
+      icpWeights = JSON.parse(getConfigStr(cfg, 'icp_weights', '{}'));
+    } catch {
+      icpWeights = { firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 };
+    }
+    const scoringCtx = await loadScoringContext(getPrisma());
+    scoringCtx.weights = icpWeights;
+    scoringCtx.threshA = threshA;
+    scoringCtx.threshB = threshB;
     const persona = {
       name:     getConfigStr(cfg, 'persona_name',     'Darshan Parmar'),
       role:     getConfigStr(cfg, 'persona_role',     'Full-Stack Developer'),
@@ -213,24 +256,29 @@ export default async function findLeads() {
     };
 
     // ── Dedup guards — pre-load before any concurrent work ───────────────
-    // Loaded synchronously once. Workers use Set.has/add (synchronous, no await)
-    // so JS's single-threaded event loop guarantees no two workers race on these.
-    const knownEmails = new Set(
-      db.prepare('SELECT contact_email FROM leads WHERE contact_email IS NOT NULL')
-        .all().map(r => r.contact_email)
-    );
-    const rejectedEmails = new Set(
-      db.prepare('SELECT email FROM reject_list').all().map(r => r.email)
-    );
+    // Loaded once. Workers use Set.has/add (synchronous, no await) so JS's
+    // single-threaded event loop guarantees no two workers race on these.
+    const knownEmailRows = await prisma.lead.findMany({
+      where: { contactEmail: { not: null } },
+      select: { contactEmail: true },
+    });
+    const knownEmails = new Set(knownEmailRows.map(r => r.contactEmail));
+
+    const rejectedRows = await prisma.rejectList.findMany({ select: { email: true } });
+    const rejectedEmails = new Set(rejectedRows.map(r => r.email));
+
+    const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+    const cooledRows = await prisma.lead.findMany({
+      where: {
+        status: { in: ['sent', 'replied'] },
+        // 'contacted' excluded: not a valid status in the pipeline state machine
+        domainLastContacted: { gte: ninetyDaysAgo },
+        contactEmail: { not: null },
+      },
+      select: { contactEmail: true },
+    });
     const cooledDomains = new Set(
-      db.prepare(`
-        SELECT DISTINCT substr(contact_email, instr(contact_email, '@') + 1) AS domain
-        FROM leads
-        WHERE status IN ('sent', 'replied')
-          -- 'contacted' excluded: not a valid status in the pipeline state machine
-          AND domain_last_contacted >= datetime('now', '-90 days')
-          AND contact_email IS NOT NULL
-      `).all().map(r => r.domain)
+      cooledRows.map(r => r.contactEmail?.split('@')[1]).filter(Boolean)
     );
 
     // Stage 1: Discovery — all batches concurrent (cap=5 to stay within grounding RPM)
@@ -239,17 +287,17 @@ export default async function findLeads() {
       try {
         const { leads, costUsd } = await stage1_discover(niche, batchIndex, perBatch, cities, businessSize);
         totalCost += costUsd;
-        bumpMetric('gemini_cost_usd', costUsd);
-        bumpMetric('total_api_cost_usd', costUsd);
+        await bumpMetric('geminiCostUsd', costUsd);
+        await bumpMetric('totalApiCostUsd', costUsd);
         return leads;
       } catch (err) {
-        logError('findLeads.discovery', err, { jobName: 'findLeads' });
+        await logError('findLeads.discovery', err, { jobName: 'findLeads' });
         return [];
       }
     });
     const rawLeads = discoveryResults.flat();
 
-    bumpMetric('leads_discovered', rawLeads.length);
+    await bumpMetric('leadsDiscovered', rawLeads.length);
 
     // ── Stage 2-6: Extract + Gate 1 + email check + dedup ────────────────
     // 20 concurrent Gemini calls — safe on paid tier (1,000 RPM generation limit)
@@ -259,15 +307,15 @@ export default async function findLeads() {
 
         const { data: extracted, costUsd: extractCost } = await stages2to6_extract(raw);
         totalCost += extractCost;
-        bumpMetric('gemini_cost_usd', extractCost);
-        bumpMetric('total_api_cost_usd', extractCost);
+        await bumpMetric('geminiCostUsd', extractCost);
+        await bumpMetric('totalApiCostUsd', extractCost);
 
         if (!extracted) {
           leadsSkipped++;
           return null;
         }
 
-        bumpMetric('leads_extracted');
+        await bumpMetric('leadsExtracted');
 
         const lead = { ...raw, ...extracted, extractCost };
 
@@ -282,14 +330,14 @@ export default async function findLeads() {
           return null;
         }
 
-        bumpMetric('leads_judge_passed');
+        await bumpMetric('leadsJudgePassed');
 
         if (!lead.contact_email) {
           leadsSkipped++;
           return null;
         }
 
-        bumpMetric('leads_email_found');
+        await bumpMetric('leadsEmailFound');
 
         // Stage 8: Dedup — all three checks use pre-loaded Sets (no DB query, race-free)
         // .has() and .add() are synchronous — JS event loop guarantees no interleave
@@ -307,7 +355,7 @@ export default async function findLeads() {
 
         return lead;
       } catch (err) {
-        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        await logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
         return null;
       }
@@ -322,10 +370,17 @@ export default async function findLeads() {
 
         if (verifyStatus === 'invalid' || verifyStatus === 'disposable') {
           leadsSkipped++;
-          db.prepare(`
-            INSERT INTO leads (business_name, website_url, category, city, contact_email, email_status, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'email_invalid')
-          `).run(lead.business_name, lead.website_url, lead.category, lead.city, lead.contact_email, verifyStatus);
+          await prisma.lead.create({
+            data: {
+              businessName: lead.business_name,
+              websiteUrl: lead.website_url,
+              category: lead.category,
+              city: lead.city,
+              contactEmail: lead.contact_email,
+              emailStatus: verifyStatus,
+              status: 'email_invalid',
+            },
+          });
           return null;
         }
 
@@ -335,10 +390,10 @@ export default async function findLeads() {
           return null;
         }
 
-        bumpMetric('leads_email_valid');
+        await bumpMetric('leadsEmailValid');
         return lead;
       } catch (err) {
-        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        await logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
         return null;
       }
@@ -348,47 +403,32 @@ export default async function findLeads() {
     // ── Stage 9: ICP scoring ─────────────────────────────────────────────
     const scoredLeads = await withConcurrency(gate2Passed, 20, async (lead) => {
       try {
-        const { data: icp, costUsd: icpCost } = await stage9_icpScore(lead, rubric, threshA, threshB);
-        totalCost += icpCost;
-        bumpMetric('gemini_cost_usd', icpCost);
-        bumpMetric('total_api_cost_usd', icpCost);
+        const icp = await scoreLead(lead, scoringCtx);
+        totalCost += icp.costUsd;
+        await bumpMetric('geminiCostUsd', icp.costUsd);
+        await bumpMetric('totalApiCostUsd', icp.costUsd);
 
-        lead.icp_score = icp.icp_score;
-        lead.icp_priority = icp.icp_priority;
-        lead.icp_reason = icp.icp_reason;
-        lead.icpCost = icpCost;
+        Object.assign(lead, icp, { icpCost: icp.costUsd });
 
-        // Gate 3: C-priority → nurture (not discarded)
-        if (icp.icp_priority === 'C') {
-          db.prepare(`
-            INSERT INTO leads (
-              business_name, website_url, category, city, country, search_query,
-              tech_stack, website_problems, last_updated, has_ssl, has_analytics,
-              owner_name, owner_role, business_signals, social_active,
-              website_quality_score, judge_reason,
-              contact_name, contact_email, contact_confidence, contact_source,
-              email_status, icp_score, icp_priority, icp_reason,
-              status, gemini_cost_usd
-            ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'nurture', ?)
-          `).run(
-            lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
-            JSON.stringify(lead.tech_stack), JSON.stringify(lead.website_problems),
-            lead.last_updated, lead.has_ssl, lead.has_analytics,
-            lead.owner_name, lead.owner_role,
-            JSON.stringify(lead.business_signals), lead.social_active,
-            lead.website_quality_score, lead.judge_reason,
-            lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
-            lead.email_status, lead.icp_score, lead.icp_priority, lead.icp_reason,
-            lead.extractCost + icpCost
-          );
+        // Hard disqualifiers override score
+        if (icp.icp_disqualifiers.length > 0) {
+          await insertLead(lead, niche, 'disqualified');
+          await bumpMetric('leadsDisqualified');
           leadsSkipped++;
           return null;
         }
 
-        bumpMetric('leads_icp_ab');
+        // C-priority → nurture
+        if (icp.icp_priority === 'C') {
+          await insertLead(lead, niche, 'nurture');
+          leadsSkipped++;
+          return null;
+        }
+
+        await bumpMetric('leadsIcpAb');
         return lead;
       } catch (err) {
-        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        await logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
         return null;
       }
@@ -400,14 +440,18 @@ export default async function findLeads() {
     // Workers fire simultaneously so per-request cap checks can race — a single
     // synchronous guard here prevents the entire stage from starting if cap is hit.
     const todayStr = new Date().toISOString().slice(0, 10);
+    const costRow = await prisma.dailyMetrics.findUnique({
+      where: { date: todayStr },
+      select: { geminiCostUsd: true, sonnetCostUsd: true, haikuCostUsd: true },
+    });
     const aiSpendToday = ANTHROPIC_DISABLED
-      ? (db.prepare(`SELECT COALESCE(gemini_cost_usd, 0) AS total FROM daily_metrics WHERE date = ?`).get(todayStr)?.total ?? 0)
-      : (db.prepare(`SELECT COALESCE(sonnet_cost_usd, 0) + COALESCE(haiku_cost_usd, 0) AS total FROM daily_metrics WHERE date = ?`).get(todayStr)?.total ?? 0);
+      ? Number(costRow?.geminiCostUsd || 0)
+      : Number(costRow?.sonnetCostUsd || 0) + Number(costRow?.haikuCostUsd || 0);
     const claudeCap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '5.00');
     if (aiSpendToday >= claudeCap) {
       const provider = ANTHROPIC_DISABLED ? 'Gemini' : 'Claude';
       await sendAlert(`findLeads: ${provider} spend cap hit ($${aiSpendToday.toFixed(3)} >= $${claudeCap}) — skipping Stage 10/11 for ${abLeads.length} leads`);
-      finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped + abLeads.length, costUsd: totalCost });
+      await finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped + abLeads.length, costUsd: totalCost });
       return;
     }
 
@@ -426,68 +470,51 @@ export default async function findLeads() {
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
         if (ANTHROPIC_DISABLED) {
-          bumpMetric('gemini_cost_usd', hookResult.costUsd + bodyCost);
+          await bumpMetric('geminiCostUsd', hookResult.costUsd + bodyCost);
         } else {
-          bumpMetric('sonnet_cost_usd', hookResult.costUsd);
-          bumpMetric('haiku_cost_usd', bodyCost);
+          await bumpMetric('sonnetCostUsd', hookResult.costUsd);
+          await bumpMetric('haikuCostUsd', bodyCost);
         }
-        bumpMetric('total_api_cost_usd', hookResult.costUsd + bodyCost);
-
-        const geminiCost = lead.extractCost + lead.icpCost;
+        await bumpMetric('totalApiCostUsd', hookResult.costUsd + bodyCost);
 
         // Insert lead
-        const leadInsert = db.prepare(`
-          INSERT INTO leads (
-            business_name, website_url, category, city, country, search_query,
-            tech_stack, website_problems, last_updated, has_ssl, has_analytics,
-            owner_name, owner_role, business_signals, social_active,
-            website_quality_score, judge_reason,
-            contact_name, contact_email, contact_confidence, contact_source,
-            email_status, email_verified_at,
-            icp_score, icp_priority, icp_reason,
-            status, gemini_cost_usd, discovery_model, extraction_model
-          ) VALUES (?, ?, ?, ?, 'IN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?, 'ready', ?, 'gemini-2.5-flash', 'gemini-2.5-flash')
-        `).run(
-          lead.business_name, lead.website_url, lead.category, lead.city, niche.query,
-          JSON.stringify(lead.tech_stack), JSON.stringify(lead.website_problems),
-          lead.last_updated, lead.has_ssl, lead.has_analytics,
-          lead.owner_name, lead.owner_role,
-          JSON.stringify(lead.business_signals), lead.social_active,
-          lead.website_quality_score, lead.judge_reason,
-          lead.owner_name, lead.contact_email, lead.contact_confidence, lead.contact_source,
-          lead.email_status,
-          lead.icp_score, lead.icp_priority, lead.icp_reason,
-          geminiCost
-        );
+        const leadInsert = await insertLead(lead, niche, 'ready');
 
         // Insert pre-generated email
-        const leadId = leadInsert.lastInsertRowid;
-        db.prepare(`
-          INSERT INTO emails (
-            lead_id, sequence_step, subject, body, word_count, hook,
-            contains_link, is_html, is_plain_text, content_valid,
-            status, hook_model, body_model, hook_cost_usd, body_cost_usd, total_cost_usd
-          ) VALUES (?, 0, ?, ?, ?, ?, 0, 0, 1, 1, 'pending', ?, ?, ?, ?, ?)
-        `).run(
-          leadId, subjectResult.subject, bodyResult.body,
-          bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
-          hookResult.hook, hookResult.model, bodyResult.model,
-          hookResult.costUsd, bodyCost, hookResult.costUsd + bodyCost
-        );
+        await prisma.email.create({
+          data: {
+            leadId: leadInsert.id,
+            sequenceStep: 0,
+            subject: subjectResult.subject,
+            body: bodyResult.body,
+            wordCount: bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
+            hook: hookResult.hook,
+            containsLink: false,
+            isHtml: false,
+            isPlainText: true,
+            contentValid: true,
+            status: 'pending',
+            hookModel: hookResult.model,
+            bodyModel: bodyResult.model,
+            hookCostUsd: hookResult.costUsd,
+            bodyCostUsd: bodyCost,
+            totalCostUsd: hookResult.costUsd + bodyCost,
+          },
+        });
 
-        bumpMetric('leads_ready');
+        await bumpMetric('leadsReady');
         leadsReady++;
       } catch (err) {
-        logError('findLeads.lead', err, { jobName: 'findLeads' });
+        await logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
       }
     });
 
-    finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped, costUsd: totalCost });
+    await finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped, costUsd: totalCost });
     await sendAlert(`findLeads: ${leadsReady} leads ready, ${leadsProcessed} processed, ${leadsSkipped} skipped (cost $${totalCost.toFixed(4)})`);
   } catch (err) {
-    logError('findLeads', err, { jobName: 'findLeads' });
-    finishCron(cronId, { status: 'failed', error: err.message });
+    await logError('findLeads', err, { jobName: 'findLeads' });
+    await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`findLeads failed: ${err.message}`);
   }
 }

@@ -1,7 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma } from '../../helpers/testDb.js';
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: vi.fn(() => ({
@@ -14,20 +12,17 @@ vi.mock('@anthropic-ai/sdk', () => ({
   }))
 }));
 
-let tmpDir;
 beforeEach(async () => {
-  tmpDir = mkdtempSync(join(tmpdir(), 'radar-test-'));
-  process.env.DB_PATH = join(tmpDir, 'radar.sqlite');
   process.env.CLAUDE_DAILY_SPEND_CAP = '3.00';
-  const { resetDb, initSchema } = await import('../../../src/core/db/index.js');
-  resetDb();
-  initSchema();
+  await truncateAll();
+  const { resetDb } = await import('../../../src/core/db/index.js');
+  await resetDb();
 });
 
-afterEach(async () => {
+afterAll(async () => {
   const { resetDb } = await import('../../../src/core/db/index.js');
-  resetDb();
-  rmSync(tmpDir, { recursive: true });
+  await resetDb();
+  await closeTestPrisma();
 });
 
 describe('claude client', () => {
@@ -42,10 +37,10 @@ describe('claude client', () => {
   it('throws when daily spend cap exceeded', async () => {
     process.env.CLAUDE_DAILY_SPEND_CAP = '0.00';
     // Simulate spend already at cap by inserting a daily_metrics row
-    const { getDb, today } = await import('../../../src/core/db/index.js');
-    getDb().prepare(
-      `INSERT INTO daily_metrics (date, sonnet_cost_usd, haiku_cost_usd) VALUES (?, 0.01, 0.01)`
-    ).run(today());
+    const { getPrisma, today } = await import('../../../src/core/db/index.js');
+    await getPrisma().dailyMetrics.create({
+      data: { date: today(), sonnetCostUsd: 0.01, haikuCostUsd: 0.01 },
+    });
     const { callClaude } = await import('../../../src/core/ai/claude.js');
     await expect(callClaude('haiku', 'test')).rejects.toThrow(/spend cap/i);
   });

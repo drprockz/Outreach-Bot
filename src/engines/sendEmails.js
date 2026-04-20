@@ -1,9 +1,12 @@
 import 'dotenv/config';
-import { getDb, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList, today,
+import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList,
          getConfigMap, getConfigInt, getConfigFloat } from '../core/db/index.js';
 import { verifyConnections, sendMail } from '../core/email/mailer.js';
 import { validate } from '../core/email/contentValidator.js';
 import { callClaude } from '../core/ai/claude.js';
+import { callGemini } from '../core/ai/gemini.js';
+
+const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
 import { sendAlert } from '../core/integrations/telegram.js';
 import { sleep } from '../core/lib/sleep.js';
 
@@ -44,16 +47,16 @@ function getInboxUser(inboxNumber) {
 }
 
 export default async function sendEmails() {
-  const cronId = logCron('sendEmails');
+  const cronId = await logCron('sendEmails');
   let emailsSent = 0;
   let totalCost = 0;
 
   try {
     // ── Read config from DB (process.env as fallback) ────
-    const cfg = getConfigMap();
+    const cfg = await getConfigMap();
 
     if (!getConfigInt(cfg, 'send_emails_enabled', 1)) {
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
 
@@ -67,12 +70,12 @@ export default async function sendEmails() {
 
     // ── Pre-flight checks ────────────────────────────────
     if (dailyLimit === 0) {
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
 
     if (!inSendWindow(windowStart, windowEnd)) {
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
 
@@ -81,64 +84,65 @@ export default async function sendEmails() {
 
     // Check bounce rate before sending (Non-negotiable Rule 5)
     const bounceThreshold = bounceStop;
-    if (todayBounceRate() > bounceThreshold) {
+    if ((await todayBounceRate()) > bounceThreshold) {
       await sendAlert('BOUNCE RATE exceeded threshold - sending paused');
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
 
     // ── Pull ready leads with pre-generated emails ─────
-    const alreadySent = todaySentCount();
+    const alreadySent = await todaySentCount();
     const remaining = dailyLimit - alreadySent;
     if (remaining <= 0) {
-      finishCron(cronId, { status: 'skipped' });
+      await finishCron(cronId, { status: 'skipped' });
       return;
     }
 
-    const db = getDb();
-
     // Join leads with their pending step-0 emails
-    const queue = db.prepare(`
-      SELECT l.*, e.id AS email_id, e.subject AS email_subject, e.body AS email_body,
-             e.hook, e.hook_cost_usd AS e_hook_cost, e.body_cost_usd AS e_body_cost, e.total_cost_usd AS email_cost
-      FROM leads l
-      JOIN emails e ON e.lead_id = l.id AND e.sequence_step = 0 AND e.status = 'pending'
-      WHERE l.status = 'ready'
-        AND l.icp_priority IN ('A', 'B')
-      ORDER BY l.icp_priority ASC, l.icp_score DESC
-      LIMIT ?
-    `).all(remaining);
+    const queue = await prisma.lead.findMany({
+      where: {
+        status: 'ready',
+        icpPriority: { in: ['A', 'B'] },
+        emails: { some: { sequenceStep: 0, status: 'pending' } },
+      },
+      include: {
+        emails: { where: { sequenceStep: 0, status: 'pending' }, take: 1 },
+      },
+      orderBy: [{ icpPriority: 'asc' }, { icpScore: 'desc' }],
+      take: remaining,
+    });
 
     for (let i = 0; i < queue.length; i++) {
-      const item = queue[i];
+      const lead = queue[i];
+      const email = lead.emails[0];
+      if (!email) continue;
 
       // Re-check bounce rate before every send (Non-negotiable Rule 5)
-      if (todayBounceRate() > bounceThreshold) {
+      if ((await todayBounceRate()) > bounceThreshold) {
         await sendAlert('BOUNCE RATE exceeded threshold mid-session - aborting');
         break;
       }
 
       // Re-check daily limit
-      if (todaySentCount() >= dailyLimit) break;
+      if ((await todaySentCount()) >= dailyLimit) break;
 
       // Skip leads in reject list
-      if (isRejected(item.contact_email)) continue;
+      if (await isRejected(lead.contactEmail)) continue;
 
-      bumpMetric('emails_attempted');
+      await bumpMetric('emailsAttempted');
 
       // Non-negotiable Rule 4: contentValidator runs before every sendMail call
-      let emailSubject = item.email_subject;
-      let emailBody = item.email_body;
-      let regenerated = 0;
+      let emailSubject = email.subject;
+      let emailBody = email.body;
+      let regenerated = false;
 
       const validation = validate(emailSubject, emailBody, 0);
       if (!validation.valid) {
         // Regenerate once on content validation failure
         try {
-          const { text: newBody, costUsd } = await callClaude('haiku',
-            `Write a cold email from Darshan Parmar (Full-Stack Developer, Simple Inc) to ${item.contact_name || item.owner_name || 'the owner'} at ${item.business_name}.
+          const regenPrompt = `Write a cold email from Darshan Parmar (Full-Stack Developer, Simple Inc) to ${lead.contactName || lead.ownerName || 'the owner'} at ${lead.businessName}.
 
-Hook to open with: "${item.hook}"
+Hook to open with: "${email.hook}"
 
 Rules:
 - Plain text only, no HTML
@@ -148,127 +152,184 @@ Rules:
 - Professional but direct tone
 - Do not mention price
 
-Return only the email body, no subject line.`,
-            { maxTokens: 200 }
-          );
+Return only the email body, no subject line.`;
+          let newBody, costUsd;
+          if (ANTHROPIC_DISABLED) {
+            const result = await callGemini(regenPrompt);
+            newBody = result.text; costUsd = result.costUsd;
+            // callGemini doesn't write to daily_metrics — do it here
+            await bumpCostMetric('geminiCostUsd', costUsd);
+          } else {
+            const result = await callClaude('haiku', regenPrompt, { maxTokens: 200 });
+            newBody = result.text; costUsd = result.costUsd;
+            // callClaude already writes haikuCostUsd to daily_metrics — no bumpMetric needed
+          }
           totalCost += costUsd;
-          // Note: callClaude already writes haiku_cost_usd to daily_metrics — no bumpMetric needed
 
           const retryValidation = validate(emailSubject, newBody, 0);
           if (!retryValidation.valid) {
             // Second fail → skip lead, log content_rejected
-            logError('sendEmails.validation', new Error(`Content rejected for lead ${item.id}: ${retryValidation.reason}`), { jobName: 'sendEmails', errorType: 'validation_error', leadId: item.id });
-            db.prepare(`UPDATE emails SET status='content_rejected', content_valid=0, validation_fail_reason=? WHERE id=?`).run(retryValidation.reason, item.email_id);
-            db.prepare(`UPDATE leads SET status='content_rejected' WHERE id=?`).run(item.id);
-            bumpMetric('emails_content_rejected');
+            await logError('sendEmails.validation', new Error(`Content rejected for lead ${lead.id}: ${retryValidation.reason}`), { jobName: 'sendEmails', errorType: 'validation_error', leadId: lead.id });
+            await prisma.email.update({
+              where: { id: email.id },
+              data: { status: 'content_rejected', contentValid: false, validationFailReason: retryValidation.reason },
+            });
+            await prisma.lead.update({ where: { id: lead.id }, data: { status: 'content_rejected' } });
+            await bumpMetric('emailsContentRejected');
             continue;
           }
           emailBody = newBody;
-          regenerated = 1;
+          regenerated = true;
         } catch (regenErr) {
-          logError('sendEmails.regenerate', regenErr, { jobName: 'sendEmails', leadId: item.id });
-          db.prepare(`UPDATE emails SET status='content_rejected', content_valid=0, validation_fail_reason=? WHERE id=?`).run(validation.reason, item.email_id);
-          bumpMetric('emails_content_rejected');
+          await logError('sendEmails.regenerate', regenErr, { jobName: 'sendEmails', leadId: lead.id });
+          await prisma.email.update({
+            where: { id: email.id },
+            data: { status: 'content_rejected', contentValid: false, validationFailReason: validation.reason },
+          });
+          await bumpMetric('emailsContentRejected');
           continue;
         }
       }
 
       // Round-robin inbox
-      const currentSent = todaySentCount();
+      const currentSent = await todaySentCount();
       const inboxNumber = (currentSent % 2) + 1;
       const inboxUser = getInboxUser(inboxNumber);
 
       // Non-negotiable Rule 13: assert outreach domain
       const domain = process.env.OUTREACH_DOMAIN || 'trysimpleinc.com';
       if (!inboxUser?.endsWith(`@${domain}`)) {
-        logError('sendEmails.domainAssert', new Error(`Inbox ${inboxNumber} not on ${domain}`), { jobName: 'sendEmails', errorType: 'validation_error' });
+        await logError('sendEmails.domainAssert', new Error(`Inbox ${inboxNumber} not on ${domain}`), { jobName: 'sendEmails', errorType: 'validation_error' });
         break;
       }
 
       try {
         const sendStart = Date.now();
         const { messageId } = await sendMail(inboxNumber, {
-          to: item.contact_email,
+          to: lead.contactEmail,
           subject: emailSubject,
           text: emailBody
         });
         const sendDuration = Date.now() - sendStart;
 
         // Update the pre-generated email record
-        db.prepare(`
-          UPDATE emails SET
-            inbox_used=?, from_domain=?, from_name='Darshan Parmar',
-            body=?, word_count=?, content_valid=1, regenerated=?,
-            status='sent', sent_at=datetime('now'), message_id=?, send_duration_ms=?
-          WHERE id=?
-        `).run(
-          inboxUser, domain, emailBody,
-          emailBody.trim().split(/\s+/).filter(Boolean).length,
-          regenerated, messageId, sendDuration, item.email_id
-        );
+        await prisma.email.update({
+          where: { id: email.id },
+          data: {
+            inboxUsed: inboxUser,
+            fromDomain: domain,
+            fromName: 'Darshan Parmar',
+            body: emailBody,
+            wordCount: emailBody.trim().split(/\s+/).filter(Boolean).length,
+            contentValid: true,
+            regenerated,
+            status: 'sent',
+            sentAt: new Date(),
+            messageId,
+            sendDurationMs: sendDuration,
+          },
+        });
 
-        // Update lead status + domain_last_contacted
-        db.prepare(`UPDATE leads SET status='sent', domain_last_contacted=datetime('now') WHERE id=?`).run(item.id);
+        // Update lead status + domainLastContacted
+        await prisma.lead.update({
+          where: { id: lead.id },
+          data: { status: 'sent', domainLastContacted: new Date() },
+        });
 
         // Initialise sequence_state for follow-ups
-        db.prepare(`
-          INSERT OR REPLACE INTO sequence_state (lead_id, current_step, next_send_date, last_sent_at, last_message_id, last_subject, status, updated_at)
-          VALUES (?, 0, date('now', '+3 days'), datetime('now'), ?, ?, 'active', datetime('now'))
-        `).run(item.id, messageId, emailSubject);
+        const threeDaysFromNow = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000);
+        await prisma.sequenceState.upsert({
+          where: { leadId: lead.id },
+          create: {
+            leadId: lead.id,
+            currentStep: 0,
+            nextSendDate: threeDaysFromNow,
+            lastSentAt: new Date(),
+            lastMessageId: messageId,
+            lastSubject: emailSubject,
+            status: 'active',
+          },
+          update: {
+            currentStep: 0,
+            nextSendDate: threeDaysFromNow,
+            lastSentAt: new Date(),
+            lastMessageId: messageId,
+            lastSubject: emailSubject,
+            status: 'active',
+          },
+        });
 
         // Bump daily metrics
-        bumpMetric('emails_sent');
-        if (inboxNumber === 1) bumpMetric('sent_inbox_1');
-        else bumpMetric('sent_inbox_2');
+        await bumpMetric('emailsSent');
+        if (inboxNumber === 1) await bumpMetric('sentInbox1');
+        else await bumpMetric('sentInbox2');
 
         emailsSent++;
-        totalCost += (item.email_cost || 0);
+        totalCost += Number(email.totalCostUsd || 0);
 
         // Delay between sends (except after the last one)
         if (i < queue.length - 1) {
           await sleep(delayMin, delayMax);
         }
       } catch (sendErr) {
-        logError('sendEmails.send', sendErr, { jobName: 'sendEmails', errorType: 'smtp_error', leadId: item.id, emailId: item.email_id });
+        await logError('sendEmails.send', sendErr, { jobName: 'sendEmails', errorType: 'smtp_error', leadId: lead.id, emailId: email.id });
 
         const smtpCode = sendErr.responseCode || 0;
         if (smtpCode >= 500 && smtpCode < 600) {
-          db.prepare(`
-            UPDATE emails SET status='hard_bounce', smtp_code=?, smtp_response=?, sent_at=datetime('now'), inbox_used=?, from_domain=?
-            WHERE id=?
-          `).run(smtpCode, sendErr.message, inboxUser, domain, item.email_id);
+          await prisma.email.update({
+            where: { id: email.id },
+            data: {
+              status: 'hard_bounce',
+              smtpCode,
+              smtpResponse: sendErr.message,
+              sentAt: new Date(),
+              inboxUsed: inboxUser,
+              fromDomain: domain,
+            },
+          });
 
-          db.prepare(`
-            INSERT INTO bounces (email_id, lead_id, bounce_type, smtp_code, smtp_message)
-            VALUES (?, ?, 'hard', ?, ?)
-          `).run(item.email_id, item.id, smtpCode, sendErr.message);
+          await prisma.bounce.create({
+            data: {
+              emailId: email.id,
+              leadId: lead.id,
+              bounceType: 'hard',
+              smtpCode,
+              smtpMessage: sendErr.message,
+            },
+          });
 
-          addToRejectList(item.contact_email, 'hard_bounce');
-          db.prepare(`UPDATE leads SET status='bounced' WHERE id=?`).run(item.id);
-          bumpMetric('emails_hard_bounced');
+          await addToRejectList(lead.contactEmail, 'hard_bounce');
+          await prisma.lead.update({ where: { id: lead.id }, data: { status: 'bounced' } });
+          await bumpMetric('emailsHardBounced');
         } else if (smtpCode >= 400 && smtpCode < 500) {
-          db.prepare(`
-            UPDATE emails SET status='soft_bounce', smtp_code=?, smtp_response=?
-            WHERE id=?
-          `).run(smtpCode, sendErr.message, item.email_id);
+          await prisma.email.update({
+            where: { id: email.id },
+            data: { status: 'soft_bounce', smtpCode, smtpResponse: sendErr.message },
+          });
 
-          db.prepare(`
-            INSERT INTO bounces (email_id, lead_id, bounce_type, smtp_code, smtp_message, retry_after)
-            VALUES (?, ?, 'soft', ?, ?, datetime('now', '+1 day'))
-          `).run(item.email_id, item.id, smtpCode, sendErr.message);
+          await prisma.bounce.create({
+            data: {
+              emailId: email.id,
+              leadId: lead.id,
+              bounceType: 'soft',
+              smtpCode,
+              smtpMessage: sendErr.message,
+              retryAfter: new Date(Date.now() + 24 * 60 * 60 * 1000),
+            },
+          });
 
-          bumpMetric('emails_soft_bounced');
+          await bumpMetric('emailsSoftBounced');
         }
       }
     }
 
-    finishCron(cronId, { status: 'success', recordsProcessed: emailsSent, costUsd: totalCost });
+    await finishCron(cronId, { status: 'success', recordsProcessed: emailsSent, costUsd: totalCost });
     if (emailsSent > 0) {
       await sendAlert(`sendEmails: ${emailsSent} emails sent (cost $${totalCost.toFixed(4)})`);
     }
   } catch (err) {
-    logError('sendEmails', err, { jobName: 'sendEmails' });
-    finishCron(cronId, { status: 'failed', error: err.message });
+    await logError('sendEmails', err, { jobName: 'sendEmails' });
+    await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`sendEmails failed: ${err.message}`);
   }
 }

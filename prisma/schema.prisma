@@ -1,0 +1,376 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────── LEADS ──────────────────
+model Lead {
+  id                    Int       @id @default(autoincrement())
+  discoveredAt          DateTime  @default(now()) @db.Timestamptz(6) @map("discovered_at")
+
+  businessName          String?   @map("business_name")
+  websiteUrl            String?   @map("website_url")
+  category              String?
+  city                  String?
+  country               String?   @default("IN")
+  searchQuery           String?   @map("search_query")
+
+  techStack             Json?     @map("tech_stack")
+  websiteProblems       Json?     @map("website_problems")
+  lastUpdated           String?   @map("last_updated")
+  hasSsl                Boolean?  @map("has_ssl")
+  hasAnalytics          Boolean?  @map("has_analytics")
+  ownerName             String?   @map("owner_name")
+  ownerRole             String?   @map("owner_role")
+
+  businessSignals       Json?     @map("business_signals")
+  socialActive          Boolean?  @map("social_active")
+
+  websiteQualityScore   Int?      @map("website_quality_score")
+  judgeReason           String?   @map("judge_reason")
+  judgeSkip             Boolean   @default(false) @map("judge_skip")
+
+  icpScore              Int?      @map("icp_score")
+  icpPriority           String?   @map("icp_priority")
+  icpReason             String?   @map("icp_reason")
+
+  // ICP v2 framework (0-100 score with breakdown)
+  icpBreakdown          Json?     @map("icp_breakdown")
+  icpKeyMatches         Json?     @map("icp_key_matches")
+  icpKeyGaps            Json?     @map("icp_key_gaps")
+  icpDisqualifiers      Json?     @map("icp_disqualifiers")
+  employeesEstimate     String?   @map("employees_estimate")
+  businessStage         String?   @map("business_stage")
+
+  contactName           String?   @map("contact_name")
+  contactEmail          String?   @map("contact_email")
+  contactConfidence     String?   @map("contact_confidence")
+  contactSource         String?   @map("contact_source")
+
+  emailStatus           String?   @map("email_status")
+  emailVerifiedAt       DateTime? @db.Timestamptz(6) @map("email_verified_at")
+
+  status                String    @default("discovered")
+
+  domainLastContacted   DateTime? @db.Timestamptz(6) @map("domain_last_contacted")
+  inRejectList          Boolean   @default(false) @map("in_reject_list")
+
+  geminiTokensUsed      Int?      @map("gemini_tokens_used")
+  geminiCostUsd         Decimal?  @db.Decimal(10, 6) @map("gemini_cost_usd")
+  discoveryModel        String?   @map("discovery_model")
+  extractionModel       String?   @map("extraction_model")
+  judgeModel            String?   @map("judge_model")
+
+  emails         Email[]
+  bounces        Bounce[]
+  replies        Reply[]
+  sequenceState  SequenceState?
+
+  @@index([status])
+  @@index([icpPriority, icpScore])
+  @@index([contactEmail])
+  @@map("leads")
+}
+
+// ────────────────── EMAILS ──────────────────
+model Email {
+  id                    Int       @id @default(autoincrement())
+  leadId                Int?      @map("lead_id")
+  sequenceStep          Int       @default(0) @map("sequence_step")
+
+  inboxUsed             String?   @map("inbox_used")
+  fromDomain            String?   @default("trysimpleinc.com") @map("from_domain")
+  fromName              String?   @map("from_name")
+
+  subject               String?
+  body                  String?
+  wordCount             Int?      @map("word_count")
+  hook                  String?
+  containsLink          Boolean   @default(false) @map("contains_link")
+  isHtml                Boolean   @default(false) @map("is_html")
+  isPlainText           Boolean   @default(true)  @map("is_plain_text")
+
+  contentValid          Boolean   @default(true)  @map("content_valid")
+  validationFailReason  String?   @map("validation_fail_reason")
+  regenerated           Boolean   @default(false)
+
+  status                String    @default("pending")
+  sentAt                DateTime? @db.Timestamptz(6) @map("sent_at")
+  smtpResponse          String?   @map("smtp_response")
+  smtpCode              Int?      @map("smtp_code")
+  messageId             String?   @map("message_id")
+  sendDurationMs        Int?      @map("send_duration_ms")
+
+  inReplyTo             String?   @map("in_reply_to")
+  referencesHeader      String?   @map("references_header")
+
+  hookModel             String?   @map("hook_model")
+  bodyModel             String?   @map("body_model")
+  hookCostUsd           Decimal?  @db.Decimal(10, 6) @map("hook_cost_usd")
+  bodyCostUsd           Decimal?  @db.Decimal(10, 6) @map("body_cost_usd")
+  totalCostUsd          Decimal?  @db.Decimal(10, 6) @map("total_cost_usd")
+
+  createdAt             DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  lead    Lead?    @relation(fields: [leadId], references: [id])
+  bounces Bounce[]
+  replies Reply[]
+
+  @@index([leadId])
+  @@index([sentAt])
+  @@index([status])
+  @@map("emails")
+}
+
+// ────────────────── BOUNCES ──────────────────
+model Bounce {
+  id           Int       @id @default(autoincrement())
+  emailId      Int?      @map("email_id")
+  leadId       Int?      @map("lead_id")
+  bounceType   String?   @map("bounce_type")
+  smtpCode     Int?      @map("smtp_code")
+  smtpMessage  String?   @map("smtp_message")
+  bouncedAt    DateTime  @default(now()) @db.Timestamptz(6) @map("bounced_at")
+  retryAfter   DateTime? @db.Timestamptz(6) @map("retry_after")
+
+  email Email? @relation(fields: [emailId], references: [id])
+  lead  Lead?  @relation(fields: [leadId], references: [id])
+
+  @@map("bounces")
+}
+
+// ────────────────── REPLIES ──────────────────
+model Reply {
+  id                    Int       @id @default(autoincrement())
+  leadId                Int?      @map("lead_id")
+  emailId               Int?      @map("email_id")
+  inboxReceivedAt       String?   @map("inbox_received_at")
+  receivedAt            DateTime  @default(now()) @db.Timestamptz(6) @map("received_at")
+  category              String?
+  rawText               String?   @map("raw_text")
+  classificationModel   String?   @map("classification_model")
+  classificationCostUsd Decimal?  @db.Decimal(10, 6) @map("classification_cost_usd")
+  sentimentScore        Int?      @map("sentiment_score")
+  telegramAlerted       Boolean   @default(false) @map("telegram_alerted")
+  requeueDate           DateTime? @db.Timestamptz(6) @map("requeue_date")
+  actionedAt            DateTime? @db.Timestamptz(6) @map("actioned_at")
+  actionTaken           String?   @map("action_taken")
+
+  lead  Lead?  @relation(fields: [leadId], references: [id])
+  email Email? @relation(fields: [emailId], references: [id])
+
+  @@index([leadId])
+  @@map("replies")
+}
+
+// ────────────────── REJECT LIST ──────────────────
+model RejectList {
+  id       Int      @id @default(autoincrement())
+  email    String   @unique
+  domain   String?
+  reason   String?
+  addedAt  DateTime @default(now()) @db.Timestamptz(6) @map("added_at")
+
+  @@index([email])
+  @@index([domain])
+  @@map("reject_list")
+}
+
+// ────────────────── CRON LOG ──────────────────
+model CronLog {
+  id                Int       @id @default(autoincrement())
+  jobName           String?   @map("job_name")
+  scheduledAt       DateTime? @db.Timestamptz(6) @map("scheduled_at")
+  startedAt         DateTime? @db.Timestamptz(6) @map("started_at")
+  completedAt       DateTime? @db.Timestamptz(6) @map("completed_at")
+  durationMs        Int?      @map("duration_ms")
+  status            String?
+  errorMessage      String?   @map("error_message")
+  recordsProcessed  Int?      @map("records_processed")
+  recordsSkipped    Int?      @map("records_skipped")
+  costUsd           Decimal?  @db.Decimal(10, 6) @map("cost_usd")
+  notes             String?
+
+  @@index([jobName, scheduledAt])
+  @@map("cron_log")
+}
+
+// ────────────────── DAILY METRICS ──────────────────
+model DailyMetrics {
+  id                    Int      @id @default(autoincrement())
+  date                  String   @unique
+
+  leadsDiscovered       Int      @default(0) @map("leads_discovered")
+  leadsExtracted        Int      @default(0) @map("leads_extracted")
+  leadsJudgePassed      Int      @default(0) @map("leads_judge_passed")
+  leadsEmailFound       Int      @default(0) @map("leads_email_found")
+  leadsEmailValid       Int      @default(0) @map("leads_email_valid")
+  leadsIcpAb            Int      @default(0) @map("leads_icp_ab")
+  leadsReady            Int      @default(0) @map("leads_ready")
+  leadsDisqualified     Int      @default(0) @map("leads_disqualified")
+
+  emailsAttempted       Int      @default(0) @map("emails_attempted")
+  emailsSent            Int      @default(0) @map("emails_sent")
+  emailsHardBounced     Int      @default(0) @map("emails_hard_bounced")
+  emailsSoftBounced     Int      @default(0) @map("emails_soft_bounced")
+  emailsContentRejected Int      @default(0) @map("emails_content_rejected")
+
+  sentInbox1            Int      @default(0) @map("sent_inbox_1")
+  sentInbox2            Int      @default(0) @map("sent_inbox_2")
+
+  repliesTotal          Int      @default(0) @map("replies_total")
+  repliesHot            Int      @default(0) @map("replies_hot")
+  repliesSchedule       Int      @default(0) @map("replies_schedule")
+  repliesSoftNo         Int      @default(0) @map("replies_soft_no")
+  repliesUnsubscribe    Int      @default(0) @map("replies_unsubscribe")
+  repliesOoo            Int      @default(0) @map("replies_ooo")
+  repliesOther          Int      @default(0) @map("replies_other")
+
+  bounceRate            Float?   @map("bounce_rate")
+  replyRate             Float?   @map("reply_rate")
+  unsubscribeRate       Float?   @map("unsubscribe_rate")
+
+  geminiCostUsd         Decimal  @default(0) @db.Decimal(14, 6) @map("gemini_cost_usd")
+  sonnetCostUsd         Decimal  @default(0) @db.Decimal(14, 6) @map("sonnet_cost_usd")
+  haikuCostUsd          Decimal  @default(0) @db.Decimal(14, 6) @map("haiku_cost_usd")
+  mevCostUsd            Decimal  @default(0) @db.Decimal(14, 6) @map("mev_cost_usd")
+  totalApiCostUsd       Decimal  @default(0) @db.Decimal(14, 6) @map("total_api_cost_usd")
+  totalApiCostInr       Decimal  @default(0) @db.Decimal(14, 6) @map("total_api_cost_inr")
+
+  domainBlacklisted     Boolean  @default(false) @map("domain_blacklisted")
+  blacklistZones        Json?    @map("blacklist_zones")
+  mailTesterScore       Float?   @map("mail_tester_score")
+  postmasterReputation  String?  @map("postmaster_reputation")
+
+  icpParseErrors        Int      @default(0) @map("icp_parse_errors")
+  followupsSent         Int      @default(0) @map("followups_sent")
+
+  createdAt             DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([date])
+  @@map("daily_metrics")
+}
+
+// ────────────────── ERROR LOG ──────────────────
+model ErrorLog {
+  id           Int       @id @default(autoincrement())
+  occurredAt   DateTime  @default(now()) @db.Timestamptz(6) @map("occurred_at")
+  source       String?
+  jobName      String?   @map("job_name")
+  errorType    String?   @map("error_type")
+  errorCode    String?   @map("error_code")
+  errorMessage String?   @map("error_message")
+  stackTrace   String?   @map("stack_trace")
+  leadId       Int?      @map("lead_id")
+  emailId      Int?      @map("email_id")
+  resolved     Boolean   @default(false)
+  resolvedAt   DateTime? @db.Timestamptz(6) @map("resolved_at")
+
+  @@index([source, occurredAt])
+  @@map("error_log")
+}
+
+// ────────────────── SEQUENCE STATE ──────────────────
+model SequenceState {
+  id              Int       @id @default(autoincrement())
+  leadId          Int       @unique @map("lead_id")
+  currentStep     Int       @default(0) @map("current_step")
+  nextSendDate    DateTime? @db.Date      @map("next_send_date")
+  lastSentAt      DateTime? @db.Timestamptz(6) @map("last_sent_at")
+  lastMessageId   String?   @map("last_message_id")
+  lastSubject     String?   @map("last_subject")
+  status          String    @default("active")
+  pausedReason    String?   @map("paused_reason")
+  updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @updatedAt @map("updated_at")
+
+  lead Lead @relation(fields: [leadId], references: [id])
+
+  @@map("sequence_state")
+}
+
+// ────────────────── CONFIG ──────────────────
+model Config {
+  key   String  @id
+  value String?
+
+  @@map("config")
+}
+
+// ────────────────── NICHES ──────────────────
+model Niche {
+  id         Int      @id @default(autoincrement())
+  label      String
+  query      String
+  dayOfWeek  Int?     @map("day_of_week")
+  enabled    Boolean  @default(true)
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@map("niches")
+}
+
+// ────────────────── ICP RULES (legacy; kept during migration) ──────────────────
+model IcpRule {
+  id          Int      @id @default(autoincrement())
+  label       String
+  points      Int
+  description String?
+  enabled     Boolean  @default(true)
+  sortOrder   Int      @default(0) @map("sort_order")
+
+  @@map("icp_rules")
+}
+
+// ────────────────── OFFER (singleton, ICP v2) ──────────────────
+model Offer {
+  id              Int       @id @default(1)
+  problem         String?
+  outcome         String?
+  category        String?
+  useCases        Json?     @map("use_cases")
+  triggers        Json?
+  alternatives    Json?
+  differentiation String?
+  priceRange      String?   @map("price_range")
+  salesCycle      String?   @map("sales_cycle")
+  criticality     String?
+  inactionCost    String?   @map("inaction_cost")
+  requiredInputs  Json?     @map("required_inputs")
+  proofPoints     Json?     @map("proof_points")
+  updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
+
+  @@map("offer")
+}
+
+// ────────────────── ICP PROFILE (singleton, ICP v2) ──────────────────
+model IcpProfile {
+  id                   Int       @id @default(1)
+  industries           Json?
+  companySize          String?   @map("company_size")
+  revenueRange         String?   @map("revenue_range")
+  geography            Json?
+  stage                Json?
+  techStack            Json?     @map("tech_stack")
+  internalCapabilities Json?     @map("internal_capabilities")
+  budgetRange          String?   @map("budget_range")
+  problemFrequency     String?   @map("problem_frequency")
+  problemCost          String?   @map("problem_cost")
+  impactedKpis         Json?     @map("impacted_kpis")
+  initiatorRoles       Json?     @map("initiator_roles")
+  decisionRoles        Json?     @map("decision_roles")
+  objections           Json?
+  buyingProcess        String?   @map("buying_process")
+  intentSignals        Json?     @map("intent_signals")
+  currentTools         Json?     @map("current_tools")
+  workarounds          Json?
+  frustrations         Json?
+  switchingBarriers    Json?     @map("switching_barriers")
+  hardDisqualifiers    Json?     @map("hard_disqualifiers")
+  updatedAt            DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
+
+  @@map("icp_profile")
+}

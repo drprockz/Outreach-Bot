@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import 'dotenv/config';
 
-import { initSchema, seedConfigDefaults, seedNichesAndIcpRules } from '../core/db/index.js';
+import { seedConfigDefaults, seedNichesAndIcpRules } from '../core/db/index.js';
 import { requireAuth } from './middleware/auth.js';
 
 import authRoutes from './routes/auth.js';
@@ -21,6 +21,9 @@ import cronStatusRoutes from './routes/cronStatus.js';
 import healthRoutes from './routes/health.js';
 import costsRoutes from './routes/costs.js';
 import errorsRoutes from './routes/errors.js';
+import offerRoutes from './routes/offer.js';
+import icpProfileRoutes from './routes/icpProfile.js';
+import runEngineRoutes from './routes/runEngine.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
@@ -28,9 +31,19 @@ const repoRoot = resolve(__dirname, '../..');
 const app = express();
 app.use(express.json());
 
-initSchema();
-seedConfigDefaults();
-seedNichesAndIcpRules();
+// Schema is applied via prisma migrations; seeds are idempotent (createMany skipDuplicates
+// + upserts) and safe to run on every boot. In the test environment we skip seeding so
+// tests can control their own seed state via tests/helpers/testDb.js.
+if (process.env.NODE_ENV !== 'test') {
+  (async () => {
+    try {
+      await seedConfigDefaults();
+      await seedNichesAndIcpRules();
+    } catch (err) {
+      console.error('seed failed:', err);
+    }
+  })();
+}
 
 // Auth-free routes
 app.use('/api/auth', authRoutes);
@@ -51,6 +64,9 @@ app.use('/api/cron-status', cronStatusRoutes);
 app.use('/api/health', healthRoutes);
 app.use('/api/costs', costsRoutes);
 app.use('/api/errors', errorsRoutes);
+app.use('/api/offer', offerRoutes);
+app.use('/api/icp-profile', icpProfileRoutes);
+app.use('/api/run-engine', runEngineRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
 const distPath = join(repoRoot, 'web/dist');

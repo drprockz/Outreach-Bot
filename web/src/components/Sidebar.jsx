@@ -4,6 +4,7 @@ import { api } from '../api';
 
 const navItems = [
   { path: '/',          label: 'Overview',   icon: '◉' },
+  { path: '/run',       label: 'Generate',   icon: '▶' },
   { path: '/leads',     label: 'Leads',      icon: '◎' },
   { path: '/funnel',    label: 'Funnel',     icon: '▽' },
   { path: '/send-log',  label: 'Send Log',   icon: '✉' },
@@ -16,10 +17,12 @@ const navItems = [
 ];
 
 const settingsItems = [
-  { path: '/settings/niches',  label: 'Niches' },
-  { path: '/settings/engines', label: 'Engines' },
-  { path: '/settings/icp',     label: 'ICP Rubric' },
-  { path: '/settings/persona', label: 'Persona' },
+  { path: '/settings/niches',      label: 'Niches' },
+  { path: '/settings/engines',     label: 'Engines' },
+  { path: '/settings/offer',       label: 'Offer' },
+  { path: '/settings/icp-profile', label: 'ICP Profile' },
+  { path: '/settings/icp',         label: 'ICP Rubric (legacy)' },
+  { path: '/settings/persona',     label: 'Persona' },
 ];
 
 export default function Sidebar() {

@@ -1,29 +1,62 @@
 import { Router } from 'express';
-import { getDb } from '../../core/db/index.js';
+import { prisma, today } from '../../core/db/index.js';
 
 const router = Router();
 
-router.get('/', (req, res) => {
-  const db = getDb();
+// 30-day window including today, as YYYY-MM-DD strings (the `date` column is a string PK)
+function last30Dates() {
+  const out = [];
+  const now = new Date();
+  for (let i = 30; i >= 0; i--) {
+    const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+    out.push(d.toISOString().slice(0, 10));
+  }
+  return out;
+}
 
-  const daily = db.prepare(`
-    SELECT date, gemini_cost_usd, sonnet_cost_usd, haiku_cost_usd, mev_cost_usd, total_api_cost_usd
-    FROM daily_metrics
-    WHERE date >= date('now', '-30 days')
-    ORDER BY date ASC
-  `).all();
+router.get('/', async (req, res) => {
+  const dates = last30Dates();
+  const windowStart = dates[0];
 
-  const monthly = db.prepare(`
-    SELECT
-      COALESCE(SUM(gemini_cost_usd), 0) AS gemini_cost_usd,
-      COALESCE(SUM(sonnet_cost_usd), 0) AS sonnet_cost_usd,
-      COALESCE(SUM(haiku_cost_usd), 0) AS haiku_cost_usd,
-      COALESCE(SUM(mev_cost_usd), 0) AS mev_cost_usd,
-      COALESCE(SUM(total_api_cost_usd), 0) AS total_api_cost_usd,
-      COALESCE(SUM(emails_sent), 0) AS emails_sent
-    FROM daily_metrics
-    WHERE date >= date('now', '-30 days')
-  `).get();
+  const rows = await prisma.dailyMetrics.findMany({
+    where: { date: { gte: windowStart } },
+    orderBy: { date: 'asc' },
+    select: {
+      date: true,
+      geminiCostUsd: true,
+      sonnetCostUsd: true,
+      haikuCostUsd: true,
+      mevCostUsd: true,
+      totalApiCostUsd: true,
+      emailsSent: true,
+    },
+  });
+
+  const daily = rows.map(r => ({
+    date: r.date,
+    gemini_cost_usd: Number(r.geminiCostUsd),
+    sonnet_cost_usd: Number(r.sonnetCostUsd),
+    haiku_cost_usd: Number(r.haikuCostUsd),
+    mev_cost_usd: Number(r.mevCostUsd),
+    total_api_cost_usd: Number(r.totalApiCostUsd),
+  }));
+
+  const monthly = {
+    gemini_cost_usd: 0,
+    sonnet_cost_usd: 0,
+    haiku_cost_usd: 0,
+    mev_cost_usd: 0,
+    total_api_cost_usd: 0,
+    emails_sent: 0,
+  };
+  for (const r of rows) {
+    monthly.gemini_cost_usd += Number(r.geminiCostUsd);
+    monthly.sonnet_cost_usd += Number(r.sonnetCostUsd);
+    monthly.haiku_cost_usd += Number(r.haikuCostUsd);
+    monthly.mev_cost_usd += Number(r.mevCostUsd);
+    monthly.total_api_cost_usd += Number(r.totalApiCostUsd);
+    monthly.emails_sent += r.emailsSent;
+  }
 
   const perEmailCost = monthly.emails_sent > 0
     ? (monthly.total_api_cost_usd / monthly.emails_sent).toFixed(4)
