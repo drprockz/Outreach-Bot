@@ -7,3 +7,4 @@ web/node_modules/
 web/dist/
 logs/
 *.log
+.superpowers/
