@@ -57,6 +57,7 @@ Dependencies: Chunk 2 assumes Chunk 1's uniqueness + atomic insert. Chunks 4/5 r
 - Resumability / pipeline-run checkpointing. Chunk 3.
 - Touching `sendEmails.js` / `checkReplies.js` / `healthCheck.js` logic. Those engines consume the integrity-layer helpers in Chunks 4/5 but nothing changes in them during Chunk 1.
 - Backfilling `emailStatus` on historical rows.
+- Backfilling / lowercasing existing unnormalized `contactEmail` values. Existing rows keep their original casing; the functional unique index (`LOWER(contact_email)`) matches them correctly on read. All **future** writes go through `normalizeEmail()` (§4.3 T5/T6), so from the migration forward the column is uniformly lowercase for new rows. If the pre-migration audit (§5.3) exits clean, no existing rows conflict, and no backfill is needed.
 
 ### Decisions locked (questions answered during brainstorming)
 
@@ -83,14 +84,15 @@ Pure module. No DB, no network, no side effects. Exports four utilities and one 
 //    - does NOT touch the local-part structure (preserves +tag and dots)
 //    Called at every write site AND when pre-loading the dedup Set.
 
-// 2. ROLE_ADDRESSES: Set<string>
+// 2. ROLE_ADDRESSES: ReadonlySet<string> (Object.freeze'd)
 //    Local-parts that are always rejected regardless of domain:
 //      info, support, contact, hello, admin, sales, noreply, no-reply,
 //      team, office, enquiry, enquiries, help, feedback, webmaster,
 //      postmaster, abuse
-//    (17 entries total.) Exported as a Set so tests can assert exact membership
-//    and so extensions in later chunks can add via `ROLE_ADDRESSES.add(...)` if
-//    needed (though schema-level changes should be preferred).
+//    (17 entries total.) Exported as a frozen Set so tests can assert exact
+//    membership without risk of one test mutating shared state and leaking to
+//    another. Extension mechanics for later chunks (e.g., per-niche overrides
+//    in Chunk 6) are deliberately NOT designed now — YAGNI.
 
 // 3. validateContactEmail(raw: string | null | undefined)
 //      → { ok: true,  email: string }                                  // normalized
@@ -151,8 +153,10 @@ export async function verifyEmail(email) {
 **Contract notes**:
 - `skipped` return shape is unchanged (preserves dev workflow with no API key set).
 - `errorKind` is additive — existing callers that only look at `.status` continue to work.
+- **Only thrown exceptions from `callMev` trigger classification + retry.** A successful HTTP 200 response returning `{status:'invalid'|'disposable'|'unknown'}` is *not* an error — it's a verdict — and flows through unchanged with no retry. Retry semantics apply only to network/transport failures (timeout, reset, DNS) and 4xx/5xx that come back as axios rejections.
 - Cost is bumped on successful calls only (`bumpCostMetric('mevCostUsd', …)` inside `callMev` after a 200 response). Retried-but-still-failed calls do NOT bump cost (MEV shouldn't bill us for failures; if they do, that's a separate issue).
 - On a successful retry, cost bumps once (for the successful call). This matches today's billing behavior.
+- **If `bumpCostMetric` itself throws** (e.g., DB connection dropped mid-call), the existing `try { ... } catch { /* swallow */ }` wrapper at [mev.js:25–27](src/core/integrations/mev.js:25) is preserved — MEV verification succeeds, the cost ledger is eventually-consistent best-effort. Formal observability for this path is Chunk 3's concern.
 
 ### 4.3 `findLeads.js` touchpoints
 
@@ -166,37 +170,31 @@ Every `r.contactEmail` read becomes `normalizeEmail(r.contactEmail)`. Applies to
 
 Before calling MEV, run `validateContactEmail(lead.contact_email)`:
 
-- `{ ok: false, reason }` → insert a lead row with `status='email_malformed'`, `contactEmail: null` (do not persist the malformed string — we'd lose the unique-index benefit by storing junk), `emailStatus` set to `'malformed:'+reason` for dashboard slicing, bump `leadsEmailMalformed` metric, skip MEV, return null from worker.
+- `{ ok: false, reason }` → call `insertLead(lead, niche, 'email_malformed')` with `lead.contact_email = null` applied before the call (do not persist the malformed string — we'd lose the unique-index benefit by storing junk) and `lead.email_status = 'malformed:'+reason` for dashboard slicing. Bump `leadsEmailMalformed` metric, skip MEV, return null from worker. Routing through `insertLead()` (not a raw `prisma.lead.create`) keeps the email-normalization pipeline consistent — see T5.
 - `{ ok: true, email }` → assign the normalized `email` back to `lead.contact_email`, proceed to MEV.
 
 This saves `$0.00288 × (malformed-rate × daily volume)` per day in MEV credits and shaves pipeline wall-time proportionally.
 
+**Null-email dedup note**: the unique index is partial (`WHERE contact_email IS NOT NULL`), so multiple `email_malformed` leads with `contact_email = NULL` coexist by design. This is intentional — malformed-email volume is bounded by discovery rate (~150/day worst case) and each row is a debuggability artifact (which business / which Gemini extraction screwed up). If the malformed rate ever climbs so high that null-email rows accumulate to be painful (e.g., >10k), the remedy is upstream (fix the extraction prompt in Chunk 6), not downstream dedup. We do **not** add a secondary dedup key on `(websiteUrl, status='email_malformed')` — that's scope creep.
+
 **T3. MEV result branching rework** (lines ~368–398)
 
-Replace the current three-branch structure with five explicit branches:
+Replace the current three-branch structure with five explicit branches. All lead inserts route through `insertLead()` (not raw `prisma.lead.create`) so normalization stays centralized — see T5.
 
 ```js
 const { status, confidence, errorKind } = await verifyEmail(lead.contact_email);
 lead.email_status = status;
 
 if (status === 'invalid' || status === 'disposable') {
-  await prisma.lead.create({ data: {
-    ...baseLeadFields,
-    contactEmail: normalizeEmail(lead.contact_email),
-    emailStatus: status,  // 'invalid' or 'disposable'
-    status: 'email_invalid',
-  }});
+  lead.email_status = status;  // 'invalid' or 'disposable'
+  await insertLead(lead, niche, 'email_invalid');
   leadsSkipped++;
   return null;
 }
 
 if (status === 'error') {
-  await prisma.lead.create({ data: {
-    ...baseLeadFields,
-    contactEmail: normalizeEmail(lead.contact_email),
-    emailStatus: `error:${errorKind}`,  // 'error:permanent' or 'error:transient_retried'
-    status: 'email_verify_error',
-  }});
+  lead.email_status = `error:${errorKind}`;  // 'error:permanent' or 'error:transient_retried'
+  await insertLead(lead, niche, 'email_verify_error');
   await logError('findLeads.mev', new Error(`MEV ${errorKind}`), {
     jobName: 'findLeads',
     errorCode: errorKind,
@@ -209,7 +207,7 @@ if (status === 'error') {
 if (status === 'skipped') {
   // No API key configured → dev-mode pass-through. Preserve lead; mark as unverified.
   lead.email_status = 'verify_skipped';
-  await bumpMetric('leadsEmailValid');  // treated as valid for downstream metrics
+  await bumpMetric('leadsEmailVerifySkipped');  // separate from leadsEmailValid — see below
   return lead;
 }
 
@@ -222,37 +220,53 @@ await bumpMetric('leadsEmailValid');
 return lead;
 ```
 
+**Why `leadsEmailVerifySkipped` is its own counter**: conflating it with `leadsEmailValid` (as a draft of this spec did) would silently inflate the "valid email" count if `MEV_API_KEY` were ever unset in production. Separate counter = honest metric + a dashboard signal that MEV stopped running. Added to `DailyMetrics` (§5.1).
+
 **T4. Atomic lead + email insert** (lines ~481–503)
 
 Wrap the two writes in a single Prisma interactive transaction:
 
 ```js
-await prisma.$transaction(async (tx) => {
-  const leadInsert = await insertLead(lead, niche, 'ready', { tx });
-  await tx.email.create({
-    data: {
-      leadId: leadInsert.id,
-      sequenceStep: 0,
-      subject: subjectResult.subject,
-      body: bodyResult.body,
-      wordCount: bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
-      hook: hookResult.hook,
-      containsLink: false,
-      isHtml: false,
-      isPlainText: true,
-      contentValid: true,
-      status: 'pending',
-      hookModel: hookResult.model,
-      bodyModel: bodyResult.model,
-      hookCostUsd: hookResult.costUsd,
-      bodyCostUsd: bodyCost,
-      totalCostUsd: hookResult.costUsd + bodyCost,
-    },
+try {
+  await prisma.$transaction(async (tx) => {
+    const leadInsert = await insertLead(lead, niche, 'ready', { tx });
+    await tx.email.create({
+      data: {
+        leadId: leadInsert.id,
+        sequenceStep: 0,
+        subject: subjectResult.subject,
+        body: bodyResult.body,
+        wordCount: bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
+        hook: hookResult.hook,
+        containsLink: false,
+        isHtml: false,
+        isPlainText: true,
+        contentValid: true,
+        status: 'pending',
+        hookModel: hookResult.model,
+        bodyModel: bodyResult.model,
+        hookCostUsd: hookResult.costUsd,
+        bodyCostUsd: bodyCost,
+        totalCostUsd: hookResult.costUsd + bodyCost,
+      },
+    });
   });
-});
+} catch (err) {
+  // P2002 handling lives OUTSIDE the transaction (see T7) so Prisma completes
+  // rollback before our handler runs — never the reverse. Other errors
+  // re-throw and are caught by the existing outer catch at findLeads.js:507.
+  if (err?.code === 'P2002' && err?.meta?.target?.some?.(t => String(t).includes('contact_email'))) {
+    leadsSkipped++;
+    await logError('findLeads.dedup_race', err, { jobName: 'findLeads', errorCode: 'P2002' });
+    return;
+  }
+  throw err;
+}
 ```
 
-If `tx.email.create` throws, Prisma rolls back the `insertLead` write. No orphan leads.
+**Rollback guarantee**: If `$transaction` throws for any reason (email create fails, P2002 on lead create, network drop, Prisma engine panic), Prisma rolls back both writes atomically. No `status='ready'` lead can exist in the DB without its matching `emails` row after this change — by construction.
+
+**P2002 handler ordering**: the try/catch wraps the **entire `$transaction` call**, not the callback inside it. This matters: if the catch lived inside the callback, a caught P2002 would let the transaction "succeed" with a half-applied state (because `tx.email.create` would still run). Putting the catch outside means rollback completes first, *then* the handler fires with a clean slate. This pattern is repeated at every P2002 handler in T7.
 
 **T5. `insertLead()` signature extension**
 
@@ -276,14 +290,16 @@ Backward compatible — existing callers (without the `{tx}` arg) continue to wo
 
 Every `contactEmail:` in a `prisma.lead.create` / `insertLead` payload is piped through `normalizeEmail()`. Belt even though we're using a functional unique index (suspenders). Keeps reads and writes symmetric so an exact-match query `WHERE contactEmail = 'foo@x.com'` hits the row even though the unique index is functional.
 
-**T7. P2002 handling** (wrap every `insertLead` call)
+**T7. P2002 handling** (wrap every `insertLead` call — and the `$transaction` in T4)
 
 ```js
 try {
   await insertLead(/* ... */);
 } catch (err) {
-  if (err?.code === 'P2002' && err?.meta?.target?.includes('contact_email')) {
-    // Dedup race: another worker inserted this email between our pre-check and our write.
+  if (err?.code === 'P2002' && err?.meta?.target?.some?.(t => String(t).includes('contact_email'))) {
+    // Dedup race: another worker inserted this email between our pre-check and our write,
+    // OR the pre-loaded in-memory Set missed a case-variant that only the DB's
+    // LOWER() functional index caught.
     leadsSkipped++;
     await logError('findLeads.dedup_race', err, {
       jobName: 'findLeads',
@@ -295,24 +311,27 @@ try {
 }
 ```
 
-Applies to:
-- Line ~373 (email_invalid insert)
-- Line ~415 (disqualified insert)
-- Line ~423 (nurture insert)
-- Line ~481 (ready insert, now inside transaction)
-- Plus the two new inserts for `email_malformed` and `email_verify_error`
+**Important**: the `.meta.target` shape for a *functional* unique index is Prisma-version-dependent and may differ from a plain `@unique` field. Using `.some?.(t => String(t).includes('contact_email'))` defensively matches both the string-array form (`['contact_email']`) and the object form some Prisma versions produce. The test suite (§7.3) asserts the handler fires given the actual Prisma version pinned in `package.json` — if the shape differs, the predicate is the one line to adjust.
+
+Applies to every insertion site:
+- Line ~373 (`email_invalid` insert via T3)
+- Line ~415 (`disqualified` insert, unchanged logic but now wrapped)
+- Line ~423 (`nurture` insert, unchanged logic but now wrapped)
+- Line ~481 (`ready` insert — wrapped at the `$transaction` level per T4, not inside the callback)
+- Plus the two new inserts for `email_malformed` (T2) and `email_verify_error` (T3)
 
 ## 5. Schema migration
 
 ### 5.1 Prisma model changes
 
-File: `prisma/schema.prisma`. Two new counter fields on `DailyMetrics`:
+File: `prisma/schema.prisma`. Three new counter fields on `DailyMetrics`:
 
 ```prisma
 model DailyMetrics {
   // ... existing fields unchanged ...
   leadsEmailMalformed      Int @default(0) @map("leads_email_malformed")
   leadsEmailVerifyError    Int @default(0) @map("leads_email_verify_error")
+  leadsEmailVerifySkipped  Int @default(0) @map("leads_email_verify_skipped")
   // ... rest unchanged ...
 }
 ```
@@ -346,8 +365,9 @@ CREATE UNIQUE INDEX leads_contact_email_lower_unique
 -- New DailyMetrics counters (Prisma will also generate these; kept here
 -- for migration atomicity if Prisma's migrate regen is run separately).
 ALTER TABLE daily_metrics
-  ADD COLUMN IF NOT EXISTS leads_email_malformed     INTEGER NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS leads_email_verify_error  INTEGER NOT NULL DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS leads_email_malformed       INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS leads_email_verify_error    INTEGER NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS leads_email_verify_skipped  INTEGER NOT NULL DEFAULT 0;
 ```
 
 **Why `IF NOT EXISTS` on the ALTER**: `prisma migrate dev --create-only` may generate an equivalent `ALTER TABLE` for the two Prisma fields. Adding `IF NOT EXISTS` makes the hand-edited SQL idempotent with the Prisma-generated SQL, letting us merge them into a single migration file without collision.
@@ -417,12 +437,13 @@ psql $DATABASE_URL -c "\d leads" | grep leads_contact_email_lower_unique
 
 ### 6.1 New metrics
 
-Two counters in `DailyMetrics`, bumped from findLeads:
+Three counters in `DailyMetrics`, bumped from findLeads:
 
 - `leadsEmailMalformed` — total leads dropped by T2 regex/role check, per day
 - `leadsEmailVerifyError` — total leads dropped by T3 MEV-error branch, per day
+- `leadsEmailVerifySkipped` — total leads that passed through T3 with no MEV call (API key missing)
 
-Both are surfaced on the Email Health dashboard page (Chunk 7 will add tighter reactions; Chunk 1 just exposes the numbers).
+All three are surfaced on the Email Health dashboard page (Chunk 7 will add tighter reactions; Chunk 1 just exposes the numbers). `leadsEmailVerifySkipped` is particularly useful as a config-drift canary: it should stay at 0 in production; a non-zero value means `MEV_API_KEY` got unset somehow.
 
 ### 6.2 Error log entries
 
@@ -434,11 +455,28 @@ Existing `findLeads.lead`, `findLeads.discovery`, `findLeads` sources unchanged.
 
 ### 6.3 Status state machine additions
 
-Before Chunk 1: `discovered | email_invalid | disqualified | nurture | ready | sent | replied`
+**`leads.status` values.** Before Chunk 1: `discovered | email_invalid | disqualified | nurture | ready | sent | replied`
 
 After Chunk 1 adds: `email_malformed` (T2), `email_verify_error` (T3)
 
 Both are terminal drop states, same shape as `email_invalid` / `disqualified` — they exist solely to make failures queryable. The send engine (`sendEmails.js`) already filters on `status='ready'` only, so it won't pick these up. No changes to send-side code needed for the new statuses.
+
+**`leads.emailStatus` enum space** (free-form string today, but this is the authoritative value set after Chunk 1, centralized here so the dashboard and future chunks have a single source of truth):
+
+| Value | Set by | Meaning |
+|---|---|---|
+| `valid` | MEV status `valid` | Email confirmed deliverable |
+| `invalid` | MEV status `invalid` | Email confirmed undeliverable |
+| `disposable` | MEV status `disposable` | Email belongs to a disposable-address service |
+| `unknown` | MEV status `unknown` | MEV couldn't determine; passes only if confidence ≥ 0.5 |
+| `verify_skipped` | `MEV_API_KEY` missing (T3) | Pipeline proceeded without verification |
+| `malformed:empty` | T2 | Gemini returned null/empty email |
+| `malformed:shape` | T2 | Email failed shape regex (bad format) |
+| `malformed:role` | T2 | Local-part matched a role-address prefix |
+| `error:permanent` | T3 | MEV returned a permanent error (4xx non-429, auth) |
+| `error:transient_retried` | T3 | MEV failed transient error even after the single retry |
+
+Any value not in this list indicates a code bug or a drift from this spec — worth asserting in a sanity test eventually (not in Chunk 1 scope).
 
 ## 7. Testing strategy
 
@@ -481,17 +519,19 @@ New branch coverage on top of the existing integration test:
 | MEV returns `{status:'skipped'}` (no API key mock) | Lead proceeds through pipeline to `status='ready'`, `emailStatus='verify_skipped'` |
 | Atomic insert: force `tx.email.create` to throw | After pipeline, `prisma.lead.findMany({where:{contactEmail:…}})` returns zero rows — rollback verified |
 | P2002 on lead insert (pre-seed a conflicting row, run pipeline) | `leadsSkipped` bumped, error_log entry with `source='findLeads.dedup_race'`, pipeline completes normally (does not crash) |
-| Case-insensitive pre-check | Pre-seed lead with `'JOHN@acme.com'`; Gemini returns `'john@acme.com'` → skipped by in-memory Set (verify `verifyEmail` mock zero calls — not even the pre-check reached it, because Stage 8 dedup runs after extraction but before T2... wait, see note below) |
+| Case-insensitive dedup (normalized Set) | Pre-seed DB lead with `'JOHN@acme.com'`; Gemini discovers/extracts `'john@acme.com'` and it reaches Stage 8 dedup. Assert: `verifyEmail` mock called exactly once (MEV still runs in Stage 7), lead is dropped at Stage 8 (post-MEV), `leadsSkipped` incremented, no new `leads` row for `'john@acme.com'` |
+| DB-level uniqueness catch (P2002) | Pre-seed DB row that the in-memory Set *doesn't* have (simulate a row added after the pipeline loaded its Sets, e.g., inserted mid-test). Pipeline attempts `insertLead` → Prisma throws P2002 → T7 handler fires → `leadsSkipped` incremented, `error_log` row with `source='findLeads.dedup_race'` |
 
-**Note on dedup ordering**: In the current pipeline, dedup (Stage 8) runs *after* extraction but *before* ICP scoring. Regex validation (T2) runs inside the Stage 7 worker, before MEV. So the ordering under Chunk 1 is:
+**Pipeline ordering for reference** (no change from current code structure; Chunk 1 only adds T2 at the top of Stage 7 and wraps Stage 10/11 in a transaction):
 
 ```
 Stage 1 Discovery → Stage 2-6 Extract → Gate 1 (tech+quality) → Stage 7 worker:
     T2 regex check → MEV call → T3 result branch → return
-→ Gate 2 (confidence) → Stage 8 Dedup (Set pre-check, now normalized) → Stage 9 ICP → Stage 10/11 + T4 atomic insert
+→ Gate 2 (confidence) → Stage 8 Dedup (Set pre-check, now normalized per T1)
+→ Stage 9 ICP → Stage 10/11 + T4 atomic insert
 ```
 
-Dedup Set pre-check still runs after MEV, meaning malformed-email rejects don't benefit from dedup (they're dropped earlier). This is fine — dedup of malformed emails is meaningless.
+**Implication**: dedup runs AFTER MEV. A case-variant duplicate pays the MEV cost ($0.00288) before being dropped at Stage 8. This is acceptable at today's volume (≤150 raw discoveries/day, dedup hit rate low single-digit %) and is *not* something Chunk 1 optimizes — moving dedup earlier is a Chunk 3 concern (when resumability is added, the pipeline shape changes anyway). Malformed-email rejects (T2) *do* skip MEV, which is where the real savings are.
 
 ### 7.4 Manual verification (documented, not automated)
 
@@ -519,7 +559,7 @@ Dedup Set pre-check still runs after MEV, meaning malformed-email rejects don't 
    4. Create Prisma migration (hand-edit to add functional index + partial filter)
    5. Update `prisma/schema.prisma` (new DailyMetrics fields + Lead comment)
    6. Wire findLeads touchpoints T1–T7 + extend engine integration tests
-3. **Pre-merge gates**: all tests green locally (`npm test`), `node scripts/audit_email_dupes.js` exits 0 on local / staging DB, `npx prisma migrate diff` clean.
+3. **Pre-merge gates**: all tests green locally (`npm test`), `node scripts/audit_email_dupes.js` exits 0 on local / staging DB, `npx prisma migrate diff` clean. Also verify `@prisma/client` version in `package.json` supports interactive `$transaction(async tx => ...)` (available since 2.29.0, ~2021 — essentially any current version). If for some reason it's older, bump before shipping.
 4. **Merge → deploy**:
    1. Pull on VPS, run `node scripts/audit_email_dupes.js` against prod DB.
    2. If clean → `npx prisma migrate deploy` → `pm2 reload radar-cron radar-dashboard`.
@@ -540,8 +580,17 @@ Chunk 1 is complete when ALL of these hold:
 - [ ] `findLeads.js` T1–T7 all wired, engine integration test passes every scenario in §7.3
 - [ ] New `DailyMetrics` counters visible on the dashboard (or at least queryable via the existing costs / engine-status routes)
 - [ ] Audit script exits 0 against prod DB post-deploy (i.e., no latent duplicates)
-- [ ] No `status='ready'` lead exists without a matching pending `emails` row (one-off verification query against prod)
-- [ ] First week of error_log shows sensible distribution: occasional transient MEV retries, zero dedup_race entries (if non-zero, investigate — means the in-memory Set pre-check has a bug)
+- [ ] No `status='ready'` lead exists without a matching pending `emails` row. Verification query:
+  ```sql
+  SELECT l.id, l.contact_email, l.discovered_at
+    FROM leads l
+    LEFT JOIN emails e
+      ON e.lead_id = l.id AND e.sequence_step = 0
+   WHERE l.status = 'ready' AND e.id IS NULL;
+  ```
+  Expected result: zero rows. Any row returned is an orphan from pre-Chunk-1 data or a bug.
+- [ ] First week of error_log shows sensible distribution: occasional transient MEV retries, zero `findLeads.dedup_race` entries (if non-zero, investigate — means the in-memory Set pre-check has a bug or the functional-index error-shape predicate in T7 needs adjusting)
+- [ ] `leadsEmailVerifySkipped` stays at 0 in production (non-zero = `MEV_API_KEY` drift, investigate immediately)
 
 ## 10. Open questions / followups for later chunks
 
