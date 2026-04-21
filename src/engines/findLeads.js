@@ -51,7 +51,6 @@ export async function insertLead(lead, niche, status) {
       employeesEstimate: lead.employees_estimate || 'unknown',
       businessStage: lead.business_stage || 'unknown',
       icpScore: lead.icp_score,
-      icpPriority: lead.icp_priority,
       icpReason: lead.icp_reason,
       icpBreakdown: lead.icp_breakdown || null,
       icpKeyMatches: lead.icp_key_matches || [],
@@ -418,8 +417,8 @@ export default async function findLeads(override = {}) {
           return null;
         }
 
-        // C-priority → nurture
-        if (icp.icp_priority === 'C') {
+        // Below threshB → nurture (not emailed, kept for later)
+        if (icp.icp_score < threshB) {
           await insertLead(lead, niche, 'nurture');
           leadsSkipped++;
           return null;

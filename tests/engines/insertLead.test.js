@@ -19,7 +19,7 @@ const baseLead = {
   contact_email: 'j@x.com', contact_confidence: 'medium', contact_source: 'guess',
   email_status: 'valid',
   employees_estimate: '1-10', business_stage: 'owner-operated',
-  icp_score: 75, icp_priority: 'A', icp_reason: 'good fit',
+  icp_score: 75, icp_reason: 'good fit',
   icp_breakdown: { firmographic: 18, problem: 17, intent: 10, tech: 12, economic: 10, buying: 8 },
   icp_key_matches: ['restaurant match'],
   icp_key_gaps: ['budget unknown'],
@@ -41,7 +41,7 @@ describe('insertLead', () => {
 
   it('status=nurture leaves email_verified_at NULL', async () => {
     const { insertLead } = await import('../../src/engines/findLeads.js');
-    await insertLead({ ...baseLead, icp_priority: 'C', icp_score: 20 }, { query: 'q' }, 'nurture');
+    await insertLead({ ...baseLead, icp_score: 20 }, { query: 'q' }, 'nurture');
     const prisma = getTestPrisma();
     const row = await prisma.lead.findFirst();
     expect(row.status).toBe('nurture');

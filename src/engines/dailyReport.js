@@ -121,7 +121,7 @@ th{background:#f5f5f5;font-weight:600}
   <div class="card"><label>Judge Passed</label><div class="metric">${metrics.leadsJudgePassed}</div></div>
   <div class="card"><label>Email Found</label><div class="metric">${metrics.leadsEmailFound}</div></div>
   <div class="card"><label>Email Valid</label><div class="metric">${metrics.leadsEmailValid}</div></div>
-  <div class="card"><label>ICP A+B</label><div class="metric">${metrics.leadsIcpAb}</div></div>
+  <div class="card"><label>ICP Ready</label><div class="metric">${metrics.leadsIcpAb}</div></div>
   <div class="card"><label>Ready</label><div class="metric">${metrics.leadsReady}</div></div>
 </div>
 

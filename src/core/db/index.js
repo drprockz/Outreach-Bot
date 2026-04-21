@@ -195,7 +195,7 @@ export async function seedConfigDefaults() {
   }
 }
 
-export async function seedNichesAndIcpRules() {
+export async function seedNichesAndDefaults() {
   const prisma = getPrisma();
 
   if ((await prisma.niche.count()) === 0) {
@@ -207,21 +207,6 @@ export async function seedNichesAndIcpRules() {
         { dayOfWeek: 4, label: 'Restaurants/cafes',      query: 'Mumbai restaurant cafe outdated website no online booking',  sortOrder: 3 },
         { dayOfWeek: 5, label: 'Agencies/consultancies', query: 'Mumbai digital agency overflow web development outsource',   sortOrder: 4 },
         { dayOfWeek: 6, label: 'Healthcare/salons',      query: 'India healthcare salon clinic outdated website no booking',  sortOrder: 5 },
-      ],
-    });
-  }
-
-  if ((await prisma.icpRule.count()) === 0) {
-    await prisma.icpRule.createMany({
-      data: [
-        { points:  3, label: 'India-based B2C-facing (restaurant, salon, real estate, D2C)',    sortOrder: 0 },
-        { points:  2, label: '20+ Google reviews (established business, has budget)',           sortOrder: 1 },
-        { points:  2, label: 'WordPress/Wix/Squarespace stack (easiest sell)',                  sortOrder: 2 },
-        { points:  2, label: 'Website last updated 2+ years ago',                               sortOrder: 3 },
-        { points:  1, label: 'Active Instagram/Facebook but neglected website',                 sortOrder: 4 },
-        { points:  1, label: 'WhatsApp Business on site but no online booking/ordering',        sortOrder: 5 },
-        { points: -2, label: 'Freelancer or solo consultant (low budget)',                      sortOrder: 6 },
-        { points: -3, label: 'Already on modern stack (Next.js, custom React, Webflow)',        sortOrder: 7 },
       ],
     });
   }

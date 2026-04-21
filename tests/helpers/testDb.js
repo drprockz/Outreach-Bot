@@ -15,11 +15,11 @@ export function getTestPrisma() {
   return _prisma;
 }
 
-// All 14 tables. CASCADE handles FK ordering; RESTART IDENTITY resets autoincrement.
+// CASCADE handles FK ordering; RESTART IDENTITY resets autoincrement.
 const TABLES = [
   'bounces', 'replies', 'sequence_state', 'emails', 'leads',
   'reject_list', 'cron_log', 'daily_metrics', 'error_log',
-  'config', 'niches', 'icp_rules', 'offer', 'icp_profile',
+  'config', 'niches', 'offer', 'icp_profile',
 ];
 
 export async function truncateAll() {

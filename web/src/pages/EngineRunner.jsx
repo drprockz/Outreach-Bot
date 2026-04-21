@@ -199,7 +199,7 @@ export default function EngineRunner() {
             <StatCard label="Extracted" value={costs.leads_extracted} color="var(--blue)" />
             <StatCard label="Email found" value={costs.leads_email_found} color="var(--blue)" />
             <StatCard label="Email valid" value={costs.leads_email_valid} color="var(--blue)" />
-            <StatCard label="ICP A/B" value={costs.leads_icp_ab} color="var(--green)" />
+            <StatCard label="ICP Ready" value={costs.leads_icp_ready} color="var(--green)" />
             <StatCard label="Ready (draft)" value={costs.leads_ready} color="var(--green-bright)" />
             <StatCard label="Disqualified" value={costs.leads_disqualified} color="var(--red)" />
             <StatCard label="Parse errors" value={costs.icp_parse_errors} color="var(--amber)" />

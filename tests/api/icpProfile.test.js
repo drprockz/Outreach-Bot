@@ -16,10 +16,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
-  const { resetDb, seedConfigDefaults, seedNichesAndIcpRules } = await import('../../src/core/db/index.js');
+  const { resetDb, seedConfigDefaults, seedNichesAndDefaults } = await import('../../src/core/db/index.js');
   await resetDb();
   await seedConfigDefaults();
-  await seedNichesAndIcpRules();
+  await seedNichesAndDefaults();
 
   const r = await fetch(`${baseUrl}/api/auth/login`, {
     method: 'POST',

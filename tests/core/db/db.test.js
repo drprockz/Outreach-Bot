@@ -3,7 +3,7 @@ import { truncateAll, closeTestPrisma } from '../../helpers/testDb.js';
 import {
   resetDb, today, logError, isRejected, addToRejectList,
   bumpMetric, bumpCostMetric, todaySentCount, todayBounceRate,
-  getConfigMap, seedConfigDefaults, seedNichesAndIcpRules, getPrisma,
+  getConfigMap, seedConfigDefaults, seedNichesAndDefaults, getPrisma,
 } from '../../../src/core/db/index.js';
 
 beforeEach(async () => { await truncateAll(); await resetDb(); });
@@ -61,10 +61,9 @@ describe('db helpers (prisma)', () => {
     expect(cfg['icp_weights']).toContain('firmographic');
   });
 
-  it('seedNichesAndIcpRules seeds 6 niches + 8 rules + offer + icp_profile singletons', async () => {
-    await seedNichesAndIcpRules();
+  it('seedNichesAndDefaults seeds 6 niches + offer + icp_profile singletons', async () => {
+    await seedNichesAndDefaults();
     expect(await getPrisma().niche.count()).toBe(6);
-    expect(await getPrisma().icpRule.count()).toBe(8);
     expect(await getPrisma().offer.count()).toBe(1);
     expect(await getPrisma().icpProfile.count()).toBe(1);
   });

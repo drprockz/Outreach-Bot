@@ -94,10 +94,10 @@ vi.mock('../../src/core/integrations/telegram.js', () => ({
 
 beforeEach(async () => {
   await truncateAll();
-  const { resetDb, seedConfigDefaults, seedNichesAndIcpRules } = await import('../../src/core/db/index.js');
+  const { resetDb, seedConfigDefaults, seedNichesAndDefaults } = await import('../../src/core/db/index.js');
   await resetDb();
   await seedConfigDefaults();
-  await seedNichesAndIcpRules();
+  await seedNichesAndDefaults();
 
   const prisma = getTestPrisma();
   // Override: 50 leads / 50 per batch = 1 batch (50 is the Math.max floor in findLeads.js)
@@ -125,7 +125,7 @@ describe('findLeads', () => {
     const leads = await prisma.lead.findMany({ where: { status: 'ready' } });
 
     expect(leads.length).toBeGreaterThan(0);
-    expect(leads[0].icpPriority).toBe('A');
+    expect(leads[0].icpScore).toBeGreaterThanOrEqual(70);
     expect(leads[0].contactEmail).toBeTruthy();
     expect(leads[0].businessName).toBeTruthy();
 

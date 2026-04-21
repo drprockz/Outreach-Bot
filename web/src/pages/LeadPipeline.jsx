@@ -1,15 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 
-const statusOptions = ['', 'discovered', 'extracted', 'ready', 'queued', 'sent', 'replied', 'nurture', 'bounced', 'email_not_found', 'email_invalid', 'judge_skipped', 'extraction_failed', 'icp_c', 'deduped', 'unsubscribed'];
-const priorityOptions = ['', 'A', 'B', 'C'];
+const statusOptions = ['', 'discovered', 'extracted', 'ready', 'queued', 'sent', 'replied', 'nurture', 'bounced', 'email_not_found', 'email_invalid', 'judge_skipped', 'extraction_failed', 'deduped', 'unsubscribed'];
 
-const priorityBadge = { A: 'badge-green', B: 'badge-blue', C: 'badge-muted' };
 const statusBadge = {
   discovered: 'badge-muted', extracted: 'badge-blue', ready: 'badge-green', queued: 'badge-amber',
   sent: 'badge-green', replied: 'badge-red', nurture: 'badge-muted', bounced: 'badge-red',
   email_not_found: 'badge-red', email_invalid: 'badge-red', judge_skipped: 'badge-muted',
-  extraction_failed: 'badge-red', icp_c: 'badge-muted', deduped: 'badge-muted', unsubscribed: 'badge-muted',
+  extraction_failed: 'badge-red', deduped: 'badge-muted', unsubscribed: 'badge-muted',
 };
 
 const DEFAULT_WEIGHTS = { firmographic: 20, problem: 20, intent: 15, tech: 15, economic: 15, buying: 15 };
@@ -38,7 +36,6 @@ export default function LeadPipeline() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [status, setStatus] = useState('');
-  const [priority, setPriority] = useState('');
   const [category, setCategory] = useState('');
   const [city, setCity] = useState('');
   const [techStack, setTechStack] = useState('');
@@ -54,7 +51,6 @@ export default function LeadPipeline() {
     p.set('page', page);
     p.set('limit', limit);
     if (status) p.set('status', status);
-    if (priority) p.set('priority', priority);
     if (category) p.set('category', category);
     if (city) p.set('city', city);
     if (techStack) p.set('tech_stack', techStack);
@@ -72,7 +68,7 @@ export default function LeadPipeline() {
     }).catch(() => setLoading(false));
   }
 
-  useEffect(() => { fetchLeads(); }, [page, status, priority, category, city, techStack, dateFrom, dateTo]);
+  useEffect(() => { fetchLeads(); }, [page, status, category, city, techStack, dateFrom, dateTo]);
 
   function openDetail(lead) {
     setSelectedLead(lead);
@@ -89,10 +85,6 @@ export default function LeadPipeline() {
         <select className="select" value={status} onChange={e => { setStatus(e.target.value); setPage(1); }}>
           <option value="">All Statuses</option>
           {statusOptions.filter(Boolean).map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <select className="select" value={priority} onChange={e => { setPriority(e.target.value); setPage(1); }}>
-          <option value="">All Priorities</option>
-          {priorityOptions.filter(Boolean).map(p => <option key={p} value={p}>{p}</option>)}
         </select>
         <input className="input" placeholder="Category" value={category} onChange={e => { setCategory(e.target.value); setPage(1); }} style={{ width: '130px' }} />
         <input className="input" placeholder="City" value={city} onChange={e => { setCity(e.target.value); setPage(1); }} style={{ width: '110px' }} />
@@ -111,7 +103,6 @@ export default function LeadPipeline() {
               <th>Contact</th>
               <th>Email</th>
               <th>Email Status</th>
-              <th>Priority</th>
               <th>ICP</th>
               <th>Quality</th>
               <th>Status</th>
@@ -123,9 +114,9 @@ export default function LeadPipeline() {
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={13} className="td-muted text-center" style={{ padding: '40px' }}>Loading...</td></tr>
+              <tr><td colSpan={12} className="td-muted text-center" style={{ padding: '40px' }}>Loading...</td></tr>
             ) : leads.length === 0 ? (
-              <tr><td colSpan={13} className="td-muted text-center" style={{ padding: '40px' }}>No leads found.</td></tr>
+              <tr><td colSpan={12} className="td-muted text-center" style={{ padding: '40px' }}>No leads found.</td></tr>
             ) : leads.map((lead) => {
               const tech = parseJson(lead.tech_stack);
               const signals = parseJson(lead.business_signals);
@@ -142,11 +133,6 @@ export default function LeadPipeline() {
                   <td className="td-muted">{lead.contact_name || '-'}</td>
                   <td className="td-muted">{lead.contact_email || '-'}</td>
                   <td>{lead.email_status ? <span className={`badge ${lead.email_status === 'valid' ? 'badge-green' : lead.email_status === 'invalid' ? 'badge-red' : 'badge-amber'}`}>{lead.email_status}</span> : '-'}</td>
-                  <td>
-                    {lead.icp_priority ? (
-                      <span className={`badge ${priorityBadge[lead.icp_priority] || 'badge-muted'}`}>{lead.icp_priority}</span>
-                    ) : '-'}
-                  </td>
                   <td style={{ color: 'var(--amber)' }}>{lead.icp_score ?? '-'}</td>
                   <td className="td-muted td-center">{lead.website_quality_score ?? '-'}</td>
                   <td>
@@ -236,7 +222,7 @@ export default function LeadPipeline() {
             <div className="detail-label">ICP Score / Priority</div>
             <div className="detail-value">
               <div className="icp-details">
-                <div><strong>Score:</strong> {selectedLead.icp_score ?? '-'} / 100 ({selectedLead.icp_priority || '-'})</div>
+                <div><strong>Score:</strong> {selectedLead.icp_score ?? '-'} / 100</div>
                 {selectedLead.icp_breakdown && (
                   <div className="icp-breakdown">
                     <strong>Breakdown</strong>

@@ -27,7 +27,6 @@ function serializeLead(l) {
     judge_reason: l.judgeReason,
     judge_skip: l.judgeSkip,
     icp_score: l.icpScore,
-    icp_priority: l.icpPriority,
     icp_reason: l.icpReason,
     icp_breakdown: l.icpBreakdown,
     icp_key_matches: l.icpKeyMatches,
@@ -131,7 +130,6 @@ router.get('/', async (req, res) => {
 
   const where = {};
   if (req.query.status) where.status = req.query.status;
-  if (req.query.priority) where.icpPriority = req.query.priority;
   if (req.query.category) where.category = req.query.category;
   if (req.query.city) where.city = req.query.city;
   if (req.query.date_from) where.discoveredAt = { ...(where.discoveredAt || {}), gte: new Date(req.query.date_from) };

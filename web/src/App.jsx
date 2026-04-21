@@ -14,7 +14,6 @@ import ErrorLog from './pages/ErrorLog';
 import FunnelAnalytics from './pages/FunnelAnalytics';
 import NicheManager from './pages/NicheManager';
 import EngineConfig from './pages/EngineConfig';
-import IcpRules from './pages/IcpRules';
 import Offer from './pages/Offer';
 import IcpProfile from './pages/IcpProfile';
 import EmailPersona from './pages/EmailPersona';
@@ -53,7 +52,6 @@ export default function App() {
           <Route path="/settings" element={<Navigate to="/settings/niches" replace />} />
           <Route path="/settings/niches"  element={<NicheManager />} />
           <Route path="/settings/engines" element={<EngineConfig />} />
-          <Route path="/settings/icp"     element={<IcpRules />} />
           <Route path="/settings/offer"   element={<Offer />} />
           <Route path="/settings/icp-profile" element={<IcpProfile />} />
           <Route path="/settings/persona" element={<EmailPersona />} />

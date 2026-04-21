@@ -35,7 +35,6 @@ model Lead {
   judgeSkip             Boolean   @default(false) @map("judge_skip")
 
   icpScore              Int?      @map("icp_score")
-  icpPriority           String?   @map("icp_priority")
   icpReason             String?   @map("icp_reason")
 
   // ICP v2 framework (0-100 score with breakdown)
@@ -71,7 +70,7 @@ model Lead {
   sequenceState  SequenceState?
 
   @@index([status])
-  @@index([icpPriority, icpScore])
+  @@index([icpScore])
   @@index([contactEmail])
   @@map("leads")
 }
@@ -311,18 +310,6 @@ model Niche {
   createdAt  DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
 
   @@map("niches")
-}
-
-// ────────────────── ICP RULES (legacy; kept during migration) ──────────────────
-model IcpRule {
-  id          Int      @id @default(autoincrement())
-  label       String
-  points      Int
-  description String?
-  enabled     Boolean  @default(true)
-  sortOrder   Int      @default(0) @map("sort_order")
-
-  @@map("icp_rules")
 }
 
 // ────────────────── OFFER (singleton, ICP v2) ──────────────────

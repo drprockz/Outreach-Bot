@@ -21,7 +21,6 @@ const settingsItems = [
   { path: '/settings/engines',     label: 'Engines' },
   { path: '/settings/offer',       label: 'Offer' },
   { path: '/settings/icp-profile', label: 'ICP Profile' },
-  { path: '/settings/icp',         label: 'ICP Rubric (legacy)' },
   { path: '/settings/persona',     label: 'Persona' },
 ];
 
