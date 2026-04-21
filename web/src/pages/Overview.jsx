@@ -95,7 +95,7 @@ export default function Overview() {
     { label: 'Judge Passed', value: funnel?.judged || 0, color: 'var(--amber)' },
     { label: 'Email Found', value: funnel?.email_found || 0, color: 'var(--amber)' },
     { label: 'Email Valid', value: funnel?.email_valid || 0, color: 'var(--amber)' },
-    { label: 'ICP A/B', value: funnel?.icp_ab || 0, color: 'var(--green)' },
+    { label: 'ICP Ready', value: funnel?.icp_ready || 0, color: 'var(--green)' },
     { label: 'Sent', value: funnel?.sent || 0, color: 'var(--green)' },
     { label: 'Replied', value: funnel?.replied || 0, color: 'var(--red)' },
   ];

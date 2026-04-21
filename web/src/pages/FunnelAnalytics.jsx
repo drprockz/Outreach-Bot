@@ -11,7 +11,7 @@ const STAGE_COLOR = {
   judge_passed:'#8b5cf6',
   email_found: '#f59e0b',
   email_valid: '#f97316',
-  icp_ab:      '#10b981',
+  icp_ready:   '#10b981',
   ready:       '#22c55e',
   sent:        '#84cc16',
   replied:     '#ef4444',
@@ -24,7 +24,7 @@ const DROP_LABELS = {
   email_invalid: 'Email invalid / disposable',
   email_not_found: 'Email not found',
   deduped: 'Dedup: already contacted / cooldown',
-  icp_c_nurture: 'ICP C-priority → nurture',
+  icp_low_nurture: 'Score below threshold → nurture',
 };
 
 function pct(a, b) {
@@ -75,7 +75,7 @@ export default function FunnelAnalytics() {
     { key: 'judge_passed', label: 'Gate 1 Passed', value: stages.judge_passed, desc: 'Not modern stack / has signals / quality <7' },
     { key: 'email_found',  label: 'Email Found',   value: stages.email_found,  desc: 'Stage 6: DM finder — pattern or page scrape' },
     { key: 'email_valid',  label: 'Email Valid',   value: stages.email_valid,  desc: 'Stage 7: MEV verification passed' },
-    { key: 'icp_ab',       label: 'ICP A/B',       value: stages.icp_ab,       desc: 'Stage 9: Score ≥40, priority A or B' },
+    { key: 'icp_ready',    label: 'ICP Ready',     value: stages.icp_ready,    desc: 'Stage 9: Score ≥ threshold_b' },
     { key: 'ready',        label: 'Ready',         value: stages.ready,        desc: 'Hook + email generated, pending send' },
     { key: 'sent',         label: 'Sent',          value: stages.sent,         desc: 'Delivered via SMTP' },
     { key: 'replied',      label: 'Replied',       value: stages.replied,      desc: 'Inbound reply received and classified' },
@@ -99,7 +99,7 @@ export default function FunnelAnalytics() {
         <StatPill label="Reached Ready" value={stages.ready} color="var(--green)" />
         <StatPill label="Sent" value={stages.sent} color="#84cc16" />
         <StatPill label="Replied" value={stages.replied} color="var(--red)" />
-        <StatPill label="Nurture (ICP C)" value={stages.nurture} color="var(--amber)" />
+        <StatPill label="Nurture" value={stages.nurture} color="var(--amber)" />
         <StatPill label="Unsubscribed" value={stages.unsubscribed} color="var(--text-muted)" />
         <StatPill label="Reply Rate" value={pct(stages.replied, stages.sent)} color="var(--green)" />
         <StatPill label="Overall Conversion" value={conversionRate} color="var(--blue)" />
@@ -221,12 +221,12 @@ export default function FunnelAnalytics() {
       {/* ICP breakdown */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 32 }}>
         <div>
-          <div className="section-title">ICP Priority Split</div>
+          <div className="section-title">ICP Score Split</div>
           <div className="card">
             <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
-              <StatPill label="Priority A" value={stages.icp_a} color="var(--green)" />
-              <StatPill label="Priority B" value={stages.icp_b} color="var(--amber)" />
-              <StatPill label="Priority C" value={stages.icp_c} color="var(--text-muted)" />
+              <StatPill label="High (≥70)" value={stages.icp_high} color="var(--green)" />
+              <StatPill label="Medium (40-69)" value={stages.icp_medium} color="var(--amber)" />
+              <StatPill label="Low (<40)" value={stages.icp_low} color="var(--text-muted)" />
             </div>
             {icpDistribution.length > 0 ? (
               <ResponsiveContainer width="100%" height={160}>
@@ -296,7 +296,7 @@ export default function FunnelAnalytics() {
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Line type="monotone" dataKey="discovered" stroke="#3b82f6" dot={false} strokeWidth={2} name="Discovered" />
               <Line type="monotone" dataKey="extracted" stroke="#8b5cf6" dot={false} strokeWidth={2} name="Extracted" />
-              <Line type="monotone" dataKey="icp_ab" stroke="#10b981" dot={false} strokeWidth={2} name="ICP A/B" />
+              <Line type="monotone" dataKey="icp_ready" stroke="#10b981" dot={false} strokeWidth={2} name="ICP Ready" />
               <Line type="monotone" dataKey="ready" stroke="#22c55e" dot={false} strokeWidth={2} name="Ready" />
               <Line type="monotone" dataKey="sent" stroke="#ef4444" dot={false} strokeWidth={2} name="Sent" />
             </LineChart>
@@ -312,15 +312,15 @@ export default function FunnelAnalytics() {
           <div className="section-title">By Category</div>
           <div className="card">
             <table className="table">
-              <thead><tr><th>Category</th><th>Total</th><th>A</th><th>B</th><th>C</th><th>Ready/Sent</th></tr></thead>
+              <thead><tr><th>Category</th><th>Total</th><th>High</th><th>Med</th><th>Low</th><th>Ready/Sent</th></tr></thead>
               <tbody>
                 {byCategory.map(row => (
                   <tr key={row.category}>
                     <td style={{ fontWeight: 600 }}>{row.category}</td>
                     <td>{row.total}</td>
-                    <td style={{ color: 'var(--green)' }}>{row.icp_a}</td>
-                    <td style={{ color: 'var(--amber)' }}>{row.icp_b}</td>
-                    <td className="td-muted">{row.icp_c}</td>
+                    <td style={{ color: 'var(--green)' }}>{row.icp_high}</td>
+                    <td style={{ color: 'var(--amber)' }}>{row.icp_medium}</td>
+                    <td className="td-muted">{row.icp_low}</td>
                     <td style={{ color: 'var(--blue)', fontWeight: 700 }}>{row.ready_or_sent}</td>
                   </tr>
                 ))}
