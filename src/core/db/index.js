@@ -180,6 +180,27 @@ export async function seedConfigDefaults() {
     ['persona_website', 'simpleinc.in'],
     ['persona_tone', 'professional but direct'],
     ['persona_services', 'Full-stack web development, redesigns, performance optimisation, custom React apps, API integrations'],
+
+    // Orphan settings migrated from .env/hardcoded (spec §5.2)
+    ['spam_words', JSON.stringify(
+      (process.env.SPAM_WORDS || '').split(',').map(s => s.trim()).filter(Boolean)
+    )],
+    ['email_min_words', process.env.MIN_EMAIL_WORDS || '40'],
+    ['email_max_words', process.env.MAX_EMAIL_WORDS || '90'],
+    ['send_holidays', JSON.stringify([
+      // MM-DD. Mirrors the prior hardcoded list in sendEmails.js.
+      '01-26',
+      '03-14', '03-15',
+      '08-15',
+      '10-02',
+      '10-20', '10-21', '10-22', '10-23', '10-24', '10-25', '10-26',
+    ])],
+    ['findleads_size_prompts', JSON.stringify({
+      msme:  'Target ONLY micro/small owner-operated businesses — 1–10 employees, turnover under ₹5cr. EXCLUDE listed companies, national brands, unicorns, VC-backed startups, companies with 50+ employees.',
+      sme:   'Target ONLY small/medium regional businesses — 10–200 employees, ₹5cr–₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
+      both:  'Target MSME/SME businesses only — owner-operated to regional scale, up to 200 employees, under ₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
+    })],
+    ['check_replies_interval_minutes', '120'],
   ];
   await getPrisma().config.createMany({
     data: defaults.map(([key, value]) => ({ key, value })),
