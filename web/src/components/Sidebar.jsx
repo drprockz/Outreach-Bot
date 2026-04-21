@@ -5,12 +5,14 @@ import { api } from '../api';
 const SECTIONS = [
   {
     label: 'Home',
+    tooltip: 'Your daily starting point.',
     items: [
       { path: '/', label: 'Today', icon: '⌂' },
     ],
   },
   {
     label: 'Outreach',
+    tooltip: 'Active leads, sends, replies, funnel.',
     items: [
       { path: '/outreach/engines',   label: 'Engines',     icon: '⚡' },
       { path: '/outreach/leads',     label: 'Leads',       icon: '◎' },
@@ -22,6 +24,7 @@ const SECTIONS = [
   },
   {
     label: 'Setup',
+    tooltip: 'Who you target, what you sell, how you sound.',
     items: [
       { path: '/setup/niches',    label: 'Niches & Schedule', icon: '🏷' },
       { path: '/setup/offer-icp', label: 'Offer & ICP',       icon: '🎯' },
@@ -30,6 +33,7 @@ const SECTIONS = [
   },
   {
     label: 'System',
+    tooltip: 'Spend, deliverability, errors, schedule.',
     items: [
       { path: '/system/spend',        label: 'Spend',           icon: '¤' },
       { path: '/system/email-health', label: 'Email Health',    icon: '♥' },
@@ -63,7 +67,7 @@ export default function Sidebar() {
       <nav className="sidebar-nav">
         {SECTIONS.map(section => (
           <div className="sidebar-section" key={section.label}>
-            <div className="sidebar-section-label">{section.label}</div>
+            <div className="sidebar-section-label" title={section.tooltip}>{section.label}</div>
             {section.items.map(item => (
               <NavLink
                 key={item.path}

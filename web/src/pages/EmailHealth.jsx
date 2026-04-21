@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import TechTerm from '../components/TechTerm';
 
 function gaugeColor(value, warn, critical) {
   if (value >= critical) return 'var(--red)';
@@ -49,7 +50,7 @@ export default function EmailHealth() {
       {/* Gauges */}
       <div className="gauge-grid">
         <div className="gauge-card fade-in stagger-1">
-          <div className="gauge-label">Bounce Rate (Today)</div>
+          <div className="gauge-label"><TechTerm id="bounceRate">Bounce Rate</TechTerm> (Today)</div>
           <div className="gauge-value" style={{ color: bounceColor }}>{data.bounceRate.toFixed(2)}%</div>
           <div className="gauge-bar-track">
             <div className="gauge-bar-fill" style={{ width: `${Math.min(data.bounceRate / 4 * 100, 100)}%`, background: bounceColor }} />
@@ -87,7 +88,9 @@ export default function EmailHealth() {
           </div>
           <span className="badge badge-green">ACTIVE</span>
         </div>
-        <div className="td-dim" style={{ marginTop: '8px', fontStyle: 'italic' }}>DNS: SPF + DKIM + DMARC configured. Verify at mxtoolbox.com/SuperTool</div>
+        <div className="td-dim" style={{ marginTop: '8px', fontStyle: 'italic' }}>
+          DNS: <TechTerm id="spf">SPF</TechTerm> + <TechTerm id="dkim">DKIM</TechTerm> + <TechTerm id="dmarc">DMARC</TechTerm> configured. Verify at mxtoolbox.com/SuperTool
+        </div>
       </div>
 
       {/* Inbox Status */}
