@@ -83,7 +83,7 @@ Data source: `GET /api/engines` — a new aggregate endpoint that returns `{ ite
 
 ### 4.2 Detail pane (right column)
 
-Header strip: engine name (large), one-line description, "Run now" primary button, "Enabled" toggle (PATCHes `<engine_name>_enabled` config key).
+Header strip: engine name (large), one-line description, "Run now" primary button with an optional override popover (carries forward the current `RunConfig.jsx` override surface — scope overrides like "findLeads for only one niche" or "sendEmails capped at 5"), "Enabled" toggle (PATCHes `<engine_name>_enabled` config key).
 
 Below the header, four tabs. **Not every engine shows every tab** — the tab list is derived per-engine:
 
@@ -91,7 +91,7 @@ Below the header, four tabs. **Not every engine shows every tab** — the tab li
 |---|---|---|
 | **Status** | all 6 | Three cards: Last run (status, duration), Primary output count, Cost today. Pipeline breakdown for findLeads (11-stage funnel with per-stage counts). |
 | **Config** | findLeads, sendEmails, checkReplies, sendFollowups, dailyReport | Editable form bound to `/api/config` subset. Fields per engine listed in §4.3. |
-| **Guardrails** | findLeads, sendEmails | Editable form bound to `/api/engines/:name/guardrails`. Fields per engine listed in §5.2. |
+| **Guardrails** | findLeads, sendEmails | Editable form bound to `/api/engines/:engineName/guardrails`. Fields per engine listed in §5.2. |
 | **History** | all 6 | Recent `CronLog` rows for this engine — status, started_at, duration, output size. Click row → drill into `ErrorLog` if failed. |
 
 Tab selection is in URL hash (`#config`, `#guardrails`) so deep links work.
@@ -100,9 +100,9 @@ Tab selection is in URL hash (`#config`, `#guardrails`) so deep links work.
 
 Read/write via existing `/api/config` (flat KV). Documented here to scope the form:
 
-- **findLeads:** `find_leads_enabled` (bool), `find_leads_cities` (JSON array), `find_leads_business_size` (enum: msme/sme/enterprise), `find_leads_count` (int), `find_leads_per_batch` (int), `icp_threshold_a` (int), `icp_threshold_b` (int), `icp_weights` (JSON; existing validator stays)
+- **findLeads:** `find_leads_enabled` (bool), `find_leads_cities` (JSON array), `find_leads_business_size` (enum: msme/sme/enterprise), `find_leads_count` (int), `find_leads_per_batch` (int), `icp_threshold_a` (int), `icp_threshold_b` (int), `icp_weights` (JSON; existing validator at `src/api/routes/config.js:14-26` stays)
 - **sendEmails:** `send_emails_enabled`, `daily_send_limit`, `max_per_inbox`, `send_delay_min_ms`, `send_delay_max_ms`, `send_window_start`, `send_window_end`, `bounce_rate_hard_stop`, `claude_daily_spend_cap`
-- **checkReplies:** `check_replies_enabled` (and a new `check_replies_interval_minutes` currently hardcoded in `cron.js`)
+- **checkReplies:** `check_replies_enabled`, `check_replies_interval_minutes` (currently hardcoded in `src/scheduler/cron.js`; migrated to config in PR 2 — see §5.2)
 - **sendFollowups:** `send_followups_enabled`
 - **dailyReport:** `daily_report_enabled`, `daily_report_channels` (JSON array: `telegram` | `email`)
 
@@ -133,19 +133,22 @@ New keys added to `seedConfigDefaults()` in `src/core/db/index.js`. All values s
 | `email_max_words` | integer | `.env` `MAX_EMAIL_WORDS` | `contentValidator.js` |
 | `send_holidays` | JSON array of `YYYY-MM-DD` strings | hardcoded `sendEmails.js:15-22` | `sendEmails.js` |
 | `findleads_size_prompts` | JSON object `{ msme, sme, enterprise }` | hardcoded `findLeads.js:74-78` | `findLeads.js` |
+| `check_replies_interval_minutes` | integer | hardcoded in `src/scheduler/cron.js` | `cron.js` (determines IMAP poll cadence) |
 
-**Rollout safety belt:** for one release cycle, each consumer reads from `getConfigMap()` first and falls back to `.env`/hardcoded if the config key is missing or unparseable. The fallback is stripped in a follow-up PR after the dashboard is confirmed writing these keys.
+**Rollout safety belt:** for one release cycle, each consumer reads from `getConfigMap()` first and falls back to `.env`/hardcoded if the config key is missing or unparseable. On server boot, if any consumer is still falling back, a warning is logged listing the offending keys. Fallbacks are stripped in a dedicated follow-up PR once that warning has been silent on the VPS for 7 consecutive days — this is the single rollback trigger, superseding any per-PR language.
 
-**New route:** `GET /api/engines/:engineName/guardrails` returns the subset of keys relevant to that engine. `PUT` validates (e.g., `send_holidays` entries must parse as dates; `spam_words` must be non-empty array of strings; `email_min_words < email_max_words`) and writes via the same config update path. 400 on validation failure with `{ error, field }` shape.
+**New route:** `GET /api/engines/:engineName/guardrails` returns the keys relevant to that engine as a flat keyed object (e.g., `{ spam_words: [...], email_min_words: 40, email_max_words: 90, send_holidays: [...] }` for `sendEmails`). For engines with no guardrail surface (`checkReplies`, `sendFollowups`, `healthCheck`, `dailyReport`), the route returns `200` with `{}` — the route exists for all engines but yields nothing; the frontend hides the tab when the response is empty. `PUT` accepts the same flat shape, validates (e.g., `send_holidays` entries must parse as dates; `spam_words` must be a non-empty array of strings; `email_min_words < email_max_words`), writes via the existing config update path, and returns `{ ok: true, data: <updated keyed object> }` on success, or `400` with `{ error, field }` on validation failure.
 
 ### 5.3 API envelope standardization
 
 Applies only to routes we touch:
 
-- Collections → `{ items: [...] }`. `/api/niches` GET updated from `{ niches: [...] }`. Frontend `api.js` updated.
-- Singletons → flat object. `/api/offer` GET changes from `{ offer: {...} }` to the offer fields at top level; `/api/icp-profile` same.
-- Mutations → `{ ok: true, data: <updated record> }`. Replaces ad-hoc `{ ok: true }` / `{ ok: true, id }` shapes.
-- Errors → `{ error: <message>, field?: <name> }`.
+- **Collections, GET** → `{ items: [...] }`. `/api/niches` GET updated from `{ niches: [...] }`. Frontend `api.js` updated.
+- **Singletons, GET** → flat object (record fields at top level). `/api/offer` GET changes from `{ offer: {...} }` to the offer fields at top level; `/api/icp-profile` same; `/api/config` stays flat (unchanged); `/api/engines/:engineName/guardrails` GET is flat per §5.2.
+- **Mutations, response** → `{ ok: true, data: <updated record or keyed object> }`. Replaces ad-hoc `{ ok: true }` / `{ ok: true, id }` shapes.
+- **Errors** → `{ error: <message>, field?: <name> }`.
+
+**Rationale for the GET/PUT asymmetry:** GET responses are flat so the frontend can assign directly into form state without unwrapping (`setForm(await api.getOffer())`). PUT responses wrap in `{ ok, data }` so the same response can carry validation errors (`{ ok: false, error, field }`) or updated data without the client having to distinguish shapes by status code alone. The frontend wrapper in `web/src/api.js` hides this asymmetry — callers see the flat record in both cases.
 
 Operational routes (`/api/leads`, `/api/send-log`, `/api/replies`, `/api/sequences`, `/api/cron-status`, `/api/health`, `/api/costs`, `/api/errors`, `/api/funnel`, `/api/run-engine`, `/api/overview`) are not touched. Their current shapes stay.
 
@@ -155,7 +158,9 @@ Three new components, all in `web/src/components/`:
 
 ### 6.1 `<SettingsPage>`
 
-Shared skeleton for Niches, Offer & ICP, Email Voice. Props: `title`, `description`, `onSave`, `onReset`, `dirty`, `saving`, `lastSavedAt`. Children render the form body. Skeleton provides: sticky header (title + description + `ⓘ` tooltip), scrollable body, footer bar (Save · Reset · "Last saved Xm ago"). Form dirty-state handled at this layer; children don't reimplement.
+Shared skeleton for Niches, Offer & ICP, Email Voice. Props: `title`, `description`, `onSave(values)`, `onReset()`, `initialValues`. Skeleton provides: sticky header (title + description + `ⓘ` tooltip), scrollable body, footer bar (Save · Reset · "Last saved Xm ago").
+
+**Dirty-state mechanism:** `<SettingsPage>` exposes a React context (`SettingsFormContext`) and a matching `useSettingsField(name)` hook. Children register inputs via the hook (`const {value, onChange} = useSettingsField('email_min_words')`), which auto-wires controlled inputs into the parent's form state. The parent tracks dirty-state by diffing current values against `initialValues`, enables/disables the Save button accordingly, and passes the full values object to `onSave`. Children don't own form state, don't track dirtiness, don't reimplement save-in-progress spinners. This is the only way children talk to the parent about form state.
 
 ### 6.2 `<TechTerm>`
 
@@ -167,7 +172,7 @@ Wraps a technical term with an inline `ⓘ` icon. Reads the definition from a ce
 
 Keyed by id (not the term text) so we can rephrase labels without breaking the glossary. Glossary entries include a short (<12 word) definition and a "learn more" anchor for a future docs page. Tooltip is hover-on-desktop, tap-on-mobile.
 
-Initial glossary set (drafted by the brainstorm; final wording locked in PR 6): bounce rate, spam rate, DMARC, SPF, DKIM, ICP, warmup, IMAP, grounding, MEV, RBL zone, cron, throttle, deliverability.
+Initial glossary set (14 entries; final wording locked in PR 6): bounce rate, spam rate, DMARC, SPF, DKIM, ICP, warmup, IMAP, grounding, MEV, RBL zone, cron, throttle, deliverability. The list is a starting set — PR 6 will likely add entries discovered while applying `<TechTerm>` across the existing pages (e.g., "bounce rate hard stop", "send window", "per-batch"). The glossary file is meant to grow; 14 is the starting line, not the ceiling.
 
 ### 6.3 `<EngineStatusPill>`
 
@@ -227,7 +232,8 @@ Six PRs, each independently mergeable and deployable. Branch from `main` sequent
 - New aggregate endpoint `GET /api/engines` consolidating the per-engine status/latest/stats calls.
 - Guardrails tab wires to the route added in PR 2.
 - Add `<EngineStatusPill>` component; reuse in master list.
-- After PR 4 lands on staging and config reads from DB confirm working, open a follow-up PR stripping the `.env`/hardcoded fallbacks from PR 2.
+- Reuse the existing `RunConfig.jsx` override component inside the Status tab's run-now panel (see §4.2) rather than reimplementing.
+- Stripping the PR 2 `.env`/hardcoded fallbacks is a separate follow-up PR (see §11) triggered only by the §10 rule — not bundled here.
 
 **Success:** run-now button triggers an engine and the Status tab updates in <5s; Config edits persist; Guardrails edits take effect on next engine run.
 
@@ -253,11 +259,13 @@ Six PRs, each independently mergeable and deployable. Branch from `main` sequent
 
 - **Backend:** vitest for each new/changed route. Existing engine tests stay green; add tests for config-fallback behavior and guardrail validation.
 - **Frontend:** no test framework exists today. Out of scope to add one; smoke-test manually in the browser against the VPS DB (via SSH tunnel) after each PR.
+- **Redirect coverage (PR 3):** vitest unit test imports the redirect map from `App.jsx` and asserts every old top-level route (17 paths) has an entry pointing at a current page. Also a passive check: log 404s for the first week post-deploy and patch any gaps (listed as a mitigation in §10).
 - **Regression checkpoints after each PR:**
   - Run `findLeads` end-to-end (gates, ICP scoring, lead write)
   - Run `sendEmails` dry-run (content validator, send window, bounce check)
   - Run `checkReplies` against a seeded inbox
-- **VPS deploy checkpoint** after PR 4 and PR 6. PM2 restart; tail logs for 10 minutes; confirm cron schedule still resolves.
+- **Migration cadence:** every PR that ships a Prisma migration (PR 1, PR 2) runs `prisma migrate deploy` on the VPS as the first step of its deploy — before the PM2 restart, before any code is live. Migrations that drop columns (PR 1's `Lead.icpPriority`) run during a scheduled quiet window (check-replies interval, not during send window 09:30–17:30 IST). Migrations never auto-run from the app; they're an explicit deploy step.
+- **VPS deploy checkpoint** after every PR that changes server-side behavior (PRs 1, 2, 4, 5). PM2 restart; tail logs for 10 minutes; confirm cron schedule still resolves; confirm the startup "still-falling-back-to-env" warning list matches what's expected for the current PR. PRs 3 and 6 are frontend-only and deploy via the nginx static path without a PM2 restart.
 
 ## 10. Risks & mitigations
 
@@ -278,10 +286,10 @@ Six PRs, each independently mergeable and deployable. Branch from `main` sequent
 - "Show explanations" header toggle for inline helper text.
 - Global search across leads/replies/errors.
 - Mobile/PWA polish (on Phase 1.5 roadmap, separate effort).
+- **Orphan-settings fallback removal** — after the PR 2 safety-belt rule in §5.2 is satisfied (7 silent days), a small follow-up PR strips the `.env`/hardcoded fallbacks from `contentValidator.js`, `sendEmails.js`, `findLeads.js`, and `cron.js`. Tracked as a follow-up, not one of the six core PRs.
 
 ## 12. Open questions
 
 None blocking. Carried forward into plan:
 
-- Exact wording for the 14 initial glossary entries — I'll draft in PR 6 and ask for review before merge.
-- Whether "Run now" should accept a scoped override (e.g., run findLeads for only one niche) — current EngineRunner supports overrides via `RunConfig.jsx`. Keep the override UI on the Status tab for PR 4. If it ends up unused, strip in a follow-up.
+- Exact wording for the initial glossary entries — drafted in PR 6, reviewed before merge.
