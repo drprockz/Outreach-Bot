@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
+import { prisma, getConfigMap, getConfigInt } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -14,6 +14,10 @@ function datesWithin(nDays) {
 }
 
 router.get('/', async (req, res) => {
+  const cfg = await getConfigMap();
+  const threshA = getConfigInt(cfg, 'icp_threshold_a', 70);
+  const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
+
   // Aggregate over every lead — easiest to fetch lean projection and fold in JS
   const leads = await prisma.lead.findMany({
     select: {
@@ -21,7 +25,6 @@ router.get('/', async (req, res) => {
       websiteQualityScore: true,
       contactEmail: true,
       emailStatus: true,
-      icpPriority: true,
       icpScore: true,
       judgeSkip: true,
       category: true,
@@ -36,15 +39,15 @@ router.get('/', async (req, res) => {
     judge_passed: 0,
     email_found: 0,
     email_valid: 0,
-    icp_ab: 0,
+    icp_ready: 0,      // score >= threshB (previously icp_ab)
     nurture: 0,
     ready: 0,
     sent: 0,
     replied: 0,
     unsubscribed: 0,
-    icp_a: 0,
-    icp_b: 0,
-    icp_c: 0,
+    icp_high: 0,       // score >= threshA
+    icp_medium: 0,     // threshB <= score < threshA
+    icp_low: 0,        // score < threshB
   };
 
   const dropReasons = {
@@ -53,7 +56,7 @@ router.get('/', async (req, res) => {
     no_email: 0,
     email_invalid: 0,
     deduped: 0,
-    icp_c_nurture: 0,
+    icp_low_nurture: 0,
     email_not_found: 0,
   };
 
@@ -64,36 +67,43 @@ router.get('/', async (req, res) => {
   const confidenceMap = new Map();
 
   for (const l of leads) {
+    const score = l.icpScore;
+    const scored = Number.isFinite(score);
+    const isHigh   = scored && score >= threshA;
+    const isMedium = scored && score >= threshB && score < threshA;
+    const isLow    = scored && score < threshB;
+    const isReady  = scored && score >= threshB;
+
     if (l.status !== 'discovered' && l.status !== 'extraction_failed') stages.extracted++;
     if (l.websiteQualityScore !== null) stages.judge_passed++;
     if (l.contactEmail !== null) stages.email_found++;
     if (l.emailStatus === 'valid' || l.emailStatus === 'catch-all') stages.email_valid++;
-    if (l.icpPriority === 'A' || l.icpPriority === 'B') stages.icp_ab++;
+    if (isReady) stages.icp_ready++;
     if (l.status === 'nurture') stages.nurture++;
     if (l.status === 'ready') stages.ready++;
     if (l.status === 'sent' || l.status === 'replied' || l.status === 'bounced') stages.sent++;
     if (l.status === 'replied') stages.replied++;
     if (l.status === 'unsubscribed') stages.unsubscribed++;
-    if (l.icpPriority === 'A') stages.icp_a++;
-    if (l.icpPriority === 'B') stages.icp_b++;
-    if (l.icpPriority === 'C') stages.icp_c++;
+    if (isHigh)   stages.icp_high++;
+    if (isMedium) stages.icp_medium++;
+    if (isLow)    stages.icp_low++;
 
     if (l.status === 'extraction_failed') dropReasons.extraction_failed++;
     if (l.judgeSkip) dropReasons.gate1_modern_stack++;
     if (l.websiteQualityScore !== null && l.contactEmail === null) dropReasons.no_email++;
     if (l.emailStatus === 'invalid' || l.emailStatus === 'disposable') dropReasons.email_invalid++;
     if (l.status === 'deduped') dropReasons.deduped++;
-    if (l.icpPriority === 'C') dropReasons.icp_c_nurture++;
+    if (isLow) dropReasons.icp_low_nurture++;
     if (l.status === 'email_not_found') dropReasons.email_not_found++;
 
     // byCategory
     const cat = l.category || 'unknown';
-    if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, icp_a: 0, icp_b: 0, icp_c: 0, ready_or_sent: 0 });
+    if (!categoryMap.has(cat)) categoryMap.set(cat, { category: cat, total: 0, icp_high: 0, icp_medium: 0, icp_low: 0, ready_or_sent: 0 });
     const catRow = categoryMap.get(cat);
     catRow.total++;
-    if (l.icpPriority === 'A') catRow.icp_a++;
-    if (l.icpPriority === 'B') catRow.icp_b++;
-    if (l.icpPriority === 'C') catRow.icp_c++;
+    if (isHigh)   catRow.icp_high++;
+    if (isMedium) catRow.icp_medium++;
+    if (isLow)    catRow.icp_low++;
     if (l.status === 'ready' || l.status === 'sent' || l.status === 'replied') catRow.ready_or_sent++;
 
     // byCity
@@ -153,7 +163,7 @@ router.get('/', async (req, res) => {
     judge_passed: r.leadsJudgePassed || 0,
     email_found: r.leadsEmailFound || 0,
     email_valid: r.leadsEmailValid || 0,
-    icp_ab: r.leadsIcpAb || 0,
+    icp_ready: r.leadsIcpAb || 0,
     ready: r.leadsReady || 0,
     sent: r.emailsSent || 0,
   }));

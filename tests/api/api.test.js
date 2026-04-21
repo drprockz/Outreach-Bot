@@ -26,10 +26,10 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
-  const { resetDb, seedConfigDefaults, seedNichesAndIcpRules } = await import('../../src/core/db/index.js');
+  const { resetDb, seedConfigDefaults, seedNichesAndDefaults } = await import('../../src/core/db/index.js');
   await resetDb();
   await seedConfigDefaults();
-  await seedNichesAndIcpRules();
+  await seedNichesAndDefaults();
 });
 
 afterAll(async () => {
@@ -370,70 +370,8 @@ describe('DELETE /api/niches/:id', () => {
   });
 });
 
-describe('GET /api/icp-rules', () => {
-  it('returns seeded rules', async () => {
-    const token = await getToken();
-    const res = await fetch(`${baseUrl}/api/icp-rules`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(Array.isArray(data.rules)).toBe(true);
-    expect(data.rules.length).toBe(8);
-    expect(data.rules[0].points).toBe(3);
-  });
-});
-
-describe('PUT /api/icp-rules', () => {
-  it('bulk-replaces rules and re-sequences sort_order', async () => {
-    const token = await getToken();
-    const newRules = [
-      { label: 'Rule A', points: 2, description: null, enabled: 1 },
-      { label: 'Rule B', points: -1, description: 'desc', enabled: 1 },
-    ];
-    const res = await fetch(`${baseUrl}/api/icp-rules`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(newRules)
-    });
-    expect(res.status).toBe(200);
-
-    const listRes = await fetch(`${baseUrl}/api/icp-rules`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const { rules } = await listRes.json();
-    expect(rules.length).toBe(2);
-    expect(rules[0].label).toBe('Rule A');
-    expect(rules[0].sort_order).toBe(0);
-    expect(rules[1].sort_order).toBe(1);
-  });
-
-  it('rolls back entirely if a rule has invalid points', async () => {
-    const token = await getToken();
-    const beforeRes = await fetch(`${baseUrl}/api/icp-rules`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const { rules: before } = await beforeRes.json();
-
-    const badRules = [
-      { label: 'Good', points: 2, enabled: 1 },
-      { label: 'Bad', points: 99, enabled: 1 }, // invalid
-    ];
-    const res = await fetch(`${baseUrl}/api/icp-rules`, {
-      method: 'PUT',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(badRules)
-    });
-    expect(res.status).toBe(400);
-
-    const afterRes = await fetch(`${baseUrl}/api/icp-rules`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    const { rules: after } = await afterRes.json();
-    expect(after.length).toBe(before.length);
-  });
-
-  it('PUT /api/config rejects icp_weights with negative values (even if sum is 100)', async () => {
+describe('PUT /api/config icp_weights validation', () => {
+  it('rejects icp_weights with negative values (even if sum is 100)', async () => {
     const token = await getToken();
     const r = await fetch(`${baseUrl}/api/config`, {
       method: 'PUT',

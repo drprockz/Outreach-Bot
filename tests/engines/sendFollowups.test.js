@@ -47,7 +47,6 @@ beforeEach(async () => {
       contactEmail: 'john@acme.com',
       contactName: 'John',
       category: 'restaurant',
-      icpPriority: 'A',
       icpScore: 80,
       status: 'sent',
       emails: {

@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today } from '../../core/db/index.js';
+import { prisma, today, getConfigMap, getConfigInt } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -23,7 +23,7 @@ function metricsToSnake(m) {
     leads_judge_passed: m.leadsJudgePassed,
     leads_email_found: m.leadsEmailFound,
     leads_email_valid: m.leadsEmailValid,
-    leads_icp_ab: m.leadsIcpAb,
+    leads_icp_ready: m.leadsIcpAb,
     leads_ready: m.leadsReady,
     leads_disqualified: m.leadsDisqualified,
     emails_attempted: m.emailsAttempted,
@@ -100,13 +100,16 @@ router.get('/', async (req, res) => {
   const weekMetrics = await sumWindow(7);
   const monthMetrics = await sumWindow(30);
 
+  const cfg = await getConfigMap();
+  const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
+
   const leads = await prisma.lead.findMany({
     select: {
       status: true,
       websiteQualityScore: true,
       contactEmail: true,
       emailStatus: true,
-      icpPriority: true,
+      icpScore: true,
     },
   });
 
@@ -116,7 +119,7 @@ router.get('/', async (req, res) => {
     judged: 0,
     email_found: 0,
     email_valid: 0,
-    icp_ab: 0,
+    icp_ready: 0,
     sent: 0,
     replied: 0,
   };
@@ -125,7 +128,7 @@ router.get('/', async (req, res) => {
     if (l.websiteQualityScore !== null) funnel.judged++;
     if (l.contactEmail !== null) funnel.email_found++;
     if (l.emailStatus === 'valid' || l.emailStatus === 'catch-all') funnel.email_valid++;
-    if (l.icpPriority === 'A' || l.icpPriority === 'B') funnel.icp_ab++;
+    if (Number.isFinite(l.icpScore) && l.icpScore >= threshB) funnel.icp_ready++;
     if (l.status === 'sent' || l.status === 'replied') funnel.sent++;
     if (l.status === 'replied') funnel.replied++;
   }

@@ -3,17 +3,17 @@ import { bucket, clampInt } from '../../../src/core/ai/icpScorer.js';
 import { truncateAll, closeTestPrisma, getTestPrisma } from '../../helpers/testDb.js';
 
 describe('bucket()', () => {
-  it('returns A when score >= threshA', () => {
-    expect(bucket(70, 70, 40)).toBe('A');
-    expect(bucket(100, 70, 40)).toBe('A');
+  it('returns "high" when score >= threshA', () => {
+    expect(bucket(70, 70, 40)).toBe('high');
+    expect(bucket(100, 70, 40)).toBe('high');
   });
-  it('returns B when threshB <= score < threshA', () => {
-    expect(bucket(69, 70, 40)).toBe('B');
-    expect(bucket(40, 70, 40)).toBe('B');
+  it('returns "medium" when threshB <= score < threshA', () => {
+    expect(bucket(69, 70, 40)).toBe('medium');
+    expect(bucket(40, 70, 40)).toBe('medium');
   });
-  it('returns C when score < threshB', () => {
-    expect(bucket(39, 70, 40)).toBe('C');
-    expect(bucket(0, 70, 40)).toBe('C');
+  it('returns "low" when score < threshB', () => {
+    expect(bucket(39, 70, 40)).toBe('low');
+    expect(bucket(0, 70, 40)).toBe('low');
   });
 });
 
@@ -105,19 +105,17 @@ describe('scoreLead', () => {
     const { scoreLead } = await import('../../../src/core/ai/icpScorer.js');
     const result = await scoreLead(lead, ctx);
     expect(result.icp_score).toBe(75);
-    expect(result.icp_priority).toBe('A');
     expect(result.icp_key_matches).toEqual(['restaurant industry match', 'Mumbai geo']);
     expect(result.icp_disqualifiers).toEqual([]);
     expect(result.costUsd).toBe(0.001);
   });
 
-  it('falls back to 0/C/parse_error on malformed JSON', async () => {
+  it('falls back to 0/parse_error on malformed JSON', async () => {
     const { callGemini } = await import('../../../src/core/ai/gemini.js');
     callGemini.mockResolvedValueOnce({ text: 'not json at all', costUsd: 0.001 });
     const { scoreLead } = await import('../../../src/core/ai/icpScorer.js');
     const result = await scoreLead(lead, ctx);
     expect(result.icp_score).toBe(0);
-    expect(result.icp_priority).toBe('C');
     expect(result.icp_key_gaps).toEqual(['scorer_parse_error']);
     expect(result.icp_reason).toBe('parse error');
   });
@@ -158,6 +156,5 @@ describe('scoreLead', () => {
     const { scoreLead } = await import('../../../src/core/ai/icpScorer.js');
     const result = await scoreLead(lead, ctx);
     expect(result.icp_score).toBe(50);
-    expect(result.icp_priority).toBe('B');
   });
 });

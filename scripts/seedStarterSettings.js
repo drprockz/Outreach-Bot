@@ -6,10 +6,10 @@
 // Usage:   node scripts/seedStarterSettings.js
 //   or:    node scripts/seedStarterSettings.js --force   (overwrite existing)
 //
-// Also verifies Persona config keys + legacy ICP Rubric rules are seeded.
+// Also verifies Persona config keys are seeded.
 
 import 'dotenv/config';
-import { getPrisma, seedConfigDefaults, seedNichesAndIcpRules, resetDb } from '../src/core/db/index.js';
+import { getPrisma, seedConfigDefaults, seedNichesAndDefaults, resetDb } from '../src/core/db/index.js';
 
 const FORCE = process.argv.includes('--force');
 
@@ -161,14 +161,14 @@ const ICP_PROFILE_STARTER = {
 async function main() {
   const prisma = getPrisma();
 
-  // 1. Make sure base config + niches + icp_rules + empty offer/profile singletons exist
+  // 1. Make sure base config + niches + empty offer/profile singletons exist
   await seedConfigDefaults();
-  await seedNichesAndIcpRules();
+  await seedNichesAndDefaults();
 
   // 2. Offer
   const offerExisting = await prisma.offer.findUnique({ where: { id: 1 } });
   if (!offerExisting) {
-    // Shouldn't happen (seedNichesAndIcpRules upserts an empty row), but handle it
+    // Shouldn't happen (seedNichesAndDefaults upserts an empty row), but handle it
     await prisma.offer.create({ data: { id: 1, ...OFFER_STARTER } });
     console.log('✅ Offer row created + seeded');
   } else if (FORCE || !offerExisting.problem) {
@@ -202,17 +202,12 @@ async function main() {
     await seedConfigDefaults();
   }
 
-  // 5. Verify ICP Rubric (legacy rules) — 8 entries expected
-  const ruleCount = await prisma.icpRule.count();
-  console.log(ruleCount >= 8 ? `✅ ICP Rubric: ${ruleCount} rules` : `⚠️  ICP Rubric only has ${ruleCount} rules (expected 8)`);
-
-  // 6. Final state summary
+  // 5. Final state summary
   const offerRow = await prisma.offer.findUnique({ where: { id: 1 } });
   const profileRow = await prisma.icpProfile.findUnique({ where: { id: 1 } });
   console.log('\n=== Final state ===');
   console.log(`Offer.problem:          ${offerRow?.problem ? '✓ configured' : '✗ EMPTY'}`);
   console.log(`ICP_Profile.industries: ${Array.isArray(profileRow?.industries) && profileRow.industries.length > 0 ? `✓ ${profileRow.industries.length} industries` : '✗ EMPTY'}`);
-  console.log(`ICP Rubric rules:       ${ruleCount}`);
   console.log(`Persona config keys:    ${personaRows.length}/${personaKeys.length}`);
   console.log('\nfindLeads can now run without the fail-fast gate. Visit /settings/offer + /settings/icp-profile in the dashboard to review + tweak.');
 

@@ -41,7 +41,6 @@ beforeEach(async () => {
       businessName: 'Acme',
       contactEmail: 'john@acme.com',
       contactName: 'John',
-      icpPriority: 'A',
       icpScore: 80,
       status: 'ready',
       emails: {
@@ -117,7 +116,6 @@ describe('sendEmails', () => {
         businessName: 'Beta',
         contactEmail: 'jane@beta.com',
         contactName: 'Jane',
-        icpPriority: 'A',
         icpScore: 90,
         status: 'ready',
         emails: {
@@ -146,7 +144,6 @@ describe('sendEmails', () => {
         businessName: 'Beta',
         contactEmail: 'jane@beta.com',
         contactName: 'Jane',
-        icpPriority: 'B',
         icpScore: 70,
         status: 'ready',
         emails: {

@@ -128,7 +128,7 @@ router.get('/status/:cronLogId', async (req, res) => {
     leads_judge_passed: metrics.leadsJudgePassed,
     leads_email_found: metrics.leadsEmailFound,
     leads_email_valid: metrics.leadsEmailValid,
-    leads_icp_ab: metrics.leadsIcpAb,
+    leads_icp_ready: metrics.leadsIcpAb,
     leads_ready: metrics.leadsReady,
     leads_disqualified: metrics.leadsDisqualified,
     icp_parse_errors: metrics.icpParseErrors,

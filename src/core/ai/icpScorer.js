@@ -7,9 +7,9 @@ export function clampInt(n, lo, hi) {
 }
 
 export function bucket(score, threshA, threshB) {
-  if (score >= threshA) return 'A';
-  if (score >= threshB) return 'B';
-  return 'C';
+  if (score >= threshA) return 'high';
+  if (score >= threshB) return 'medium';
+  return 'low';
 }
 
 function stripJson(text) {
@@ -82,7 +82,7 @@ function summarize({ key_matches, key_gaps, disqualifiers }) {
 }
 
 export async function scoreLead(lead, ctx) {
-  const { offer, icp, weights, threshA, threshB } = ctx;
+  const { offer, icp, weights } = ctx;
   const prompt = buildScorerPrompt(lead, offer, icp, weights);
   const result = await callGemini(prompt);
 
@@ -93,7 +93,6 @@ export async function scoreLead(lead, ctx) {
     await logError('icpScorer.parse', err, { rawResponse: result.text, leadId: lead.id });
     return {
       icp_score: 0,
-      icp_priority: 'C',
       icp_breakdown: null,
       icp_key_matches: [],
       icp_key_gaps: ['scorer_parse_error'],
@@ -106,7 +105,6 @@ export async function scoreLead(lead, ctx) {
   const score = clampInt(parsed.score, 0, 100);
   return {
     icp_score:         score,
-    icp_priority:      bucket(score, threshA, threshB),
     icp_breakdown:     parsed.breakdown || null,
     icp_key_matches:   Array.isArray(parsed.key_matches) ? parsed.key_matches : [],
     icp_key_gaps:      Array.isArray(parsed.key_gaps) ? parsed.key_gaps : [],

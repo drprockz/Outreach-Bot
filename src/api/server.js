@@ -4,13 +4,12 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import 'dotenv/config';
 
-import { seedConfigDefaults, seedNichesAndIcpRules } from '../core/db/index.js';
+import { seedConfigDefaults, seedNichesAndDefaults } from '../core/db/index.js';
 import { requireAuth } from './middleware/auth.js';
 
 import authRoutes from './routes/auth.js';
 import configRoutes from './routes/config.js';
 import nichesRoutes from './routes/niches.js';
-import icpRulesRoutes from './routes/icpRules.js';
 import overviewRoutes from './routes/overview.js';
 import leadsRoutes from './routes/leads.js';
 import funnelRoutes from './routes/funnel.js';
@@ -38,7 +37,7 @@ if (process.env.NODE_ENV !== 'test') {
   (async () => {
     try {
       await seedConfigDefaults();
-      await seedNichesAndIcpRules();
+      await seedNichesAndDefaults();
     } catch (err) {
       console.error('seed failed:', err);
     }
@@ -53,7 +52,6 @@ app.use('/api', requireAuth);
 
 app.use('/api/config', configRoutes);
 app.use('/api/niches', nichesRoutes);
-app.use('/api/icp-rules', icpRulesRoutes);
 app.use('/api/overview', overviewRoutes);
 app.use('/api/leads', leadsRoutes);
 app.use('/api/funnel', funnelRoutes);

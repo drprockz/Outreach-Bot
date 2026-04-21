@@ -98,17 +98,18 @@ export default async function sendEmails() {
       return;
     }
 
-    // Join leads with their pending step-0 emails
+    // Join leads with their pending step-0 emails.
+    // status='ready' already implies score >= icp_threshold_b (set by findLeads),
+    // so no additional score filter needed here.
     const queue = await prisma.lead.findMany({
       where: {
         status: 'ready',
-        icpPriority: { in: ['A', 'B'] },
         emails: { some: { sequenceStep: 0, status: 'pending' } },
       },
       include: {
         emails: { where: { sequenceStep: 0, status: 'pending' }, take: 1 },
       },
-      orderBy: [{ icpPriority: 'asc' }, { icpScore: 'desc' }],
+      orderBy: [{ icpScore: 'desc' }, { id: 'asc' }],
       take: remaining,
     });
 
