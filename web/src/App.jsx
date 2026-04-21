@@ -4,11 +4,11 @@ import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import { REDIRECTS } from './redirects';
 
-// Temporary — replaced by real pages in PR 5 / PR 6:
+// Temporary — replaced by real pages in PR 6:
 import Overview from './pages/Overview';              // Today placeholder (PR 6 replaces)
-import Offer from './pages/Offer';                    // OfferAndIcp placeholder (PR 5 replaces)
 
 import Engines from './pages/Engines';
+import OfferAndIcp from './pages/OfferAndIcp';
 
 import Leads from './pages/Leads';
 import SentEmails from './pages/SentEmails';
@@ -58,7 +58,7 @@ export default function App() {
           <Route path="outreach/replies"   element={<Replies />} />
           <Route path="outreach/funnel"    element={<Funnel />} />
           <Route path="setup/niches"       element={<Niches />} />
-          <Route path="setup/offer-icp"    element={<Offer />} />
+          <Route path="setup/offer-icp"    element={<OfferAndIcp />} />
           <Route path="setup/voice"        element={<EmailVoice />} />
           <Route path="system/spend"        element={<Spend />} />
           <Route path="system/email-health" element={<EmailHealth />} />

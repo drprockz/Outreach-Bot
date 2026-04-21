@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import SettingsPage from '../components/SettingsPage';
+import { useSettingsField } from '../components/useSettingsField';
 
 const TONE_OPTIONS = [
   { value: 'professional but direct', label: 'Professional but direct' },
@@ -8,117 +10,115 @@ const TONE_OPTIONS = [
   { value: 'custom',                  label: 'Custom…' },
 ];
 
+const KNOWN_TONES = TONE_OPTIONS.slice(0, 3).map(t => t.value);
+
+function TextField({ name, label, type = 'input' }) {
+  const { value, onChange } = useSettingsField(name);
+  return (
+    <div className="persona-field" style={type === 'textarea' ? { alignItems: 'flex-start' } : undefined}>
+      <label className="engine-field-label" style={type === 'textarea' ? { paddingTop: 6 } : undefined}>{label}</label>
+      {type === 'textarea' ? (
+        <textarea
+          className="input"
+          style={{ flex: 1, minHeight: 90, resize: 'vertical' }}
+          value={value ?? ''}
+          onChange={e => onChange(e.target.value)}
+        />
+      ) : (
+        <input
+          className="input"
+          style={{ flex: 1 }}
+          value={value ?? ''}
+          onChange={e => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
+
+function ToneSelect() {
+  const tone = useSettingsField('persona_tone');
+  const custom = useSettingsField('persona_custom_tone');
+  return (
+    <>
+      <div className="persona-field">
+        <label className="engine-field-label">Tone</label>
+        <select
+          className="select"
+          style={{ flex: 1 }}
+          value={tone.value ?? ''}
+          onChange={e => tone.onChange(e.target.value)}
+        >
+          {TONE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+        </select>
+      </div>
+      {tone.value === 'custom' && (
+        <div className="persona-field">
+          <label className="engine-field-label">Custom tone</label>
+          <input
+            className="input"
+            style={{ flex: 1 }}
+            value={custom.value ?? ''}
+            onChange={e => custom.onChange(e.target.value)}
+            placeholder="e.g. confident and concise"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function EmailVoice() {
-  const [form, setForm] = useState({
-    persona_name: '', persona_role: '', persona_company: '',
-    persona_website: '', persona_tone: 'professional but direct',
-    persona_services: '', persona_custom_tone: ''
-  });
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [initial, setInitial] = useState(null);
 
   useEffect(() => {
     api.getConfig().then(cfg => {
       if (!cfg) return;
-      const knownTones = TONE_OPTIONS.slice(0, 3).map(t => t.value);
-      const isCustom = cfg.persona_tone && !knownTones.includes(cfg.persona_tone);
-      setForm({
-        persona_name:     cfg.persona_name     || '',
-        persona_role:     cfg.persona_role     || '',
-        persona_company:  cfg.persona_company  || '',
-        persona_website:  cfg.persona_website  || '',
-        persona_tone:     isCustom ? 'custom' : (cfg.persona_tone || 'professional but direct'),
-        persona_services: cfg.persona_services || '',
-        persona_custom_tone: isCustom ? cfg.persona_tone : '',
+      const storedTone = cfg.persona_tone || 'professional but direct';
+      const isCustom = storedTone && !KNOWN_TONES.includes(storedTone);
+      setInitial({
+        persona_name:        cfg.persona_name        || '',
+        persona_role:        cfg.persona_role        || '',
+        persona_company:     cfg.persona_company     || '',
+        persona_website:     cfg.persona_website     || '',
+        persona_tone:        isCustom ? 'custom' : storedTone,
+        persona_services:    cfg.persona_services    || '',
+        persona_custom_tone: isCustom ? storedTone : '',
       });
-      setLoading(false);
     });
   }, []);
 
-  function set(field, value) { setForm(f => ({ ...f, [field]: value })); }
-
-  async function handleSave() {
-    setSaving(true);
-    const effectiveTone = form.persona_tone === 'custom' ? form.persona_custom_tone : form.persona_tone;
-    await api.updateConfig({
-      persona_name:     form.persona_name,
-      persona_role:     form.persona_role,
-      persona_company:  form.persona_company,
-      persona_website:  form.persona_website,
-      persona_tone:     effectiveTone,
-      persona_services: form.persona_services,
-    });
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  }
-
-  if (loading) return <div><h1 className="page-title">Email Persona</h1><div className="td-muted">Loading…</div></div>;
+  if (!initial) return <div><h1 className="page-title">Email Voice</h1><div className="td-muted">Loading…</div></div>;
 
   return (
-    <div style={{ maxWidth: '540px' }}>
-      <h1 className="page-title">Email Persona</h1>
-      <p className="td-muted" style={{ marginBottom: '24px', fontSize: '12px' }}>
-        These values are injected into every Claude prompt when generating hooks and email bodies.
-      </p>
-
-      <div className="persona-form">
-        {[
-          { key: 'persona_name',    label: 'Your name' },
-          { key: 'persona_role',    label: 'Role' },
-          { key: 'persona_company', label: 'Company' },
-          { key: 'persona_website', label: 'Website' },
-        ].map(({ key, label }) => (
-          <div key={key} className="persona-field">
-            <label className="engine-field-label">{label}</label>
-            <input
-              className="input"
-              style={{ flex: 1 }}
-              value={form[key]}
-              onChange={e => set(key, e.target.value)}
-            />
-          </div>
-        ))}
-
-        <div className="persona-field">
-          <label className="engine-field-label">Tone</label>
-          <select className="select" style={{ flex: 1 }} value={form.persona_tone} onChange={e => set('persona_tone', e.target.value)}>
-            {TONE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-          </select>
+    <div style={{ maxWidth: 540 }}>
+      <SettingsPage
+        title="Email Voice"
+        description="These values are injected into every Claude prompt when generating hooks and email bodies."
+        initialValues={initial}
+        onSave={async (values) => {
+          const effectiveTone = values.persona_tone === 'custom' ? values.persona_custom_tone : values.persona_tone;
+          await api.updateConfig({
+            persona_name:     values.persona_name,
+            persona_role:     values.persona_role,
+            persona_company:  values.persona_company,
+            persona_website:  values.persona_website,
+            persona_tone:     effectiveTone,
+            persona_services: values.persona_services,
+          });
+          // Re-seed initial so the dirty-check clears after save
+          setInitial(values);
+        }}
+      >
+        <div className="persona-form">
+          <TextField name="persona_name"    label="Your name" />
+          <TextField name="persona_role"    label="Role" />
+          <TextField name="persona_company" label="Company" />
+          <TextField name="persona_website" label="Website" />
+          <ToneSelect />
+          <TextField name="persona_services" label="Services offered" type="textarea" />
         </div>
-
-        {form.persona_tone === 'custom' && (
-          <div className="persona-field">
-            <label className="engine-field-label">Custom tone</label>
-            <input
-              className="input"
-              style={{ flex: 1 }}
-              value={form.persona_custom_tone}
-              onChange={e => set('persona_custom_tone', e.target.value)}
-              placeholder="e.g. confident and concise"
-            />
-          </div>
-        )}
-
-        <div className="persona-field" style={{ alignItems: 'flex-start' }}>
-          <label className="engine-field-label" style={{ paddingTop: '6px' }}>Services offered</label>
-          <textarea
-            className="input"
-            style={{ flex: 1, minHeight: '90px', resize: 'vertical' }}
-            value={form.persona_services}
-            onChange={e => set('persona_services', e.target.value)}
-            placeholder="Claude uses this as context when writing hooks and email bodies"
-          />
-        </div>
-      </div>
-
-      <div style={{ marginTop: '24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <button className="btn-primary" onClick={handleSave} disabled={saving}>
-          {saving ? 'Saving…' : 'Save Persona'}
-        </button>
-        {saved && <span className="saved-confirm">Saved ✓</span>}
-      </div>
+      </SettingsPage>
     </div>
   );
 }

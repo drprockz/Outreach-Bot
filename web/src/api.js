@@ -63,10 +63,13 @@ export const api = {
   funnel: () => request('/funnel'),
   getConfig:      ()          => request('/config'),
   updateConfig:   (obj)       => request('/config', { method: 'PUT', body: JSON.stringify(obj) }),
-  getNiches:      ()          => request('/niches'),
+  // Niches: GET returns { items }, mutations return { ok, data }
+  getNiches:      ()          => request('/niches').then(r => r?.items || []),
   createNiche:    (data)      => request('/niches', { method: 'POST', body: JSON.stringify(data) }),
   updateNiche:    (id, data)  => request(`/niches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteNiche:    (id)        => request(`/niches/${id}`, { method: 'DELETE' }),
+
+  // Offer + ICP Profile: GET returns the flat record; PUT returns { ok, data }
   getOffer:         ()     => request('/offer'),
   updateOffer:      (data) => request('/offer', { method: 'PUT', body: JSON.stringify(data) }),
   getIcpProfile:    ()     => request('/icp-profile'),

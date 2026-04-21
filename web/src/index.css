@@ -1289,6 +1289,39 @@ tbody tr:hover { background: var(--bg-elevated); }
 }
 .saved-confirm { color: var(--green); font-size: 11px; }
 
+/* ── SettingsPage skeleton ────────────────────────────────── */
+.settings-page-header { margin-bottom: var(--space-lg); }
+.settings-page-body { margin-bottom: var(--space-xl); }
+.settings-page-footer {
+  position: sticky;
+  bottom: 0;
+  background: var(--bg-base);
+  padding: var(--space-md) 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+/* ── Sub-tab nav (used on OfferAndIcp page) ────────────────── */
+.subtabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-lg);
+}
+.subtab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.subtab:hover { color: var(--text-1); }
+.subtab.active { color: var(--green); border-bottom-color: var(--green); }
+
 /* ── Engines page (master/detail) ─────────────────────────── */
 .engines-page {
   display: grid;

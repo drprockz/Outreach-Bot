@@ -13,8 +13,11 @@ export default function Niches() {
   const [error, setError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null); // niche id
 
+  // NOTE: Niches is a list-management page with per-row CRUD, not a single form,
+  // so it doesn't fit the <SettingsPage> single-Save pattern. It consumes the
+  // same {items} envelope via api.getNiches() which returns the array directly.
   function load() {
-    api.getNiches().then(d => { setNiches(d?.niches || []); setLoading(false); });
+    api.getNiches().then(items => { setNiches(items || []); setLoading(false); });
   }
   useEffect(load, []);
 
