@@ -23,6 +23,7 @@ import errorsRoutes from './routes/errors.js';
 import offerRoutes from './routes/offer.js';
 import icpProfileRoutes from './routes/icpProfile.js';
 import runEngineRoutes from './routes/runEngine.js';
+import enginesRoutes from './routes/engines.js';
 import engineGuardrailsRoutes from './routes/engineGuardrails.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -101,6 +102,9 @@ app.use('/api/errors', errorsRoutes);
 app.use('/api/offer', offerRoutes);
 app.use('/api/icp-profile', icpProfileRoutes);
 app.use('/api/run-engine', runEngineRoutes);
+// Aggregate list first so GET /api/engines matches; guardrails router handles
+// /api/engines/:engineName/guardrails (non-overlapping path, falls through).
+app.use('/api/engines', enginesRoutes);
 app.use('/api/engines', engineGuardrailsRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
