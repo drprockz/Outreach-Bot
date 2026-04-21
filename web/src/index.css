@@ -1289,6 +1289,17 @@ tbody tr:hover { background: var(--bg-elevated); }
 }
 .saved-confirm { color: var(--green); font-size: 11px; }
 
+/* ── TechTerm tooltip wrapper ─────────────────────────────── */
+.techterm {
+  border-bottom: 1px dotted var(--text-3);
+  cursor: help;
+}
+.techterm-info {
+  color: var(--text-3);
+  font-size: 0.85em;
+  margin-left: 2px;
+}
+
 /* ── SettingsPage skeleton ────────────────────────────────── */
 .settings-page-header { margin-bottom: var(--space-lg); }
 .settings-page-body { margin-bottom: var(--space-xl); }
