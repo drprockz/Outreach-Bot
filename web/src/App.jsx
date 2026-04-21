@@ -4,10 +4,11 @@ import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
 import { REDIRECTS } from './redirects';
 
-// Temporary — replaced by real pages in PR 4 / PR 5 / PR 6:
+// Temporary — replaced by real pages in PR 5 / PR 6:
 import Overview from './pages/Overview';              // Today placeholder (PR 6 replaces)
-import EngineRunner from './pages/EngineRunner';      // Engines placeholder (PR 4 replaces)
 import Offer from './pages/Offer';                    // OfferAndIcp placeholder (PR 5 replaces)
+
+import Engines from './pages/Engines';
 
 import Leads from './pages/Leads';
 import SentEmails from './pages/SentEmails';
@@ -50,7 +51,7 @@ export default function App() {
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedLayout />}>
           <Route index               element={<Overview />} />
-          <Route path="outreach/engines"   element={<EngineRunner />} />
+          <Route path="outreach/engines"   element={<Engines />} />
           <Route path="outreach/leads"     element={<Leads />} />
           <Route path="outreach/sent"      element={<SentEmails />} />
           <Route path="outreach/followups" element={<Followups />} />

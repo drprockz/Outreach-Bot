@@ -1289,6 +1289,80 @@ tbody tr:hover { background: var(--bg-elevated); }
 }
 .saved-confirm { color: var(--green); font-size: 11px; }
 
+/* ── Engines page (master/detail) ─────────────────────────── */
+.engines-page {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  gap: var(--space-lg);
+  align-items: start;
+}
+.engines-master {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-sm);
+  position: sticky;
+  top: var(--space-md);
+}
+.engines-detail {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-lg);
+}
+.engines-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.engines-header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-md);
+}
+.engines-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-md);
+}
+.engines-tab {
+  background: none;
+  border: none;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+}
+.engines-tab:hover { color: var(--text-1); }
+.engines-tab.active { color: var(--green); border-bottom-color: var(--green); }
+.engines-tabpanel { padding-top: var(--space-sm); }
+
+.engine-pill {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  margin-bottom: 2px;
+  font-family: inherit;
+}
+.engine-pill:hover { background: var(--bg-hover); }
+.engine-pill.selected {
+  background: var(--bg-elevated);
+  border-left: 3px solid var(--green);
+  padding-left: 7px;
+}
+.engine-pill-name { font-weight: 600; font-size: 13px; color: var(--text-1); }
+.engine-pill-meta { color: var(--text-3); font-size: 11px; margin-top: 2px; }
+
 /* ── ICP Rules ────────────────────────────────────────────── */
 .icp-rules-list { display: flex; flex-direction: column; gap: 8px; max-width: 760px; }
 .icp-rule-row {

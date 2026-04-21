@@ -72,6 +72,12 @@ export const api = {
   getIcpProfile:    ()     => request('/icp-profile'),
   updateIcpProfile: (data) => request('/icp-profile', { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Aggregate + per-engine guardrails (dashboard Engines page)
+  getEngines:       () => request('/engines'),
+  getGuardrails:    (name) => request(`/engines/${name}/guardrails`),
+  saveGuardrails:   (name, payload) =>
+    request(`/engines/${name}/guardrails`, { method: 'PUT', body: JSON.stringify(payload) }),
+
   // On-demand engine runs (dashboard-triggered, separate from scheduled cron).
   // runEngine returns { status, ok, body } — caller checks `ok` for 409 etc.
   runEngine:        (engineName, override = {}) =>
