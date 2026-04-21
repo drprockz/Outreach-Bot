@@ -264,7 +264,7 @@ try {
 }
 ```
 
-**Rollback guarantee**: If `$transaction` throws for any reason (email create fails, P2002 on lead create, network drop, Prisma engine panic), Prisma rolls back both writes atomically. No `status='ready'` lead can exist in the DB without its matching `emails` row after this change — by construction.
+**Rollback guarantee**: If `$transaction` throws for any reason (email create fails, P2002 on lead create, Prisma client error, network drop between Node and Postgres), Prisma rolls back both writes atomically — the promise rejection is the signal our try/catch handles. The narrower edge case of the **Node process itself crashing mid-commit** (OS kill, power loss) is covered by Postgres's own transaction reaping: the uncommitted transaction never becomes visible to any other session. PM2 restarts the process; the next pipeline run sees a consistent DB. Net invariant: no `status='ready'` lead can exist in the DB without its matching `emails` row after this change.
 
 **P2002 handler ordering**: the try/catch wraps the **entire `$transaction` call**, not the callback inside it. This matters: if the catch lived inside the callback, a caught P2002 would let the transaction "succeed" with a half-applied state (because `tx.email.create` would still run). Putting the catch outside means rollback completes first, *then* the handler fires with a clean slate. This pattern is repeated at every P2002 handler in T7.
 
@@ -279,12 +279,15 @@ async function insertLead(lead, niche, status, { tx } = {}) {
     data: {
       ...existingFields,
       contactEmail: normalizeEmail(lead.contact_email),  // T6 folded in here
+      emailStatus: lead.email_status ?? null,            // see note below
     },
   });
 }
 ```
 
 Backward compatible — existing callers (without the `{tx}` arg) continue to work.
+
+**Field-mapping requirement**: T2 and T3 both set `lead.email_status` before calling `insertLead()` (to values like `'malformed:role'`, `'error:permanent'`, `'verify_skipped'`). `insertLead()` MUST map that to the Prisma `emailStatus` field — the line above is explicit. If the pre-Chunk-1 `insertLead()` didn't include `emailStatus` in its payload (likely — the field was previously only set from MEV's direct status), add it as part of this change. Without this line, every new enum value in §6.3 would silently persist as `null` in the DB, invisibly breaking the observability design.
 
 **T6. Normalize-at-every-write-site**
 
@@ -519,7 +522,7 @@ New branch coverage on top of the existing integration test:
 | MEV returns `{status:'skipped'}` (no API key mock) | Lead proceeds through pipeline to `status='ready'`, `emailStatus='verify_skipped'` |
 | Atomic insert: force `tx.email.create` to throw | After pipeline, `prisma.lead.findMany({where:{contactEmail:…}})` returns zero rows — rollback verified |
 | P2002 on lead insert (pre-seed a conflicting row, run pipeline) | `leadsSkipped` bumped, error_log entry with `source='findLeads.dedup_race'`, pipeline completes normally (does not crash) |
-| Case-insensitive dedup (normalized Set) | Pre-seed DB lead with `'JOHN@acme.com'`; Gemini discovers/extracts `'john@acme.com'` and it reaches Stage 8 dedup. Assert: `verifyEmail` mock called exactly once (MEV still runs in Stage 7), lead is dropped at Stage 8 (post-MEV), `leadsSkipped` incremented, no new `leads` row for `'john@acme.com'` |
+| Case-insensitive dedup (normalized Set) | Pre-seed DB lead with `'JOHN@acme.com'`; Gemini discovers/extracts `'john@acme.com'` and it reaches Stage 8 dedup. Assert: `verifyEmail` mock called exactly once (MEV still runs in Stage 7), lead is dropped at Stage 8 (post-MEV), `leadsSkipped` incremented, and — critically — exactly **one** row exists post-test across both casings: `SELECT COUNT(*) FROM leads WHERE LOWER(contact_email) = 'john@acme.com'` returns `1`. Using `LOWER()` in the assertion exercises the functional-index behavior end-to-end rather than relying on exact-match coincidence |
 | DB-level uniqueness catch (P2002) | Pre-seed DB row that the in-memory Set *doesn't* have (simulate a row added after the pipeline loaded its Sets, e.g., inserted mid-test). Pipeline attempts `insertLead` → Prisma throws P2002 → T7 handler fires → `leadsSkipped` incremented, `error_log` row with `source='findLeads.dedup_race'` |
 
 **Pipeline ordering for reference** (no change from current code structure; Chunk 1 only adds T2 at the top of Stage 7 and wraps Stage 10/11 in a transaction):
@@ -589,7 +592,7 @@ Chunk 1 is complete when ALL of these hold:
    WHERE l.status = 'ready' AND e.id IS NULL;
   ```
   Expected result: zero rows. Any row returned is an orphan from pre-Chunk-1 data or a bug.
-- [ ] First week of error_log shows sensible distribution: occasional transient MEV retries, zero `findLeads.dedup_race` entries (if non-zero, investigate — means the in-memory Set pre-check has a bug or the functional-index error-shape predicate in T7 needs adjusting)
+- [ ] First week of error_log shows sensible distribution: occasional transient MEV retries are normal. `findLeads.dedup_race` entries are **expected at low rate** (historical unnormalized rows produce case-variant races until they age out of the cooldown window); sustained rate of >5 entries/day means investigate (likely the in-memory Set pre-check has a bug or the functional-index error-shape predicate in T7 needs adjusting for the pinned Prisma version)
 - [ ] `leadsEmailVerifySkipped` stays at 0 in production (non-zero = `MEV_API_KEY` drift, investigate immediately)
 
 ## 10. Open questions / followups for later chunks
