@@ -11,34 +11,53 @@ import { sendAlert } from '../core/integrations/telegram.js';
 import { sleep } from '../core/lib/sleep.js';
 
 // ── Indian holidays (MM-DD) ──────────────────────────────
-// Includes Republic Day, Holi (~mid-Mar), Independence Day, Gandhi Jayanti, Diwali week (~late Oct/Nov)
-const HOLIDAYS = [
-  '01-26',                                          // Republic Day
-  '03-14', '03-15',                                 // Holi (approx — update yearly)
-  '08-15',                                          // Independence Day
-  '10-02',                                          // Gandhi Jayanti
-  '10-20', '10-21', '10-22', '10-23', '10-24',     // Diwali week (approx — update yearly)
-  '10-25', '10-26'
+// Fallback used when the send_holidays config key is missing or malformed.
+// Includes Republic Day, Holi (~mid-Mar), Independence Day, Gandhi Jayanti, Diwali week.
+const HARDCODED_HOLIDAYS = [
+  '01-26',
+  '03-14', '03-15',
+  '08-15',
+  '10-02',
+  '10-20', '10-21', '10-22', '10-23', '10-24',
+  '10-25', '10-26',
 ];
 
-function isHoliday(istDate) {
-  const mmdd = String(istDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
-               String(istDate.getUTCDate()).padStart(2, '0');
-  return HOLIDAYS.includes(mmdd);
+let _fellBackHolidays = false;
+export function didFallbackHolidays() { return _fellBackHolidays; }
+
+async function loadHolidays() {
+  try {
+    const cfg = await getConfigMap();
+    if (cfg.send_holidays) {
+      const parsed = JSON.parse(cfg.send_holidays);
+      if (Array.isArray(parsed) && parsed.every(d => /^\d{2}-\d{2}$/.test(d))) {
+        _fellBackHolidays = false;
+        return parsed;
+      }
+    }
+  } catch { /* fall through to hardcoded */ }
+  _fellBackHolidays = true;
+  return HARDCODED_HOLIDAYS;
 }
 
-function inSendWindow(windowStart, windowEnd) {
-  const now = new Date();
+function isHoliday(istDate, holidays) {
+  const mmdd = String(istDate.getUTCMonth() + 1).padStart(2, '0') + '-' +
+               String(istDate.getUTCDate()).padStart(2, '0');
+  return holidays.includes(mmdd);
+}
+
+export async function inSendWindow(windowStart, windowEnd, now = new Date()) {
   const istOffset = 5.5 * 60 * 60 * 1000;
   const ist = new Date(now.getTime() + istOffset);
   const day = ist.getUTCDay();
   if (day === 0) return false; // No Sunday
-  if (isHoliday(ist)) return false;
+  const holidays = await loadHolidays();
+  if (isHoliday(ist, holidays)) return false;
   const hour = ist.getUTCHours();
   const minute = ist.getUTCMinutes();
   const currentTime = hour + minute / 60;
-  const wStart = windowStart + 0.5; // env=9 → 9.5 (9:30 AM)
-  const wEnd   = windowEnd   + 0.5; // env=17 → 17.5 (5:30 PM)
+  const wStart = windowStart + 0.5;
+  const wEnd   = windowEnd   + 0.5;
   return currentTime >= wStart && currentTime < wEnd;
 }
 
@@ -74,7 +93,7 @@ export default async function sendEmails() {
       return;
     }
 
-    if (!inSendWindow(windowStart, windowEnd)) {
+    if (!(await inSendWindow(windowStart, windowEnd))) {
       await finishCron(cronId, { status: 'skipped' });
       return;
     }
@@ -137,7 +156,7 @@ export default async function sendEmails() {
       let emailBody = email.body;
       let regenerated = false;
 
-      const validation = validate(emailSubject, emailBody, 0);
+      const validation = await validate(emailSubject, emailBody, 0);
       if (!validation.valid) {
         // Regenerate once on content validation failure
         try {
@@ -167,7 +186,7 @@ Return only the email body, no subject line.`;
           }
           totalCost += costUsd;
 
-          const retryValidation = validate(emailSubject, newBody, 0);
+          const retryValidation = await validate(emailSubject, newBody, 0);
           if (!retryValidation.valid) {
             // Second fail → skip lead, log content_rejected
             await logError('sendEmails.validation', new Error(`Content rejected for lead ${lead.id}: ${retryValidation.reason}`), { jobName: 'sendEmails', errorType: 'validation_error', leadId: lead.id });

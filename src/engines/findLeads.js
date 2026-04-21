@@ -70,28 +70,54 @@ function stripJson(text) {
 }
 
 // ── Size constraint prompt fragments ──────────────────────
-const SIZE_PROMPTS = {
+// Fallback used when the findleads_size_prompts config key is missing/malformed.
+const HARDCODED_SIZE_PROMPTS = {
   msme: 'Target ONLY micro/small owner-operated businesses — 1–10 employees, turnover under ₹5cr. EXCLUDE listed companies, national brands, unicorns, VC-backed startups, companies with 50+ employees.',
   sme:  'Target ONLY small/medium regional businesses — 10–200 employees, ₹5cr–₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
   both: 'Target MSME/SME businesses only — owner-operated to regional scale, up to 200 employees, under ₹250cr turnover. EXCLUDE listed companies, unicorns, MNCs.',
 };
 
+let _fellBackSizePrompts = false;
+export function didFallbackSizePrompts() { return _fellBackSizePrompts; }
+
+export async function loadSizePrompts() {
+  try {
+    const cfg = await getConfigMap();
+    if (cfg.findleads_size_prompts) {
+      const parsed = JSON.parse(cfg.findleads_size_prompts);
+      if (parsed && typeof parsed === 'object' &&
+          typeof parsed.msme === 'string' && typeof parsed.sme === 'string' && typeof parsed.both === 'string') {
+        _fellBackSizePrompts = false;
+        return parsed;
+      }
+    }
+  } catch { /* fall through */ }
+  _fellBackSizePrompts = true;
+  return HARDCODED_SIZE_PROMPTS;
+}
+
+export async function getSizePrompt(size) {
+  const prompts = await loadSizePrompts();
+  return prompts[size] || prompts.msme;
+}
+
 // Exported for unit testing
-export function buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize) {
+export async function buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize) {
+  const sizeText = await getSizePrompt(businessSize);
   return `You are a B2B lead researcher. Discover ${perBatch} real Indian businesses in the "${niche.label}" niche that likely have outdated websites.
 
 Search query context: "${niche.query}". Batch ${batchIndex + 1} — find DIFFERENT businesses than previous batches.
 
 Geographic target: Target businesses located in: ${cities.join(', ')}. Do not return businesses from other cities.
 
-Business size: ${SIZE_PROMPTS[businessSize] || SIZE_PROMPTS.msme}
+Business size: ${sizeText}
 
 Return a JSON array of objects: [{business_name, website_url, city, category}]. Return only valid JSON, no markdown.`;
 }
 
 // ── Stage 1: Discovery — Gemini with grounding ───────────
 async function stage1_discover(niche, batchIndex, perBatch, cities, businessSize) {
-  const prompt = buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize);
+  const prompt = await buildDiscoveryPrompt(niche, batchIndex, perBatch, cities, businessSize);
   const result = await callGemini(prompt, { useGrounding: true });
   try {
     return { leads: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
