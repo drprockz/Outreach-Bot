@@ -6,7 +6,7 @@ const catBadge = {
   unsubscribe: 'badge-muted', ooo: 'badge-orange', other: 'badge-muted',
 };
 
-export default function ReplyFeed() {
+export default function Replies() {
   const [replies, setReplies] = useState([]);
   const [loading, setLoading] = useState(true);
 

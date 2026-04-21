@@ -9,7 +9,7 @@ function gaugeColor(value, warn, critical) {
 
 const BLACKLIST_ZONES = ['dbl.spamhaus.org', 'b.barracudacentral.org', 'multi.surbl.org'];
 
-export default function HealthMonitor() {
+export default function EmailHealth() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mailTesterInput, setMailTesterInput] = useState('');

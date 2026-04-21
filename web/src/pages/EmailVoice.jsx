@@ -8,7 +8,7 @@ const TONE_OPTIONS = [
   { value: 'custom',                  label: 'Custom…' },
 ];
 
-export default function EmailPersona() {
+export default function EmailVoice() {
   const [form, setForm] = useState({
     persona_name: '', persona_role: '', persona_company: '',
     persona_website: '', persona_tone: 'professional but direct',

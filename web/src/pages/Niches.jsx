@@ -5,7 +5,7 @@ const DAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 
 const emptyForm = { label: '', query: '', day_of_week: null, enabled: 1 };
 
-export default function NicheManager() {
+export default function Niches() {
   const [niches, setNiches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // null | { mode: 'add'|'edit', data: {...} }

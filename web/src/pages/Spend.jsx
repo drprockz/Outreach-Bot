@@ -14,7 +14,7 @@ const CHART_COLORS = {
 
 const LIVE_POLL_MS = 5000;  // refresh "today live" card every 5s
 
-export default function CostTracker() {
+export default function Spend() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [live, setLive] = useState(null);  // today's running totals
