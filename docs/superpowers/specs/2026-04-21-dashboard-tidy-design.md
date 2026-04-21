@@ -210,8 +210,8 @@ Six PRs, each independently mergeable and deployable. Branch from `main` sequent
 
 ### PR 2 — Orphan settings → config table (backend only)
 
-- Add 5 new keys to `seedConfigDefaults()` with defaults taken from current `.env`/hardcoded values.
-- `contentValidator.js`, `sendEmails.js`, `findLeads.js` read from `getConfigMap()`; if missing/invalid, fall back to current `.env`/hardcoded source.
+- Add 6 new keys to `seedConfigDefaults()` with defaults taken from current `.env`/hardcoded values.
+- `contentValidator.js`, `sendEmails.js`, `findLeads.js`, `src/scheduler/cron.js` read from `getConfigMap()`; if missing/invalid, fall back to current `.env`/hardcoded source.
 - New route `src/api/routes/engineGuardrails.js` — `GET`/`PUT /api/engines/:engineName/guardrails`. Validation: `send_holidays` parses as ISO dates; `spam_words` non-empty string array; `email_min_words < email_max_words`.
 - Add unit tests for validator, and for each consumer reading from config first.
 
