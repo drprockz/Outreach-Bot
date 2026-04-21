@@ -1148,6 +1148,15 @@ tbody tr:hover { background: var(--bg-elevated); }
 .gap-sm { gap: var(--space-sm); }
 
 /* ── Settings Sidebar ─────────────────────────────────────── */
+.sidebar-section-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  padding: 14px 20px 4px;
+}
+.sidebar-section { display: block; }
 .sidebar-section-toggle {
   width: 100%;
   background: none;

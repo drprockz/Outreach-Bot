@@ -1,23 +1,25 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
-import Overview from './pages/Overview';
-import LeadPipeline from './pages/LeadPipeline';
-import SendLog from './pages/SendLog';
-import ReplyFeed from './pages/ReplyFeed';
-import SequenceTracker from './pages/SequenceTracker';
-import CronStatus from './pages/CronStatus';
-import HealthMonitor from './pages/HealthMonitor';
-import CostTracker from './pages/CostTracker';
-import ErrorLog from './pages/ErrorLog';
-import FunnelAnalytics from './pages/FunnelAnalytics';
-import NicheManager from './pages/NicheManager';
-import EngineConfig from './pages/EngineConfig';
-import Offer from './pages/Offer';
-import IcpProfile from './pages/IcpProfile';
-import EmailPersona from './pages/EmailPersona';
-import EngineRunner from './pages/EngineRunner';
+import { REDIRECTS } from './redirects';
+
+// Temporary — replaced by real pages in PR 4 / PR 5 / PR 6:
+import Overview from './pages/Overview';              // Today placeholder (PR 6 replaces)
+import EngineRunner from './pages/EngineRunner';      // Engines placeholder (PR 4 replaces)
+import Offer from './pages/Offer';                    // OfferAndIcp placeholder (PR 5 replaces)
+
+import Leads from './pages/Leads';
+import SentEmails from './pages/SentEmails';
+import Followups from './pages/Followups';
+import Replies from './pages/Replies';
+import Funnel from './pages/Funnel';
+import Niches from './pages/Niches';
+import EmailVoice from './pages/EmailVoice';
+import Spend from './pages/Spend';
+import EmailHealth from './pages/EmailHealth';
+import Errors from './pages/Errors';
+import ScheduleLogs from './pages/ScheduleLogs';
 
 function ProtectedLayout() {
   const token = localStorage.getItem('radar_token');
@@ -32,31 +34,37 @@ function ProtectedLayout() {
   );
 }
 
+// Catches any path not matched by a real route. If the path was a pre-reshape
+// URL (e.g. /leads, /settings/offer) we 301-equivalent to its new home via
+// REDIRECTS; otherwise we land at /.
+function OldPathRedirect() {
+  const { pathname } = useLocation();
+  const target = REDIRECTS[pathname];
+  return <Navigate to={target || '/'} replace />;
+}
+
 export default function App() {
   return (
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route element={<ProtectedLayout />}>
-          <Route path="/" element={<Overview />} />
-          <Route path="/run" element={<EngineRunner />} />
-          <Route path="/leads" element={<LeadPipeline />} />
-          <Route path="/send-log" element={<SendLog />} />
-          <Route path="/replies" element={<ReplyFeed />} />
-          <Route path="/sequences" element={<SequenceTracker />} />
-          <Route path="/cron" element={<CronStatus />} />
-          <Route path="/health" element={<HealthMonitor />} />
-          <Route path="/costs" element={<CostTracker />} />
-          <Route path="/errors" element={<ErrorLog />} />
-          <Route path="/funnel" element={<FunnelAnalytics />} />
-          <Route path="/settings" element={<Navigate to="/settings/niches" replace />} />
-          <Route path="/settings/niches"  element={<NicheManager />} />
-          <Route path="/settings/engines" element={<EngineConfig />} />
-          <Route path="/settings/offer"   element={<Offer />} />
-          <Route path="/settings/icp-profile" element={<IcpProfile />} />
-          <Route path="/settings/persona" element={<EmailPersona />} />
+          <Route index               element={<Overview />} />
+          <Route path="outreach/engines"   element={<EngineRunner />} />
+          <Route path="outreach/leads"     element={<Leads />} />
+          <Route path="outreach/sent"      element={<SentEmails />} />
+          <Route path="outreach/followups" element={<Followups />} />
+          <Route path="outreach/replies"   element={<Replies />} />
+          <Route path="outreach/funnel"    element={<Funnel />} />
+          <Route path="setup/niches"       element={<Niches />} />
+          <Route path="setup/offer-icp"    element={<Offer />} />
+          <Route path="setup/voice"        element={<EmailVoice />} />
+          <Route path="system/spend"        element={<Spend />} />
+          <Route path="system/email-health" element={<EmailHealth />} />
+          <Route path="system/errors"       element={<Errors />} />
+          <Route path="system/logs"         element={<ScheduleLogs />} />
+          <Route path="*" element={<OldPathRedirect />} />
         </Route>
-        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   );

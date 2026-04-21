@@ -1,34 +1,47 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { NavLink, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 
-const navItems = [
-  { path: '/',          label: 'Overview',   icon: '◉' },
-  { path: '/run',       label: 'Generate',   icon: '▶' },
-  { path: '/leads',     label: 'Leads',      icon: '◎' },
-  { path: '/funnel',    label: 'Funnel',     icon: '▽' },
-  { path: '/send-log',  label: 'Send Log',   icon: '✉' },
-  { path: '/replies',   label: 'Replies',    icon: '↩' },
-  { path: '/sequences', label: 'Sequences',  icon: '→' },
-  { path: '/cron',      label: 'Cron Jobs',  icon: '⏱' },
-  { path: '/health',    label: 'Health',      icon: '♥' },
-  { path: '/costs',     label: 'Costs',       icon: '¤' },
-  { path: '/errors',    label: 'Errors',      icon: '⚠', showBadge: true },
-];
-
-const settingsItems = [
-  { path: '/settings/niches',      label: 'Niches' },
-  { path: '/settings/engines',     label: 'Engines' },
-  { path: '/settings/offer',       label: 'Offer' },
-  { path: '/settings/icp-profile', label: 'ICP Profile' },
-  { path: '/settings/persona',     label: 'Persona' },
+const SECTIONS = [
+  {
+    label: 'Home',
+    items: [
+      { path: '/', label: 'Today', icon: '⌂' },
+    ],
+  },
+  {
+    label: 'Outreach',
+    items: [
+      { path: '/outreach/engines',   label: 'Engines',     icon: '⚡' },
+      { path: '/outreach/leads',     label: 'Leads',       icon: '◎' },
+      { path: '/outreach/sent',      label: 'Sent Emails', icon: '✉' },
+      { path: '/outreach/followups', label: 'Follow-ups',  icon: '→' },
+      { path: '/outreach/replies',   label: 'Replies',     icon: '↩' },
+      { path: '/outreach/funnel',    label: 'Funnel',      icon: '▽' },
+    ],
+  },
+  {
+    label: 'Setup',
+    items: [
+      { path: '/setup/niches',    label: 'Niches & Schedule', icon: '🏷' },
+      { path: '/setup/offer-icp', label: 'Offer & ICP',       icon: '🎯' },
+      { path: '/setup/voice',     label: 'Email Voice',       icon: '✍' },
+    ],
+  },
+  {
+    label: 'System',
+    items: [
+      { path: '/system/spend',        label: 'Spend',           icon: '¤' },
+      { path: '/system/email-health', label: 'Email Health',    icon: '♥' },
+      { path: '/system/errors',       label: 'Errors',          icon: '⚠', showBadge: true },
+      { path: '/system/logs',         label: 'Schedule & Logs', icon: '⏱' },
+    ],
+  },
 ];
 
 export default function Sidebar() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [unresolvedErrors, setUnresolvedErrors] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(location.pathname.startsWith('/settings'));
 
   useEffect(() => {
     api.errors('?resolved=0').then(d => {
@@ -48,44 +61,28 @@ export default function Sidebar() {
         <span>by Simple Inc</span>
       </div>
       <nav className="sidebar-nav">
-        {navItems.map((item) => (
-          <NavLink
-            key={item.path}
-            to={item.path}
-            end={item.path === '/'}
-            className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <span className="icon">{item.icon}</span>
-            {item.label}
-            {item.showBadge && unresolvedErrors > 0 && (
-              <span className="sidebar-badge">{unresolvedErrors}</span>
-            )}
-          </NavLink>
+        {SECTIONS.map(section => (
+          <div className="sidebar-section" key={section.label}>
+            <div className="sidebar-section-label">{section.label}</div>
+            {section.items.map(item => (
+              <NavLink
+                key={item.path}
+                to={item.path}
+                end={item.path === '/'}
+                className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+              >
+                <span className="icon">{item.icon}</span>
+                {item.label}
+                {item.showBadge && unresolvedErrors > 0 && (
+                  <span className="sidebar-badge">{unresolvedErrors}</span>
+                )}
+              </NavLink>
+            ))}
+          </div>
         ))}
-        <div className="sidebar-section">
-          <button
-            className={`sidebar-link sidebar-section-toggle ${location.pathname.startsWith('/settings') ? 'active' : ''}`}
-            onClick={() => setSettingsOpen(o => !o)}
-          >
-            <span className="icon">⚙</span>
-            Settings
-            <span className="sidebar-chevron">{settingsOpen ? '▾' : '▸'}</span>
-          </button>
-          {settingsOpen && settingsItems.map(item => (
-            <NavLink
-              key={item.path}
-              to={item.path}
-              className={({ isActive }) => `sidebar-link sidebar-sublink ${isActive ? 'active' : ''}`}
-            >
-              {item.label}
-            </NavLink>
-          ))}
-        </div>
       </nav>
       <div className="sidebar-footer">
-        <button className="sidebar-logout" onClick={handleLogout}>
-          Logout
-        </button>
+        <button className="sidebar-logout" onClick={handleLogout}>Logout</button>
       </div>
     </aside>
   );
