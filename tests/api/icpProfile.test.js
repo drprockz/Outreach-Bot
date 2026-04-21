@@ -44,16 +44,15 @@ describe('GET/PUT /api/icp-profile', () => {
     expect(r.status).toBe(401);
   });
 
-  it('GET returns seeded row with empty arrays', async () => {
+  it('GET returns flat seeded row with empty arrays', async () => {
     const r = await fetch(`${baseUrl}/api/icp-profile`, { headers: authHeaders() });
     expect(r.status).toBe(200);
     const body = await r.json();
-    expect(body.profile).toBeTruthy();
-    expect(body.profile.industries).toEqual([]);
-    expect(body.profile.company_size).toBeNull();
+    expect(body.industries).toEqual([]);
+    expect(body.company_size).toBeNull();
   });
 
-  it('PUT persists profile and GET returns it', async () => {
+  it('PUT returns { ok, data }; GET sees the same flat shape', async () => {
     const profile = {
       industries: ['restaurants', 'salons'],
       company_size: '5-20',
@@ -81,19 +80,25 @@ describe('GET/PUT /api/icp-profile', () => {
       method: 'PUT', headers: authHeaders(), body: JSON.stringify(profile)
     });
     expect(put.status).toBe(200);
+    const putBody = await put.json();
+    expect(putBody.ok).toBe(true);
+    expect(putBody.data.industries).toEqual(['restaurants', 'salons']);
+
     const get = await fetch(`${baseUrl}/api/icp-profile`, { headers: authHeaders() });
     const body = await get.json();
-    expect(body.profile.industries).toEqual(['restaurants', 'salons']);
-    expect(body.profile.company_size).toBe('5-20');
-    expect(body.profile.geography).toEqual(['Mumbai', 'Pune']);
+    expect(body.industries).toEqual(['restaurants', 'salons']);
+    expect(body.company_size).toBe('5-20');
+    expect(body.geography).toEqual(['Mumbai', 'Pune']);
   });
 
-  it('PUT rejects non-array where array expected', async () => {
+  it('PUT rejects non-array where array expected (400 with field)', async () => {
     const r = await fetch(`${baseUrl}/api/icp-profile`, {
       method: 'PUT', headers: authHeaders(),
       body: JSON.stringify({ industries: 'not-array' })
     });
     expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.field).toBe('industries');
   });
 
   it('PUT is full replacement, not patch', async () => {
@@ -119,7 +124,7 @@ describe('GET/PUT /api/icp-profile', () => {
     });
     const r = await fetch(`${baseUrl}/api/icp-profile`, { headers: authHeaders() });
     const body = await r.json();
-    expect(body.profile.company_size).toBe('second');
-    expect(body.profile.industries).toEqual([]);
+    expect(body.company_size).toBe('second');
+    expect(body.industries).toEqual([]);
   });
 });

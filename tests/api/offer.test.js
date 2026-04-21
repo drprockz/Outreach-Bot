@@ -44,16 +44,15 @@ describe('GET/PUT /api/offer', () => {
     expect(r.status).toBe(401);
   });
 
-  it('GET returns seeded row with nulls', async () => {
+  it('GET returns flat seeded row with nulls', async () => {
     const r = await fetch(`${baseUrl}/api/offer`, { headers: authHeaders() });
     expect(r.status).toBe(200);
     const body = await r.json();
-    expect(body.offer).toBeTruthy();
-    expect(body.offer.problem).toBeNull();
-    expect(body.offer.use_cases).toEqual([]);
+    expect(body.problem).toBeNull();
+    expect(body.use_cases).toEqual([]);
   });
 
-  it('PUT persists offer and GET returns it', async () => {
+  it('PUT returns { ok, data }; GET sees the same flat shape', async () => {
     const offer = {
       problem: 'outdated websites',
       outcome: '2x conversion',
@@ -71,18 +70,25 @@ describe('GET/PUT /api/offer', () => {
     };
     const put = await fetch(`${baseUrl}/api/offer`, { method: 'PUT', headers: authHeaders(), body: JSON.stringify(offer) });
     expect(put.status).toBe(200);
+    const putBody = await put.json();
+    expect(putBody.ok).toBe(true);
+    expect(putBody.data.problem).toBe('outdated websites');
+    expect(putBody.data.use_cases).toEqual(['redesign', 'SEO']);
+
     const get = await fetch(`${baseUrl}/api/offer`, { headers: authHeaders() });
     const body = await get.json();
-    expect(body.offer.problem).toBe('outdated websites');
-    expect(body.offer.use_cases).toEqual(['redesign', 'SEO']);
+    expect(body.problem).toBe('outdated websites');
+    expect(body.use_cases).toEqual(['redesign', 'SEO']);
   });
 
-  it('PUT rejects non-array where array expected', async () => {
+  it('PUT rejects non-array where array expected (400 with field)', async () => {
     const r = await fetch(`${baseUrl}/api/offer`, {
       method: 'PUT', headers: authHeaders(),
       body: JSON.stringify({ problem: 'x', use_cases: 'not-an-array' })
     });
     expect(r.status).toBe(400);
+    const body = await r.json();
+    expect(body.field).toBe('use_cases');
   });
 
   it('PUT is full replacement, not patch', async () => {
@@ -96,7 +102,7 @@ describe('GET/PUT /api/offer', () => {
     });
     const r = await fetch(`${baseUrl}/api/offer`, { headers: authHeaders() });
     const body = await r.json();
-    expect(body.offer.problem).toBe('second');
-    expect(body.offer.use_cases).toEqual([]);
+    expect(body.problem).toBe('second');
+    expect(body.use_cases).toEqual([]);
   });
 });
