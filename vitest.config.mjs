@@ -6,5 +6,8 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     fileParallelism: false,
+    // Backend suite only. Web frontend tests (web/**) run via `cd web && npm test`
+    // with their own jsdom-backed vitest config.
+    include: ['tests/**/*.{test,spec}.{js,jsx,mjs,cjs}'],
   },
 });
