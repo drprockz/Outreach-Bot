@@ -23,6 +23,8 @@ import errorsRoutes from './routes/errors.js';
 import offerRoutes from './routes/offer.js';
 import icpProfileRoutes from './routes/icpProfile.js';
 import runEngineRoutes from './routes/runEngine.js';
+import enginesRoutes from './routes/engines.js';
+import engineGuardrailsRoutes from './routes/engineGuardrails.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
@@ -33,11 +35,46 @@ app.use(express.json());
 // Schema is applied via prisma migrations; seeds are idempotent (createMany skipDuplicates
 // + upserts) and safe to run on every boot. In the test environment we skip seeding so
 // tests can control their own seed state via tests/helpers/testDb.js.
+// Probes each config consumer and warns which keys are still falling back to
+// .env / hardcoded values. Goal: once every fallback set is empty for 7 days,
+// the .env duplicates can be deleted safely (spec §5.2, §10 risk row).
+export async function reportConfigFallbacks() {
+  const fallbacks = [];
+  try {
+    const { validate, getFellBackKeys } = await import('../core/email/contentValidator.js');
+    // Fire a probe to populate the fallback set
+    await validate('probe', 'one two three four five six', 0).catch(() => {});
+    fallbacks.push(...getFellBackKeys());
+  } catch { /* probe failed — treat as inconclusive */ }
+  try {
+    const { loadHolidays, didFallbackHolidays } = await import('../engines/sendEmails.js');
+    if (loadHolidays) await loadHolidays().catch(() => {});
+    if (typeof didFallbackHolidays === 'function' && didFallbackHolidays()) fallbacks.push('send_holidays');
+  } catch { /* sendEmails import failed — ignore */ }
+  try {
+    const { loadSizePrompts, didFallbackSizePrompts } = await import('../engines/findLeads.js');
+    if (loadSizePrompts) await loadSizePrompts().catch(() => {});
+    if (typeof didFallbackSizePrompts === 'function' && didFallbackSizePrompts()) fallbacks.push('findleads_size_prompts');
+  } catch { /* findLeads import failed — ignore */ }
+  try {
+    const { buildCheckRepliesSchedule, didFallbackCheckRepliesInterval } = await import('../scheduler/cron.js');
+    if (buildCheckRepliesSchedule) await buildCheckRepliesSchedule().catch(() => {});
+    if (typeof didFallbackCheckRepliesInterval === 'function' && didFallbackCheckRepliesInterval()) {
+      fallbacks.push('check_replies_interval_minutes');
+    }
+  } catch { /* cron import is side-effectful — skip if it fails */ }
+  if (fallbacks.length > 0) {
+    console.warn(`[config fallback] Still reading from .env/hardcoded for: ${fallbacks.join(', ')}`);
+  }
+  return fallbacks;
+}
+
 if (process.env.NODE_ENV !== 'test') {
   (async () => {
     try {
       await seedConfigDefaults();
       await seedNichesAndDefaults();
+      await reportConfigFallbacks();
     } catch (err) {
       console.error('seed failed:', err);
     }
@@ -65,6 +102,10 @@ app.use('/api/errors', errorsRoutes);
 app.use('/api/offer', offerRoutes);
 app.use('/api/icp-profile', icpProfileRoutes);
 app.use('/api/run-engine', runEngineRoutes);
+// Aggregate list first so GET /api/engines matches; guardrails router handles
+// /api/engines/:engineName/guardrails (non-overlapping path, falls through).
+app.use('/api/engines', enginesRoutes);
+app.use('/api/engines', engineGuardrailsRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
 const distPath = join(repoRoot, 'web/dist');

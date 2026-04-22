@@ -48,6 +48,25 @@ describe('db helpers (prisma)', () => {
     expect(await todayBounceRate()).toBe(0);
   });
 
+  it('seedConfigDefaults seeds the 6 orphan-migration keys', async () => {
+    await seedConfigDefaults();
+    const prisma = getPrisma();
+    const keys = await prisma.config.findMany({
+      where: { key: { in: [
+        'spam_words', 'email_min_words', 'email_max_words',
+        'send_holidays', 'findleads_size_prompts', 'check_replies_interval_minutes',
+      ] } },
+    });
+    expect(keys).toHaveLength(6);
+    const byKey = Object.fromEntries(keys.map(k => [k.key, k.value]));
+    expect(JSON.parse(byKey.spam_words)).toBeInstanceOf(Array);
+    expect(JSON.parse(byKey.send_holidays)).toBeInstanceOf(Array);
+    expect(JSON.parse(byKey.findleads_size_prompts)).toHaveProperty('msme');
+    expect(parseInt(byKey.email_min_words, 10)).toBeGreaterThan(0);
+    expect(parseInt(byKey.email_max_words, 10)).toBeGreaterThan(0);
+    expect(parseInt(byKey.check_replies_interval_minutes, 10)).toBeGreaterThan(0);
+  });
+
   it('seedConfigDefaults is idempotent + flips old thresholds', async () => {
     const prisma = getPrisma();
     // Simulate legacy state

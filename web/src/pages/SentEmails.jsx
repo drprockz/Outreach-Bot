@@ -9,7 +9,7 @@ const deliveryBadge = {
 
 const USD_TO_INR = 85;
 
-export default function SendLog() {
+export default function SentEmails() {
   const [data, setData] = useState({ emails: [], total: 0, aggregates: {} });
   const [page, setPage] = useState(1);
   const [statusFilter, setStatusFilter] = useState('');

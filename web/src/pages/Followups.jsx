@@ -9,7 +9,7 @@ const seqBadge = {
 
 const stepLabels = ['Cold', 'Day 3', 'Day 7', 'Day 14', 'Day 90'];
 
-export default function SequenceTracker() {
+export default function Followups() {
   const [data, setData] = useState({ sequences: [], aggregates: {} });
   const [loading, setLoading] = useState(true);
 

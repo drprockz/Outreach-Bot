@@ -291,9 +291,9 @@ describe('GET /api/niches', () => {
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(Array.isArray(data.niches)).toBe(true);
-    expect(data.niches.length).toBe(6);
-    expect(data.niches[0].day_of_week).toBe(1); // Monday first
+    expect(Array.isArray(data.items)).toBe(true);
+    expect(data.items.length).toBe(6);
+    expect(data.items[0].day_of_week).toBe(1); // Monday first
   });
 });
 
@@ -307,8 +307,9 @@ describe('POST /api/niches', () => {
     });
     expect(res.status).toBe(201);
     const data = await res.json();
-    expect(data.niche.label).toBe('Test Niche');
-    expect(data.niche.id).toBeDefined();
+    expect(data.ok).toBe(true);
+    expect(data.data.label).toBe('Test Niche');
+    expect(data.data.id).toBeDefined();
   });
 
   it('clears conflicting day assignment atomically when day is taken', async () => {
@@ -323,7 +324,7 @@ describe('POST /api/niches', () => {
     const listRes = await fetch(`${baseUrl}/api/niches`, {
       headers: { Authorization: `Bearer ${token}` }
     });
-    const { niches } = await listRes.json();
+    const { items: niches } = await listRes.json();
     const mondayNiches = niches.filter(n => n.day_of_week === 1);
     expect(mondayNiches.length).toBe(1);
     expect(mondayNiches[0].label).toBe('New Monday');
@@ -334,7 +335,7 @@ describe('PUT /api/niches/:id', () => {
   it('updates a niche', async () => {
     const token = await getToken();
     const listRes = await fetch(`${baseUrl}/api/niches`, { headers: { Authorization: `Bearer ${token}` } });
-    const { niches } = await listRes.json();
+    const { items: niches } = await listRes.json();
     const id = niches[0].id;
 
     const res = await fetch(`${baseUrl}/api/niches/${id}`, {
@@ -356,7 +357,7 @@ describe('DELETE /api/niches/:id', () => {
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: 'To Delete', query: 'to be deleted query', day_of_week: null, enabled: 1 })
     });
-    const { niche } = await createRes.json();
+    const { data: niche } = await createRes.json();
 
     const res = await fetch(`${baseUrl}/api/niches/${niche.id}`, {
       method: 'DELETE',
@@ -365,7 +366,7 @@ describe('DELETE /api/niches/:id', () => {
     expect(res.status).toBe(200);
 
     const listRes = await fetch(`${baseUrl}/api/niches`, { headers: { Authorization: `Bearer ${token}` } });
-    const { niches } = await listRes.json();
+    const { items: niches } = await listRes.json();
     expect(niches.find(n => n.id === niche.id)).toBeUndefined();
   });
 });

@@ -28,7 +28,7 @@ function serialize(row) {
 
 router.get('/', async (req, res) => {
   const row = await prisma.offer.findUnique({ where: { id: 1 } });
-  res.json({ offer: serialize(row) });
+  res.json(serialize(row) || {});
 });
 
 router.put('/', async (req, res) => {
@@ -36,7 +36,7 @@ router.put('/', async (req, res) => {
 
   for (const f of ARRAY_FIELDS) {
     if (f in body && !Array.isArray(body[f])) {
-      return res.status(400).json({ error: `field ${f} must be an array` });
+      return res.status(400).json({ error: `field ${f} must be an array`, field: f });
     }
   }
 
@@ -57,13 +57,13 @@ router.put('/', async (req, res) => {
     updatedAt: new Date(),
   };
 
-  await prisma.offer.upsert({
+  const saved = await prisma.offer.upsert({
     where: { id: 1 },
     create: { id: 1, ...data },
     update: data,
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, data: serialize(saved) });
 });
 
 export default router;

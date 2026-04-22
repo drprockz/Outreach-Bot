@@ -5,7 +5,7 @@ const DAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Satur
 
 const emptyForm = { label: '', query: '', day_of_week: null, enabled: 1 };
 
-export default function NicheManager() {
+export default function Niches() {
   const [niches, setNiches] = useState([]);
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // null | { mode: 'add'|'edit', data: {...} }
@@ -13,8 +13,11 @@ export default function NicheManager() {
   const [error, setError] = useState('');
   const [deleteConfirm, setDeleteConfirm] = useState(null); // niche id
 
+  // NOTE: Niches is a list-management page with per-row CRUD, not a single form,
+  // so it doesn't fit the <SettingsPage> single-Save pattern. It consumes the
+  // same {items} envelope via api.getNiches() which returns the array directly.
   function load() {
-    api.getNiches().then(d => { setNiches(d?.niches || []); setLoading(false); });
+    api.getNiches().then(items => { setNiches(items || []); setLoading(false); });
   }
   useEffect(load, []);
 

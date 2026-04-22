@@ -24,7 +24,7 @@ function formatTime(dt) {
   catch { return dt; }
 }
 
-export default function CronStatus() {
+export default function ScheduleLogs() {
   const [data, setData] = useState({ jobs: [], date: '' });
   const [loading, setLoading] = useState(true);
   const [expandedJob, setExpandedJob] = useState(null);

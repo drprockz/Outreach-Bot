@@ -63,14 +63,23 @@ export const api = {
   funnel: () => request('/funnel'),
   getConfig:      ()          => request('/config'),
   updateConfig:   (obj)       => request('/config', { method: 'PUT', body: JSON.stringify(obj) }),
-  getNiches:      ()          => request('/niches'),
+  // Niches: GET returns { items }, mutations return { ok, data }
+  getNiches:      ()          => request('/niches').then(r => r?.items || []),
   createNiche:    (data)      => request('/niches', { method: 'POST', body: JSON.stringify(data) }),
   updateNiche:    (id, data)  => request(`/niches/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteNiche:    (id)        => request(`/niches/${id}`, { method: 'DELETE' }),
+
+  // Offer + ICP Profile: GET returns the flat record; PUT returns { ok, data }
   getOffer:         ()     => request('/offer'),
   updateOffer:      (data) => request('/offer', { method: 'PUT', body: JSON.stringify(data) }),
   getIcpProfile:    ()     => request('/icp-profile'),
   updateIcpProfile: (data) => request('/icp-profile', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Aggregate + per-engine guardrails (dashboard Engines page)
+  getEngines:       () => request('/engines'),
+  getGuardrails:    (name) => request(`/engines/${name}/guardrails`),
+  saveGuardrails:   (name, payload) =>
+    request(`/engines/${name}/guardrails`, { method: 'PUT', body: JSON.stringify(payload) }),
 
   // On-demand engine runs (dashboard-triggered, separate from scheduled cron).
   // runEngine returns { status, ok, body } — caller checks `ok` for 409 etc.

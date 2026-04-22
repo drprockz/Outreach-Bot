@@ -10,7 +10,7 @@ const typeBadge = {
   smtp_error: 'badge-red', api_error: 'badge-orange', db_error: 'badge-amber', validation_error: 'badge-blue',
 };
 
-export default function ErrorLog() {
+export default function Errors() {
   const [data, setData] = useState({ errors: [], unresolvedCount: 0 });
   const [sourceFilter, setSourceFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');

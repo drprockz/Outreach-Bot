@@ -31,7 +31,7 @@ function ChipList({ label, json, variant }) {
   );
 }
 
-export default function LeadPipeline() {
+export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);

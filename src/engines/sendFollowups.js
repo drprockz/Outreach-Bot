@@ -191,13 +191,13 @@ export default async function sendFollowups() {
 
         // Non-negotiable Rule 4: validate content before send
         let finalBody = body;
-        const validation = validate(subject, body, nextStep);
+        const validation = await validate(subject, body, nextStep);
         if (!validation.valid) {
           // Try regenerating once
           const { text: retryBody, costUsd: retryCost } = await callClaude('haiku', promptFn(lead), { maxTokens: 200 });
           totalCost += retryCost;
           // Note: callClaude already writes haikuCostUsd to daily_metrics
-          const retryValidation = validate(subject, retryBody, nextStep);
+          const retryValidation = await validate(subject, retryBody, nextStep);
           if (!retryValidation.valid) {
             await logError('sendFollowups.validation', new Error(`Content rejected for lead ${seq.leadId} step ${nextStep}: ${retryValidation.reason}`), { jobName: 'sendFollowups', errorType: 'validation_error', leadId: seq.leadId });
             continue;

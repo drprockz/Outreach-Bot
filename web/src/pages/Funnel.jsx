@@ -56,7 +56,7 @@ function StatPill({ label, value, color }) {
   );
 }
 
-export default function FunnelAnalytics() {
+export default function Funnel() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 

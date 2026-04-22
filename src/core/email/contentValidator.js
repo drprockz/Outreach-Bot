@@ -1,7 +1,43 @@
 import 'dotenv/config';
+import { getConfigMap } from '../db/index.js';
 
-const MAX_WORDS = parseInt(process.env.MAX_EMAIL_WORDS || '90');
-const MIN_WORDS = parseInt(process.env.MIN_EMAIL_WORDS || '40');
+// Which keys fell back to .env during the most recent validate() call.
+// Read by server startup to warn if migration is incomplete.
+const _fellBackKeys = new Set();
+
+export function getFellBackKeys() {
+  return Array.from(_fellBackKeys);
+}
+
+function envSpamWords() {
+  return (process.env.SPAM_WORDS || '').split(',').map(w => w.trim()).filter(Boolean);
+}
+
+async function loadLimits() {
+  let cfg = {};
+  try { cfg = await getConfigMap(); } catch { cfg = {}; }
+
+  const minRaw = cfg.email_min_words;
+  const maxRaw = cfg.email_max_words;
+  const min = parseInt(minRaw, 10);
+  const max = parseInt(maxRaw, 10);
+
+  let spam;
+  try {
+    spam = cfg.spam_words ? JSON.parse(cfg.spam_words) : null;
+    if (!Array.isArray(spam) || spam.length === 0) spam = null;
+  } catch { spam = null; }
+
+  if (!Number.isFinite(min)) _fellBackKeys.add('email_min_words'); else _fellBackKeys.delete('email_min_words');
+  if (!Number.isFinite(max)) _fellBackKeys.add('email_max_words'); else _fellBackKeys.delete('email_max_words');
+  if (!spam) _fellBackKeys.add('spam_words'); else _fellBackKeys.delete('spam_words');
+
+  return {
+    min: Number.isFinite(min) ? min : parseInt(process.env.MIN_EMAIL_WORDS || '40', 10),
+    max: Number.isFinite(max) ? max : parseInt(process.env.MAX_EMAIL_WORDS || '90', 10),
+    spamWords: (spam || envSpamWords()).map(w => w.toLowerCase()),
+  };
+}
 
 function wordCount(text) {
   return text.trim().split(/\s+/).filter(Boolean).length;
@@ -11,9 +47,11 @@ function wordCount(text) {
  * @param {string} subject
  * @param {string} body
  * @param {number} step  sequence step (0-4)
- * @returns {{ valid: boolean, reason?: string }}
+ * @returns {Promise<{ valid: boolean, reason?: string }>}
  */
-export function validate(subject, body, step) {
+export async function validate(subject, body, step) {
+  const { min, max, spamWords } = await loadLimits();
+
   // Rule 1: No HTML
   if (/<[a-z][\s\S]*>/i.test(body)) {
     return { valid: false, reason: 'HTML detected in body' };
@@ -21,8 +59,8 @@ export function validate(subject, body, step) {
 
   // Rule 2: Word count
   const wc = wordCount(body);
-  if (wc < MIN_WORDS || wc > MAX_WORDS) {
-    return { valid: false, reason: `Word count ${wc} outside range ${MIN_WORDS}-${MAX_WORDS}` };
+  if (wc < min || wc > max) {
+    return { valid: false, reason: `Word count ${wc} outside range ${min}-${max}` };
   }
 
   // Rule 3: No URL in step 0 or 1
@@ -31,7 +69,6 @@ export function validate(subject, body, step) {
   }
 
   // Rule 4: No spam words
-  const spamWords = (process.env.SPAM_WORDS || '').split(',').map(w => w.trim().toLowerCase()).filter(Boolean);
   const bodyLower = body.toLowerCase();
   for (const word of spamWords) {
     if (bodyLower.includes(word)) {
