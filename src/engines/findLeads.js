@@ -306,93 +306,123 @@ export default async function findLeads(override = {}) {
       cooledRows.map(r => r.contactEmail?.split('@')[1]).filter(Boolean)
     );
 
-    // Stage 1: Discovery — all batches concurrent (cap=5 to stay within grounding RPM)
+    // ── Spend-cap snapshot for Stage 10/11 gating ─────────────────────────
+    // Read once before any per-lead work; track in-run delta in shared memory
+    // so a mid-run cap hit short-circuits remaining hook/body work.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const costRow = await prisma.dailyMetrics.findUnique({
+      where: { date: todayStr },
+      select: { geminiCostUsd: true, sonnetCostUsd: true, haikuCostUsd: true },
+    });
+    const aiSpendStart = ANTHROPIC_DISABLED
+      ? Number(costRow?.geminiCostUsd || 0)
+      : Number(costRow?.sonnetCostUsd || 0) + Number(costRow?.haikuCostUsd || 0);
+    const claudeCap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '5.00');
+    let aiSpendThisRun = 0;
+    let spendCapHit = aiSpendStart >= claudeCap;
+    let spendCapAlerted = false;
+    if (spendCapHit) {
+      const provider = ANTHROPIC_DISABLED ? 'Gemini' : 'Claude';
+      await sendAlert(`findLeads: ${provider} spend cap already hit ($${aiSpendStart.toFixed(3)} >= $${claudeCap}) before run started — Stage 10/11 will be skipped`);
+      spendCapAlerted = true;
+    }
+
+    // ── Streaming Stage 1 → per-lead pipeline ─────────────────────────────
+    // Stage 1 batches (cap=5, grounding-RPM-safe) push raw leads onto a queue
+    // as they complete. Per-lead workers (cap=20) pull from the queue and run
+    // stages 2-11 end-to-end per lead. This means:
+    //   • leads_discovered ticks up per-batch (was: only after ALL batches),
+    //     so the dashboard progress UI shows real-time progress.
+    //   • Per-lead work overlaps with later discovery batches — wall time ≈
+    //     time-to-last-lead-finish instead of sum-of-stages.
     const batchIndices = Array.from({ length: batches }, (_, i) => i);
-    const discoveryResults = await withConcurrency(batchIndices, 5, async (batchIndex) => {
+    const queue = [];
+    const waiters = [];
+    let producersDone = false;
+    function notify() { while (waiters.length) waiters.shift()(); }
+    async function nextLead() {
+      while (true) {
+        if (queue.length) return queue.shift();
+        if (producersDone) return null;
+        await new Promise(r => waiters.push(r));
+      }
+    }
+
+    // Spawn 20 per-lead consumers up-front; they sit waiting until the first
+    // batch lands, then drain the queue continuously.
+    const consumers = Array(20).fill(null).map(async () => {
+      while (true) {
+        const raw = await nextLead();
+        if (raw === null) return;
+        await processLead(raw);
+      }
+    });
+
+    // Stage 1 producers — bumps leadsDiscovered per-batch and pushes to queue
+    const producersPromise = withConcurrency(batchIndices, 5, async (batchIndex) => {
       try {
         const { leads, costUsd } = await stage1_discover(niche, batchIndex, perBatch, cities, businessSize);
         totalCost += costUsd;
         await bumpMetric('geminiCostUsd', costUsd);
         await bumpMetric('totalApiCostUsd', costUsd);
-        return leads;
+        if (leads.length > 0) {
+          await bumpMetric('leadsDiscovered', leads.length);
+          queue.push(...leads);
+          notify();
+        }
       } catch (err) {
         await logError('findLeads.discovery', err, { jobName: 'findLeads' });
-        return [];
       }
     });
-    const rawLeads = discoveryResults.flat();
 
-    await bumpMetric('leadsDiscovered', rawLeads.length);
+    await producersPromise;
+    producersDone = true;
+    notify();
 
-    // ── Stage 2-6: Extract + Gate 1 + email check + dedup ────────────────
-    // 20 concurrent Gemini calls — safe on paid tier (1,000 RPM generation limit)
-    const extractedLeads = await withConcurrency(rawLeads, 20, async (raw) => {
+    // ── Per-lead pipeline body (stages 2-11) — invoked by consumer workers ──
+    async function processLead(raw) {
       try {
         leadsProcessed++;
 
+        // ── Stages 2-6: extract + tech + signals + judge + DM finder ─────
         const { data: extracted, costUsd: extractCost } = await stages2to6_extract(raw);
         totalCost += extractCost;
         await bumpMetric('geminiCostUsd', extractCost);
         await bumpMetric('totalApiCostUsd', extractCost);
 
-        if (!extracted) {
-          leadsSkipped++;
-          return null;
-        }
-
+        if (!extracted) { leadsSkipped++; return; }
         await bumpMetric('leadsExtracted');
 
         const lead = { ...raw, ...extracted, extractCost };
 
-        // Gate 1: Drop if modern stack + no signals + quality score >= 7
+        // Gate 1: drop if modern stack + no signals + quality score >= 7
         const techStack = Array.isArray(lead.tech_stack) ? lead.tech_stack : [];
-        const modernTech = techStack.some(t =>
-          /next\.?js|react|webflow|gatsby|nuxt|svelte/i.test(t)
-        );
+        const modernTech = techStack.some(t => /next\.?js|react|webflow|gatsby|nuxt|svelte/i.test(t));
         const hasSignals = Array.isArray(lead.business_signals) && lead.business_signals.length > 0;
         if (modernTech && !hasSignals && (lead.website_quality_score || 0) >= 7) {
-          leadsSkipped++;
-          return null;
+          leadsSkipped++; return;
         }
-
         await bumpMetric('leadsJudgePassed');
 
-        if (!lead.contact_email) {
-          leadsSkipped++;
-          return null;
-        }
-
+        if (!lead.contact_email) { leadsSkipped++; return; }
         await bumpMetric('leadsEmailFound');
 
-        // Stage 8: Dedup — all three checks use pre-loaded Sets (no DB query, race-free)
-        // .has() and .add() are synchronous — JS event loop guarantees no interleave
+        // Stage 8: dedup against pre-loaded Sets — .has/.add are synchronous,
+        // JS event loop guarantees no interleave between concurrent workers.
         const emailDomain = lead.contact_email.split('@')[1];
         if (
           rejectedEmails.has(lead.contact_email) ||
           knownEmails.has(lead.contact_email) ||
           cooledDomains.has(emailDomain)
         ) {
-          leadsSkipped++;
-          return null;
+          leadsSkipped++; return;
         }
         knownEmails.add(lead.contact_email);
         cooledDomains.add(emailDomain);
 
-        return lead;
-      } catch (err) {
-        await logError('findLeads.lead', err, { jobName: 'findLeads' });
-        leadsSkipped++;
-        return null;
-      }
-    });
-    const gate1Passed = extractedLeads.filter(Boolean);
-
-    // ── Stage 7: Email verification (MEV) ────────────────────────────────
-    const verifiedLeads = await withConcurrency(gate1Passed, 20, async (lead) => {
-      try {
+        // ── Stage 7: MEV email verification ──────────────────────────────
         const { status: verifyStatus, confidence } = await verifyEmail(lead.contact_email);
         lead.email_status = verifyStatus;
-
         if (verifyStatus === 'invalid' || verifyStatus === 'disposable') {
           leadsSkipped++;
           await prisma.lead.create({
@@ -406,94 +436,53 @@ export default async function findLeads(override = {}) {
               status: 'email_invalid',
             },
           });
-          return null;
+          return;
         }
-
-        // Gate 2: unknown + low confidence = skip
-        if (verifyStatus === 'unknown' && confidence < 0.5) {
-          leadsSkipped++;
-          return null;
-        }
-
+        if (verifyStatus === 'unknown' && confidence < 0.5) { leadsSkipped++; return; }
         await bumpMetric('leadsEmailValid');
-        return lead;
-      } catch (err) {
-        await logError('findLeads.lead', err, { jobName: 'findLeads' });
-        leadsSkipped++;
-        return null;
-      }
-    });
-    const gate2Passed = verifiedLeads.filter(Boolean);
 
-    // ── Stage 9: ICP scoring ─────────────────────────────────────────────
-    const scoredLeads = await withConcurrency(gate2Passed, 20, async (lead) => {
-      try {
+        // ── Stage 9: ICP scoring ─────────────────────────────────────────
         const icp = await scoreLead(lead, scoringCtx);
         totalCost += icp.costUsd;
         await bumpMetric('geminiCostUsd', icp.costUsd);
         await bumpMetric('totalApiCostUsd', icp.costUsd);
-
         Object.assign(lead, icp, { icpCost: icp.costUsd });
 
-        // Hard disqualifiers override score
         if (icp.icp_disqualifiers.length > 0) {
           await insertLead(lead, niche, 'disqualified');
           await bumpMetric('leadsDisqualified');
-          leadsSkipped++;
-          return null;
+          leadsSkipped++; return;
         }
-
-        // Below threshB → nurture (not emailed, kept for later)
         if (icp.icp_score < threshB) {
           await insertLead(lead, niche, 'nurture');
-          leadsSkipped++;
-          return null;
+          leadsSkipped++; return;
+        }
+        await bumpMetric('leadsIcpAb');
+
+        // ── Stage 10/11 spend-cap gate (per-lead, races-safe via shared flag) ──
+        if (spendCapHit || (aiSpendStart + aiSpendThisRun) >= claudeCap) {
+          if (!spendCapHit) spendCapHit = true;
+          if (!spendCapAlerted) {
+            spendCapAlerted = true;
+            const provider = ANTHROPIC_DISABLED ? 'Gemini' : 'Claude';
+            sendAlert(`findLeads: ${provider} spend cap hit mid-run ($${(aiSpendStart + aiSpendThisRun).toFixed(3)} >= $${claudeCap}) — skipping remaining hook/body`).catch(() => {});
+          }
+          leadsSkipped++; return;
         }
 
-        await bumpMetric('leadsIcpAb');
-        return lead;
-      } catch (err) {
-        await logError('findLeads.lead', err, { jobName: 'findLeads' });
-        leadsSkipped++;
-        return null;
-      }
-    });
-    const abLeads = scoredLeads.filter(Boolean);
-
-    // ── Stage 10/11: Hook + email body + subject + DB insert ─────────────
-    // Pre-check spend cap once before launching concurrent workers.
-    // Workers fire simultaneously so per-request cap checks can race — a single
-    // synchronous guard here prevents the entire stage from starting if cap is hit.
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const costRow = await prisma.dailyMetrics.findUnique({
-      where: { date: todayStr },
-      select: { geminiCostUsd: true, sonnetCostUsd: true, haikuCostUsd: true },
-    });
-    const aiSpendToday = ANTHROPIC_DISABLED
-      ? Number(costRow?.geminiCostUsd || 0)
-      : Number(costRow?.sonnetCostUsd || 0) + Number(costRow?.haikuCostUsd || 0);
-    const claudeCap = parseFloat(process.env.CLAUDE_DAILY_SPEND_CAP || '5.00');
-    if (aiSpendToday >= claudeCap) {
-      const provider = ANTHROPIC_DISABLED ? 'Gemini' : 'Claude';
-      await sendAlert(`findLeads: ${provider} spend cap hit ($${aiSpendToday.toFixed(3)} >= $${claudeCap}) — skipping Stage 10/11 for ${abLeads.length} leads`);
-      await finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped + abLeads.length, costUsd: totalCost });
-      return;
-    }
-
-    // cap=10 concurrent — Gemini/Claude RPM limits are safe at this concurrency
-    await withConcurrency(abLeads, 10, async (lead) => {
-      try {
-        // Stage 10: Hook
+        // ── Stage 10: hook ───────────────────────────────────────────────
         const hookResult = await stage10_hook(lead, persona);
         totalCost += hookResult.costUsd;
+        aiSpendThisRun += hookResult.costUsd;
 
-        // Stage 11: Body + subject in parallel
+        // ── Stage 11: body + subject in parallel ─────────────────────────
         const [bodyResult, subjectResult] = await Promise.all([
           stage11_body(lead, hookResult.hook, persona),
-          stage11_subject(lead)
+          stage11_subject(lead),
         ]);
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
+        aiSpendThisRun += bodyCost;
         if (ANTHROPIC_DISABLED) {
           await bumpMetric('geminiCostUsd', hookResult.costUsd + bodyCost);
         } else {
@@ -502,10 +491,7 @@ export default async function findLeads(override = {}) {
         }
         await bumpMetric('totalApiCostUsd', hookResult.costUsd + bodyCost);
 
-        // Insert lead
         const leadInsert = await insertLead(lead, niche, 'ready');
-
-        // Insert pre-generated email
         await prisma.email.create({
           data: {
             leadId: leadInsert.id,
@@ -533,7 +519,10 @@ export default async function findLeads(override = {}) {
         await logError('findLeads.lead', err, { jobName: 'findLeads' });
         leadsSkipped++;
       }
-    });
+    }
+
+    // All producers done; consumers will drain remaining queue then exit (nextLead returns null)
+    await Promise.all(consumers);
 
     await finishCron(cronId, { status: 'success', recordsProcessed: leadsProcessed, recordsSkipped: leadsSkipped, costUsd: totalCost });
     await sendAlert(`findLeads: ${leadsReady} leads ready, ${leadsProcessed} processed, ${leadsSkipped} skipped (cost $${totalCost.toFixed(4)})`);

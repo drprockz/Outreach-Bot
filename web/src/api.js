@@ -85,6 +85,8 @@ export const api = {
   // runEngine returns { status, ok, body } — caller checks `ok` for 409 etc.
   runEngine:        (engineName, override = {}) =>
     requestWithStatus(`/run-engine/${engineName}`, { method: 'POST', body: JSON.stringify(override) }),
+  unlockEngine:     (engineName) =>
+    requestWithStatus(`/run-engine/${engineName}/unlock`, { method: 'POST' }),
   engineStatus:     (cronLogId) => request(`/run-engine/status/${cronLogId}`),
   engineLatest:     (engineName) => request(`/run-engine/latest/${engineName}`),
   engineStats:      (engineName, sample = 10) => request(`/run-engine/stats/${engineName}?sample=${sample}`),

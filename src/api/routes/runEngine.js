@@ -15,6 +15,25 @@ const ENGINES = {
   // sendEmails intentionally NOT exposed — avoid accidental on-demand sends.
 };
 
+// Stale-lock recovery threshold: a cron_log row stuck in 'running' beyond this
+// is treated as a crashed run and auto-finalized as 'failed' so the next manual
+// trigger isn't blocked forever. Engines typically take <15min; default 30 leaves
+// safe headroom. Override via env STALE_LOCK_MINUTES.
+const STALE_LOCK_MINUTES = Math.max(1, parseInt(process.env.STALE_LOCK_MINUTES || '30', 10));
+
+async function sweepStaleLocks(jobName) {
+  const cutoff = new Date(Date.now() - STALE_LOCK_MINUTES * 60 * 1000);
+  const { count } = await prisma.cronLog.updateMany({
+    where: { jobName, status: 'running', startedAt: { lt: cutoff } },
+    data: {
+      status: 'failed',
+      completedAt: new Date(),
+      errorMessage: `auto-recovered: stale lock (no finishCron in >${STALE_LOCK_MINUTES}min, engine likely crashed)`,
+    },
+  });
+  return count;
+}
+
 /**
  * POST /api/run-engine/:engineName
  * Body (optional): { leadsCount?: number, perBatch?: number }
@@ -33,7 +52,11 @@ router.post('/:engineName', async (req, res) => {
     return res.status(404).json({ error: `Unknown engine: ${engineName}` });
   }
 
-  // Refuse to start if something is already running for this engine
+  // Sweep crashed/orphaned 'running' rows older than threshold so a prior
+  // PM2 kill / OOM / hard-exit doesn't permanently block future triggers.
+  const recovered = await sweepStaleLocks(engineName);
+
+  // Refuse to start if something is genuinely still running for this engine
   const inFlight = await prisma.cronLog.findFirst({
     where: { jobName: engineName, status: 'running' },
     select: { id: true, startedAt: true },
@@ -43,6 +66,7 @@ router.post('/:engineName', async (req, res) => {
       error: `${engineName} already running`,
       runningCronLogId: inFlight.id,
       startedAt: inFlight.startedAt,
+      hint: `If this is stuck, POST /api/run-engine/${engineName}/unlock to force-clear, or wait ${STALE_LOCK_MINUTES}min for auto-recovery.`,
     });
   }
 
@@ -86,7 +110,36 @@ router.post('/:engineName', async (req, res) => {
     return res.json({ engineName, cronLogId: null, startedAt, status: 'running', override });
   }
 
-  res.json({ engineName, cronLogId: row.id, startedAt: row.startedAt, status: row.status, override });
+  res.json({
+    engineName,
+    cronLogId: row.id,
+    startedAt: row.startedAt,
+    status: row.status,
+    override,
+    ...(recovered > 0 ? { recoveredStaleLocks: recovered } : {}),
+  });
+});
+
+/**
+ * POST /api/run-engine/:engineName/unlock
+ * Force-clear all running rows for this engine — use when the dashboard shows
+ * "already running" but the engine is definitely not (e.g., post-crash). Marks
+ * matching rows as 'failed' with a manual-unlock reason.
+ */
+router.post('/:engineName/unlock', async (req, res) => {
+  const { engineName } = req.params;
+  if (!ENGINES[engineName]) {
+    return res.status(404).json({ error: `Unknown engine: ${engineName}` });
+  }
+  const { count } = await prisma.cronLog.updateMany({
+    where: { jobName: engineName, status: 'running' },
+    data: {
+      status: 'failed',
+      completedAt: new Date(),
+      errorMessage: 'manually force-unlocked from dashboard',
+    },
+  });
+  res.json({ engineName, unlocked: count });
 });
 
 /**

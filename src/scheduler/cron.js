@@ -1,6 +1,26 @@
 import cron from 'node-cron';
 import 'dotenv/config';
-import { logError, getConfigMap } from '../core/db/index.js';
+import { logError, getConfigMap, getPrisma } from '../core/db/index.js';
+
+// On a fresh cron-worker boot no engine can possibly be running in this process,
+// so any cron_log row still in 'running' is a leftover from a prior PM2 restart /
+// crash / OOM. Sweep them so the dashboard's "already running" guard isn't stuck.
+async function sweepStaleLocksOnBoot() {
+  try {
+    const { count } = await getPrisma().cronLog.updateMany({
+      where: { status: 'running' },
+      data: {
+        status: 'failed',
+        completedAt: new Date(),
+        errorMessage: 'auto-recovered on cron-worker boot (prior process exited mid-run)',
+      },
+    });
+    if (count > 0) console.log(`Radar cron: swept ${count} stale 'running' cron_log row(s) on boot`);
+  } catch (err) {
+    console.error('Radar cron: stale-lock sweep failed (non-fatal):', err.message);
+  }
+}
+sweepStaleLocksOnBoot();
 
 // Helper: wrap any async engine call, log errors to error_log + console
 async function runJob(jobName, loader) {

@@ -123,6 +123,88 @@ describe('POST /api/run-engine/:engineName', () => {
     const body = await r.json();
     expect(body.override).toEqual({});
   });
+
+  it('auto-recovers stale running rows older than threshold and proceeds', async () => {
+    // Seed a stale 'running' row from "an hour ago" (default threshold is 30min)
+    const prisma = getTestPrisma();
+    const stale = await prisma.cronLog.create({
+      data: {
+        jobName: 'findLeads',
+        status: 'running',
+        startedAt: new Date(Date.now() - 60 * 60 * 1000),
+      },
+    });
+
+    const r = await fetch(`${baseUrl}/api/run-engine/findLeads`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ leadsCount: 1 }),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.recoveredStaleLocks).toBeGreaterThanOrEqual(1);
+
+    // Stale row should now be marked failed with an auto-recovered message
+    const swept = await prisma.cronLog.findUnique({ where: { id: stale.id } });
+    expect(swept.status).toBe('failed');
+    expect(swept.errorMessage).toMatch(/auto-recovered/);
+    expect(swept.completedAt).not.toBeNull();
+  });
+
+  it('does NOT auto-recover recent running rows (still 409s)', async () => {
+    const prisma = getTestPrisma();
+    // Recent: started 1 minute ago — well under 30min threshold
+    await prisma.cronLog.create({
+      data: { jobName: 'findLeads', status: 'running', startedAt: new Date(Date.now() - 60 * 1000) },
+    });
+
+    const r = await fetch(`${baseUrl}/api/run-engine/findLeads`, {
+      method: 'POST', headers: authHeaders(), body: JSON.stringify({ leadsCount: 1 }),
+    });
+    expect(r.status).toBe(409);
+    const body = await r.json();
+    expect(body.error).toMatch(/already running/);
+    expect(body.hint).toMatch(/unlock/);
+  });
+});
+
+describe('POST /api/run-engine/:engineName/unlock', () => {
+  it('requires auth', async () => {
+    const r = await fetch(`${baseUrl}/api/run-engine/findLeads/unlock`, { method: 'POST' });
+    expect(r.status).toBe(401);
+  });
+
+  it('rejects unknown engine with 404', async () => {
+    const r = await fetch(`${baseUrl}/api/run-engine/nonesuch/unlock`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    expect(r.status).toBe(404);
+  });
+
+  it('marks all running rows as failed and returns count', async () => {
+    const prisma = getTestPrisma();
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'running', startedAt: new Date() } });
+    await prisma.cronLog.create({ data: { jobName: 'findLeads', status: 'running', startedAt: new Date() } });
+    // Should NOT touch other engines
+    await prisma.cronLog.create({ data: { jobName: 'sendEmails', status: 'running', startedAt: new Date() } });
+
+    const r = await fetch(`${baseUrl}/api/run-engine/findLeads/unlock`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    expect(r.status).toBe(200);
+    const body = await r.json();
+    expect(body.unlocked).toBe(2);
+
+    const stillRunning = await prisma.cronLog.findMany({ where: { status: 'running' } });
+    expect(stillRunning.length).toBe(1);
+    expect(stillRunning[0].jobName).toBe('sendEmails');
+  });
+
+  it('returns 0 when no running rows exist', async () => {
+    const r = await fetch(`${baseUrl}/api/run-engine/findLeads/unlock`, {
+      method: 'POST', headers: authHeaders(),
+    });
+    expect(r.status).toBe(200);
+    expect((await r.json()).unlocked).toBe(0);
+  });
 });
 
 describe('GET /api/run-engine/status/:cronLogId', () => {

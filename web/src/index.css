@@ -1618,3 +1618,64 @@ tbody tr:hover { background: var(--bg-elevated); }
 .engine-runner-page .cost-projection > div:first-child { margin-bottom: 4px; }
 .engine-runner-page .msg.error { color: var(--red); font-size: 0.9em; padding: 8px; background: var(--red-dim, rgba(224,96,96,0.1)); border-radius: 4px; }
 
+/* ── Run Progress (live engine progress bars) ─────────────── */
+.run-progress {
+  width: 100%;
+  margin-top: var(--space-md);
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+.run-progress-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.run-progress-header strong { color: var(--text-1); font-variant-numeric: tabular-nums; }
+.run-progress-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.run-progress-stage { display: flex; flex-direction: column; gap: 3px; }
+.run-progress-stage-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+}
+.run-progress-stage-row .mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-1);
+}
+.run-progress-bar {
+  height: 6px;
+  background: var(--bg);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.run-progress-bar-fill {
+  height: 100%;
+  background: var(--blue);
+  transition: width 400ms ease-out;
+}
+.run-progress-bar-fill.ready { background: var(--green-bright); }
+
+.btn-secondary {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-secondary:hover { background: var(--bg-hover); }
+.btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+

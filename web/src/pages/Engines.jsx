@@ -133,9 +133,35 @@ function tabLabel(t) {
 function EngineHeader({ engine, onRefresh }) {
   const [toggling, setToggling] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
   const [msg, setMsg] = useState('');
+  const [msgKind, setMsgKind] = useState('');         // '' | 'info' | 'error' | 'conflict'
+  const [conflictId, setConflictId] = useState(null); // running cronLogId from 409
+  const [activeRun, setActiveRun] = useState(null);   // { cronLogId, target } | null
 
   const enabledKey = ENABLED_KEY[engine.name];
+
+  // On mount + on engine switch: detect an in-flight run so the progress UI
+  // resumes if the user just refreshed the dashboard mid-run.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const [latest, cfg] = await Promise.all([
+          api.engineLatest(engine.name),
+          api.getConfig().catch(() => ({})),
+        ]);
+        if (cancelled) return;
+        const target = engine.name === 'findLeads'
+          ? parseInt(cfg?.find_leads_count, 10) || null
+          : null;
+        if (latest?.cron_log?.status === 'running') {
+          setActiveRun({ cronLogId: latest.cron_log.id, target });
+        }
+      } catch { /* non-fatal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engine.name]);
 
   async function handleToggle() {
     if (!enabledKey || toggling) return;
@@ -147,22 +173,55 @@ function EngineHeader({ engine, onRefresh }) {
   }
 
   async function handleRun() {
-    setMsg('');
+    setMsg(''); setMsgKind(''); setConflictId(null);
     setTriggering(true);
     try {
       const res = await api.runEngine(engine.name);
       if (res.ok) {
-        setMsg(`Started (cronLogId=${res.body.cronLogId}).`);
+        // Look up target lead count for findLeads so the progress bar can scale.
+        let target = null;
+        if (engine.name === 'findLeads') {
+          try {
+            const cfg = await api.getConfig();
+            target = res.body.override?.leadsCount || parseInt(cfg?.find_leads_count, 10) || null;
+          } catch { /* non-fatal */ }
+        }
+        setActiveRun({ cronLogId: res.body.cronLogId, target });
+        setMsg(`Started (cronLogId=${res.body.cronLogId}).`); setMsgKind('info');
       } else if (res.status === 409) {
-        setMsg(`Already running (cronLogId=${res.body.runningCronLogId}).`);
+        setConflictId(res.body.runningCronLogId);
+        setMsg(res.body.hint
+          ? `Already running (cronLogId=${res.body.runningCronLogId}). ${res.body.hint}`
+          : `Already running (cronLogId=${res.body.runningCronLogId}).`);
+        setMsgKind('conflict');
       } else {
-        setMsg(res.body?.error || `Failed: HTTP ${res.status}`);
+        setMsg(res.body?.error || `Failed: HTTP ${res.status}`); setMsgKind('error');
       }
     } catch (e) {
-      setMsg(`Failed: ${e.message}`);
+      setMsg(`Failed: ${e.message}`); setMsgKind('error');
     } finally {
       setTriggering(false);
       setTimeout(onRefresh, 500);
+    }
+  }
+
+  async function handleUnlock() {
+    if (unlocking) return;
+    setUnlocking(true);
+    try {
+      const res = await api.unlockEngine(engine.name);
+      if (res.ok) {
+        setMsg(`Unlocked ${res.body.unlocked} stuck row(s) — try Run now again.`);
+        setMsgKind('info');
+        setConflictId(null);
+      } else {
+        setMsg(res.body?.error || `Unlock failed: HTTP ${res.status}`); setMsgKind('error');
+      }
+    } catch (e) {
+      setMsg(`Unlock failed: ${e.message}`); setMsgKind('error');
+    } finally {
+      setUnlocking(false);
+      setTimeout(onRefresh, 300);
     }
   }
 
@@ -185,8 +244,151 @@ function EngineHeader({ engine, onRefresh }) {
           {triggering ? 'Starting…' : 'Run now'}
         </button>
       </div>
-      {msg && <div className="msg" style={{ marginTop: 8 }}>{msg}</div>}
+      {msg && (
+        <div className={`msg ${msgKind === 'error' ? 'error' : ''}`} style={{ marginTop: 8 }}>
+          {msg}
+          {msgKind === 'conflict' && (
+            <button
+              type="button"
+              className="btn-secondary"
+              style={{ marginLeft: 12 }}
+              onClick={handleUnlock}
+              disabled={unlocking}
+            >
+              {unlocking ? 'Unlocking…' : 'Force unlock'}
+            </button>
+          )}
+        </div>
+      )}
+      {activeRun && (
+        <RunProgress
+          key={activeRun.cronLogId}
+          engineName={engine.name}
+          cronLogId={activeRun.cronLogId}
+          target={activeRun.target}
+          onClose={() => setActiveRun(null)}
+          onFinish={() => setTimeout(onRefresh, 500)}
+        />
+      )}
     </header>
+  );
+}
+
+// Stage rows for findLeads — keys map to today_costs response fields.
+// For other engines we only show top-line progress (records_processed/skipped).
+const FIND_LEADS_STAGES = [
+  { key: 'leads_discovered',   label: 'Stage 1 · Discovered' },
+  { key: 'leads_extracted',    label: 'Stages 2-6 · Extracted' },
+  { key: 'leads_judge_passed', label: 'Gate 1 · Passed' },
+  { key: 'leads_email_found',  label: 'Email found' },
+  { key: 'leads_email_valid',  label: 'Stage 7 · MEV verified' },
+  { key: 'leads_icp_ready',    label: 'Stage 9 · ICP A/B' },
+  { key: 'leads_ready',        label: 'Stage 11 · Ready to send' },
+];
+
+function RunProgress({ engineName, cronLogId, target, onClose, onFinish }) {
+  const [data, setData] = useState(null);
+  const [start, setStart] = useState(null);   // snapshot of today_costs at run start (delta baseline)
+  const [error, setError] = useState('');
+  const [now, setNow] = useState(Date.now()); // ticks elapsed-time when running
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer;
+    let finishedNotified = false;
+    async function poll() {
+      try {
+        const d = await api.engineStatus(cronLogId);
+        if (cancelled) return;
+        if (!start && d?.today_costs) setStart(d.today_costs);
+        setData(d);
+        setError('');
+        if (d?.cron_log?.status === 'running') {
+          timer = setTimeout(poll, 2000);
+        } else if (!finishedNotified) {
+          finishedNotified = true;
+          if (onFinish) onFinish();
+        }
+      } catch (e) {
+        if (cancelled) return;
+        setError(e.message);
+        timer = setTimeout(poll, 5000); // back off on transient errors
+      }
+    }
+    poll();
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => { cancelled = true; clearTimeout(timer); clearInterval(tick); };
+  }, [cronLogId]); // eslint-disable-line
+
+  if (!data && !error) {
+    return <div className="run-progress"><div className="td-muted">Loading run #{cronLogId}…</div></div>;
+  }
+
+  const cl = data?.cron_log;
+  const tc = data?.today_costs;
+  const delta = (k) => Math.max(0, (tc?.[k] ?? 0) - (start?.[k] ?? 0));
+
+  const statusColor = cl?.status === 'success' ? 'green' : cl?.status === 'failed' ? 'red' : 'blue';
+  const elapsedMs = cl?.completed_at
+    ? new Date(cl.completed_at).getTime() - new Date(cl.started_at).getTime()
+    : (cl?.started_at ? now - new Date(cl.started_at).getTime() : 0);
+
+  // For findLeads, baseline target for bars = configured leadsCount; once Stage 1
+  // has produced more than that (rare; usually less due to dedup), grow the bar.
+  const stageTarget = engineName === 'findLeads'
+    ? Math.max(target || 0, delta('leads_discovered'), 1)
+    : null;
+
+  return (
+    <div className="run-progress">
+      <div className="run-progress-header">
+        <span className={`badge badge-${statusColor}`}>{cl?.status || 'pending'}</span>
+        <span className="muted">cronLogId={cronLogId}</span>
+        <span className="muted">·</span>
+        <span>elapsed <strong>{fmtDuration(elapsedMs)}</strong></span>
+        <span className="muted">·</span>
+        <span>cost <strong>${(cl?.cost_usd || 0).toFixed(4)}</strong></span>
+        <span className="muted">·</span>
+        <span>processed <strong>{cl?.records_processed ?? 0}</strong></span>
+        <span className="muted">/ skipped {cl?.records_skipped ?? 0}</span>
+        <span style={{ flex: 1 }} />
+        {cl?.status !== 'running' && (
+          <button type="button" className="btn-secondary" onClick={onClose}>Dismiss</button>
+        )}
+      </div>
+
+      {error && <div className="msg error" style={{ marginTop: 8 }}>poll error: {error}</div>}
+      {cl?.error_message && <div className="msg error" style={{ marginTop: 8 }}>{cl.error_message}</div>}
+
+      {engineName === 'findLeads' && tc && (
+        <div className="run-progress-stages">
+          {FIND_LEADS_STAGES.map(s => {
+            const v = delta(s.key);
+            const pct = Math.min(100, (v / stageTarget) * 100);
+            const barClass = s.key === 'leads_ready' ? 'fill ready' : 'fill';
+            return (
+              <div key={s.key} className="run-progress-stage">
+                <div className="run-progress-stage-row">
+                  <span className="muted">{s.label}</span>
+                  <span className="mono">
+                    {v}{s.key === 'leads_discovered' && target ? ` / ${target}` : ''}
+                  </span>
+                </div>
+                <div className="run-progress-bar">
+                  <div className={`run-progress-bar-${barClass}`} style={{ width: `${pct}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {engineName !== 'findLeads' && (
+        <div className="td-muted" style={{ marginTop: 8, fontSize: 12 }}>
+          Live per-stage breakdown is only wired for findLeads today. Polling for completion…
+        </div>
+      )}
+    </div>
   );
 }
 
