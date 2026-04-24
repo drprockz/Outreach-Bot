@@ -21,8 +21,17 @@ async function getNicheForToday() {
   });
 }
 
+// Gemini sometimes returns an array for owner_name when a business has multiple
+// partners/founders ("Designated Partner" filings often list 2+). Schema is
+// String? — pick the primary (first) so email personalization stays natural.
+function firstString(v) {
+  if (Array.isArray(v)) return v.find(x => typeof x === 'string') ?? null;
+  return typeof v === 'string' ? v : (v == null ? null : String(v));
+}
+
 // Exported for unit testing
 export async function insertLead(lead, niche, status) {
+  const ownerName = firstString(lead.owner_name);
   return prisma.lead.create({
     data: {
       businessName: lead.business_name,
@@ -36,13 +45,13 @@ export async function insertLead(lead, niche, status) {
       lastUpdated: lead.last_updated,
       hasSsl: Boolean(lead.has_ssl),
       hasAnalytics: Boolean(lead.has_analytics),
-      ownerName: lead.owner_name,
-      ownerRole: lead.owner_role,
+      ownerName,
+      ownerRole: firstString(lead.owner_role),
       businessSignals: lead.business_signals || [],
       socialActive: Boolean(lead.social_active),
       websiteQualityScore: lead.website_quality_score,
       judgeReason: lead.judge_reason,
-      contactName: lead.owner_name,
+      contactName: ownerName,
       contactEmail: lead.contact_email,
       contactConfidence: lead.contact_confidence,
       contactSource: lead.contact_source,
