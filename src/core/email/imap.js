@@ -3,13 +3,21 @@ import { simpleParser } from 'mailparser';
 import 'dotenv/config';
 
 function buildClient(user, pass) {
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: process.env.IMAP_HOST || 'imap.gmail.com',
     port: parseInt(process.env.IMAP_PORT || '993'),
     secure: true,
     auth: { user, pass },
     logger: false
   });
+  // ImapFlow is an EventEmitter. Socket timeouts / connection drops emit an
+  // 'error' event on the instance itself — outside any promise chain. Without
+  // a listener, Node's EventEmitter throws synchronously and crashes the
+  // whole process. Attach a no-op so the in-flight op promise (connect/fetch/
+  // logout) is the one that rejects, and our try/catch in fetchUnseen can
+  // handle it cleanly.
+  client.on('error', () => {});
+  return client;
 }
 
 /**
@@ -43,7 +51,9 @@ export async function fetchUnseen(inboxNumber) {
       await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true });
     }
   } finally {
-    await client.logout();
+    // logout() on a timed-out/errored client can reject — don't let that mask
+    // the original error or crash the caller. Best-effort close.
+    try { await client.logout(); } catch { /* already disconnected */ }
   }
 
   return messages;
