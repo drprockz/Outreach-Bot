@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
+import { parseLeadsQuery } from './leads/filterParser.js';
 
 const router = Router();
 
@@ -165,19 +166,12 @@ router.get('/', async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
-  const where = {};
-  if (req.query.status) where.status = req.query.status;
-  if (req.query.category) where.category = req.query.category;
-  if (req.query.city) where.city = req.query.city;
-  if (req.query.date_from) where.discoveredAt = { ...(where.discoveredAt || {}), gte: new Date(req.query.date_from) };
-  if (req.query.date_to) where.discoveredAt = { ...(where.discoveredAt || {}), lte: new Date(req.query.date_to) };
-  // tech_stack filter: leave out — previously worked as LIKE against a string column,
-  // now techStack is JSON. Skip for now to avoid raw SQL (contract: filter is optional).
+  const thresholds = await getThresholds();
+  const { where, orderBy } = parseLeadsQuery(req.query, thresholds);
 
-  const [total, leads, thresholds] = await Promise.all([
+  const [total, leads] = await Promise.all([
     prisma.lead.count({ where }),
-    prisma.lead.findMany({ where, orderBy: { id: 'desc' }, take: limit, skip: offset }),
-    getThresholds(),
+    prisma.lead.findMany({ where, orderBy, take: limit, skip: offset }),
   ]);
 
   // Pre-join lead_signals counts so the dashboard can show a per-row badge
