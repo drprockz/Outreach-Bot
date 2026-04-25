@@ -4,6 +4,7 @@ import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
 import { parseLeadsQuery } from './leads/filterParser.js';
 import { bulkStatus } from './leads/bulkStatus.js';
+import { bulkRetry } from './leads/bulkRetry.js';
 
 const router = Router();
 
@@ -282,6 +283,7 @@ router.get('/facets', async (_req, res) => {
 });
 
 router.post('/bulk/status', bulkStatus);
+router.post('/bulk/retry', bulkRetry);
 
 router.get('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
