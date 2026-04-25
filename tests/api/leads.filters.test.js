@@ -34,6 +34,9 @@ beforeEach(async () => {
     { businessName: 'Gamma', status: 'nurture', icpScore: 30, city: 'Mumbai',    category: 'real_estate' },
     { businessName: 'Delta', status: 'ready',   icpScore: 75, city: 'Mumbai',    category: 'real_estate', dmLinkedinUrl: 'https://li/x' },
   ] });
+  // Reset the in-process facets cache so each test sees fresh distinct values.
+  const { _resetFacetsCacheForTests } = await import('../../src/api/routes/leads.js');
+  _resetFacetsCacheForTests?.();
   token = await login();
 });
 
@@ -139,5 +142,17 @@ describe('GET /api/leads — JSONB array filters', () => {
     const r = await fetch(`${baseUrl}/api/leads?business_signals=low%20reviews`, { headers: h() });
     const d = await r.json();
     expect(d.leads.map(l => l.business_name)).toContain('Alpha');
+  });
+});
+
+describe('GET /api/leads/facets', () => {
+  it('returns distinct categories/cities/countries', async () => {
+    const r = await fetch(`${baseUrl}/api/leads/facets`, { headers: h() });
+    expect(r.status).toBe(200);
+    const d = await r.json();
+    expect(d.categories).toEqual(expect.arrayContaining(['d2c', 'real_estate']));
+    expect(d.cities).toEqual(expect.arrayContaining(['Mumbai', 'Bangalore']));
+    // country defaults to 'IN' for the seeded leads (per Prisma schema default)
+    expect(Array.isArray(d.countries)).toBe(true);
   });
 });

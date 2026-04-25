@@ -235,6 +235,51 @@ router.get('/', async (req, res) => {
   res.json({ leads: enriched, total, page, limit });
 });
 
+router.get('/kpis', async (req, res) => {
+  const t = await getThresholds();
+  const { where } = parseLeadsQuery(req.query, t);
+
+  async function summarize(scopedWhere) {
+    const [total, readyToSend, icpA, icpB, icpC] = await Promise.all([
+      prisma.lead.count({ where: scopedWhere }),
+      prisma.lead.count({ where: { ...scopedWhere, status: 'ready' } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshA } } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshB, lt: t.threshA } } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { lt: t.threshB } } }),
+    ]);
+    return { total, readyToSend, icpA, icpB, icpC };
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
+  // Global scope still respects "hide rejected by default" — call parseLeadsQuery
+  // with empty req.query to get the same baseline as default-filter view.
+  const { where: globalWhere } = parseLeadsQuery({}, t);
+  const [globalCounts, inFilterCounts, signals7dRows, repliesAwaiting] = await Promise.all([
+    summarize(globalWhere),
+    summarize(where),
+    prisma.leadSignal.findMany({ where: { signalDate: { gte: sevenDaysAgo } }, distinct: ['leadId'], select: { leadId: true } }),
+    prisma.reply.count({ where: { actionedAt: null } }),
+  ]);
+
+  res.json({
+    global: { ...globalCounts, signals7d: signals7dRows.length, repliesAwaitingTriage: repliesAwaiting },
+    inFilter: { ...inFilterCounts },
+  });
+});
+
+let _facetsCache = { at: 0, data: null };
+export function _resetFacetsCacheForTests() { _facetsCache = { at: 0, data: null }; }
+router.get('/facets', async (_req, res) => {
+  if (_facetsCache.data && Date.now() - _facetsCache.at < 60_000) return res.json(_facetsCache.data);
+  const [categories, cities, countries] = await Promise.all([
+    prisma.lead.findMany({ where: { category: { not: null } }, distinct: ['category'], select: { category: true } }).then(r => r.map(x => x.category)),
+    prisma.lead.findMany({ where: { city:     { not: null } }, distinct: ['city'],     select: { city: true } }).then(r => r.map(x => x.city)),
+    prisma.lead.findMany({ where: { country:  { not: null } }, distinct: ['country'],  select: { country: true } }).then(r => r.map(x => x.country)),
+  ]);
+  _facetsCache = { at: Date.now(), data: { categories, cities, countries } };
+  res.json(_facetsCache.data);
+});
+
 router.get('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
 
