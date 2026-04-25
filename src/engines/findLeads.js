@@ -182,16 +182,43 @@ function buildSignalsBlock(signals) {
   return `\n\nRecent signals about this business (newest/strongest first):\n${lines.join('\n')}\n\nIf one of these signals is genuinely interesting, weave it into the hook. If none feel natural, ignore them and observe the website directly.`;
 }
 
-async function stage10_hook(lead, persona, signals = []) {
-  const base = `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`;
+// Two prompt seeds for the A/B framework. Both stay within the same length/tone
+// constraints; the difference is angle, not voice. Variant winners surface in
+// the Sunday report (dailyReport.js) — retire losers manually after ~2 weeks.
+const VARIANT_SEEDS = {
+  A: { name: 'observation', angle: 'a hyper-specific observation about something concrete you\'d notice as' },
+  B: { name: 'curious-question', angle: 'a short curious question opening (max 20 words) that a' },
+};
+
+function buildHookPrompt(variant, lead, persona, signals) {
+  const seed = VARIANT_SEEDS[variant];
+  const opener = variant === 'A'
+    ? `Write ONE sentence (max 20 words) that makes ${seed.angle} a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`
+    : `${seed.angle.replace(/^a /, 'Write ')} ${persona.role} would ask ${lead.business_name}'s owner about their site (${lead.website_url}) — concrete, no fluff.`;
   const manualNote = lead.manual_hook_note ? `\n\nManual hook hint from operator: ${lead.manual_hook_note}` : '';
-  const prompt = base + buildSignalsBlock(signals) + manualNote;
+  return opener + buildSignalsBlock(signals) + manualNote;
+}
+
+async function generateHookVariant(variant, lead, persona, signals) {
+  const prompt = buildHookPrompt(variant, lead, persona, signals);
   if (ANTHROPIC_DISABLED) {
     const result = await callGemini(prompt);
-    return { hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
+    return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
   }
   const result = await callClaude('sonnet', prompt, { maxTokens: 60 });
-  return { hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
+  return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
+}
+
+// Generate both variants in parallel, pick one at random for actual send.
+// Returns the chosen variant's data + total cost (both calls billed).
+async function stage10_hook(lead, persona, signals = []) {
+  const [a, b] = await Promise.all([
+    generateHookVariant('A', lead, persona, signals),
+    generateHookVariant('B', lead, persona, signals),
+  ]);
+  const chosen = Math.random() < 0.5 ? a : b;
+  const totalCost = (a.costUsd || 0) + (b.costUsd || 0);
+  return { hook: chosen.hook, costUsd: totalCost, model: chosen.model, hookVariantId: chosen.variant };
 }
 
 // ── Stage 11: Email body — Claude Haiku (or Gemini fallback) ─────────
@@ -549,6 +576,7 @@ export default async function findLeads(override = {}) {
             body: bodyResult.body,
             wordCount: bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
             hook: hookResult.hook,
+            hookVariantId: hookResult.hookVariantId || null,
             signalsUsedJson: topSignals.length > 0 ? topSignals : null,
             containsLink: false,
             isHtml: false,

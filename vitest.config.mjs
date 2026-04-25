@@ -9,5 +9,8 @@ export default defineConfig({
     // Backend suite only. Web frontend tests (web/**) run via `cd web && npm test`
     // with their own jsdom-backed vitest config.
     include: ['tests/**/*.{test,spec}.{js,jsx,mjs,cjs}'],
+    // Default 5s is too tight for findLeads end-to-end (Stage 10 now generates
+    // two hook variants in parallel) when Postgres tests share a remote DB.
+    testTimeout: 15000,
   },
 });
