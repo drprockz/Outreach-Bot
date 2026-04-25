@@ -25,6 +25,7 @@ import icpProfileRoutes from './routes/icpProfile.js';
 import runEngineRoutes from './routes/runEngine.js';
 import enginesRoutes from './routes/engines.js';
 import engineGuardrailsRoutes from './routes/engineGuardrails.js';
+import savedViewsRoutes from './routes/savedViews.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, '../..');
@@ -106,6 +107,7 @@ app.use('/api/run-engine', runEngineRoutes);
 // /api/engines/:engineName/guardrails (non-overlapping path, falls through).
 app.use('/api/engines', enginesRoutes);
 app.use('/api/engines', engineGuardrailsRoutes);
+app.use('/api/saved-views', savedViewsRoutes);
 
 // Serve the built web SPA (web/dist) if it exists
 const distPath = join(repoRoot, 'web/dist');

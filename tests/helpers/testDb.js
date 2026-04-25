@@ -17,9 +17,9 @@ export function getTestPrisma() {
 
 // CASCADE handles FK ordering; RESTART IDENTITY resets autoincrement.
 const TABLES = [
-  'bounces', 'replies', 'sequence_state', 'emails', 'leads',
+  'bounces', 'replies', 'sequence_state', 'emails', 'lead_signals', 'leads',
   'reject_list', 'cron_log', 'daily_metrics', 'error_log',
-  'config', 'niches', 'offer', 'icp_profile',
+  'config', 'niches', 'offer', 'icp_profile', 'saved_views',
 ];
 
 export async function truncateAll() {

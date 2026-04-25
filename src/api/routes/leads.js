@@ -1,6 +1,11 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
+import { parseLeadsQuery } from './leads/filterParser.js';
+import { bulkStatus } from './leads/bulkStatus.js';
+import { bulkRetry } from './leads/bulkRetry.js';
+import { exportCsv } from './leads/csvExport.js';
 
 const router = Router();
 
@@ -11,6 +16,22 @@ async function getThresholds() {
     threshA: getConfigInt(cfg, 'icp_threshold_a', 70),
     threshB: getConfigInt(cfg, 'icp_threshold_b', 40),
   };
+}
+
+// Returns ids of leads where the JSONB array column shares any element with `values`.
+// Uses Postgres `?|` operator on jsonb arrays; identifier interpolation goes
+// through Prisma.raw (safe — caller passes a hardcoded column name), the
+// values list is parameterized as text[]. Returns null when the cleaned
+// values list is empty (no constraint to apply).
+async function jsonArrayFilterIds(prisma, column, values) {
+  const clean = values.filter(v => typeof v === 'string' && v.length > 0);
+  if (!clean.length) return null;
+  const rows = await prisma.$queryRaw`
+    SELECT id FROM leads
+    WHERE jsonb_typeof(${Prisma.raw(`"${column}"`)}) = 'array'
+      AND ${Prisma.raw(`"${column}"`)} ?| ${clean}::text[]
+  `;
+  return rows.map(r => r.id);
 }
 
 function serializeLead(l, thresholds) {
@@ -165,19 +186,44 @@ router.get('/', async (req, res) => {
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
   const offset = (page - 1) * limit;
 
-  const where = {};
-  if (req.query.status) where.status = req.query.status;
-  if (req.query.category) where.category = req.query.category;
-  if (req.query.city) where.city = req.query.city;
-  if (req.query.date_from) where.discoveredAt = { ...(where.discoveredAt || {}), gte: new Date(req.query.date_from) };
-  if (req.query.date_to) where.discoveredAt = { ...(where.discoveredAt || {}), lte: new Date(req.query.date_to) };
-  // tech_stack filter: leave out — previously worked as LIKE against a string column,
-  // now techStack is JSON. Skip for now to avoid raw SQL (contract: filter is optional).
+  const thresholds = await getThresholds();
+  const { where, orderBy, signalFilter } = parseLeadsQuery(req.query, thresholds);
 
-  const [total, leads, thresholds] = await Promise.all([
+  // Signal sub-query: filter leadIds by lead_signals join + count threshold,
+  // then AND the eligible id list into `where`.
+  if (Object.keys(signalFilter).length) {
+    const sw = {};
+    if (signalFilter.types) sw.signalType = { in: signalFilter.types };
+    if (signalFilter.from || signalFilter.to) {
+      sw.signalDate = {};
+      if (signalFilter.from) sw.signalDate.gte = signalFilter.from;
+      if (signalFilter.to)   sw.signalDate.lte = signalFilter.to;
+    }
+    const grouped = await prisma.leadSignal.groupBy({
+      by: ['leadId'], where: sw, _count: { _all: true },
+    });
+    const minCount = signalFilter.minCount || 1;
+    const eligible = grouped.filter(g => g._count._all >= minCount).map(g => g.leadId);
+    where.AND = (where.AND || []).concat([{ id: { in: eligible.length ? eligible : [-1] } }]);
+  }
+
+  // JSONB array filters: ?| (any-of) on tech_stack / business_signals.
+  // Guarded by jsonb_typeof = 'array' so non-array JSON values don't error.
+  const techStack = Array.isArray(req.query.tech_stack) ? req.query.tech_stack : req.query.tech_stack ? [req.query.tech_stack] : [];
+  if (techStack.length) {
+    const ids = await jsonArrayFilterIds(prisma, 'tech_stack', techStack);
+    if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+  }
+
+  const bizSigs = Array.isArray(req.query.business_signals) ? req.query.business_signals : req.query.business_signals ? [req.query.business_signals] : [];
+  if (bizSigs.length) {
+    const ids = await jsonArrayFilterIds(prisma, 'business_signals', bizSigs);
+    if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+  }
+
+  const [total, leads] = await Promise.all([
     prisma.lead.count({ where }),
-    prisma.lead.findMany({ where, orderBy: { id: 'desc' }, take: limit, skip: offset }),
-    getThresholds(),
+    prisma.lead.findMany({ where, orderBy, take: limit, skip: offset }),
   ]);
 
   // Pre-join lead_signals counts so the dashboard can show a per-row badge
@@ -190,6 +236,60 @@ router.get('/', async (req, res) => {
 
   const enriched = leads.map(l => ({ ...serializeLead(l, thresholds), signal_count: countByLead.get(l.id) || 0 }));
   res.json({ leads: enriched, total, page, limit });
+});
+
+router.get('/kpis', async (req, res) => {
+  const t = await getThresholds();
+  const { where } = parseLeadsQuery(req.query, t);
+
+  async function summarize(scopedWhere) {
+    const [total, readyToSend, icpA, icpB, icpC] = await Promise.all([
+      prisma.lead.count({ where: scopedWhere }),
+      prisma.lead.count({ where: { ...scopedWhere, status: 'ready' } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshA } } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshB, lt: t.threshA } } }),
+      prisma.lead.count({ where: { ...scopedWhere, icpScore: { lt: t.threshB } } }),
+    ]);
+    return { total, readyToSend, icpA, icpB, icpC };
+  }
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86400_000);
+  // Global scope still respects "hide rejected by default" — call parseLeadsQuery
+  // with empty req.query to get the same baseline as default-filter view.
+  const { where: globalWhere } = parseLeadsQuery({}, t);
+  const [globalCounts, inFilterCounts, signals7dRows, repliesAwaiting] = await Promise.all([
+    summarize(globalWhere),
+    summarize(where),
+    prisma.leadSignal.findMany({ where: { signalDate: { gte: sevenDaysAgo } }, distinct: ['leadId'], select: { leadId: true } }),
+    prisma.reply.count({ where: { actionedAt: null } }),
+  ]);
+
+  res.json({
+    global: { ...globalCounts, signals7d: signals7dRows.length, repliesAwaitingTriage: repliesAwaiting },
+    inFilter: { ...inFilterCounts },
+  });
+});
+
+let _facetsCache = { at: 0, data: null };
+export function _resetFacetsCacheForTests() { _facetsCache = { at: 0, data: null }; }
+router.get('/facets', async (_req, res) => {
+  if (_facetsCache.data && Date.now() - _facetsCache.at < 60_000) return res.json(_facetsCache.data);
+  const [categories, cities, countries] = await Promise.all([
+    prisma.lead.findMany({ where: { category: { not: null } }, distinct: ['category'], select: { category: true } }).then(r => r.map(x => x.category)),
+    prisma.lead.findMany({ where: { city:     { not: null } }, distinct: ['city'],     select: { city: true } }).then(r => r.map(x => x.city)),
+    prisma.lead.findMany({ where: { country:  { not: null } }, distinct: ['country'],  select: { country: true } }).then(r => r.map(x => x.country)),
+  ]);
+  _facetsCache = { at: Date.now(), data: { categories, cities, countries } };
+  res.json(_facetsCache.data);
+});
+
+router.post('/bulk/status', bulkStatus);
+router.post('/bulk/retry', bulkRetry);
+
+router.get('/export.csv', async (req, res) => {
+  const t = await getThresholds();
+  const { where, orderBy } = parseLeadsQuery(req.query, t);
+  await exportCsv(req, res, { where, orderBy, serializeLead, thresholds: t });
 });
 
 router.get('/:id', async (req, res) => {

@@ -7,9 +7,13 @@ import { sendAlert } from '../core/integrations/telegram.js';
 import { loadScoringContext, scoreLead } from '../core/ai/icpScorer.js';
 import { withConcurrency } from '../core/lib/concurrency.js';
 import { gatherSignals, persistSignals } from '../core/signals/index.js';
+import { regenerateHook } from '../core/pipeline/regenerateHook.js';
+import { regenerateBody } from '../core/pipeline/regenerateBody.js';
+import { regenerateSubject } from '../core/pipeline/regenerateSubject.js';
+import { reextract } from '../core/pipeline/reextract.js';
 
 // Pipeline stage map (per-lead body in processLead, line ~392):
-//   stages2to6_extract → Gate 1 → email check → dedup → Stage 7 (MEV) →
+//   reextract → Gate 1 → email check → dedup → Stage 7 (MEV) →
 //   Stage 9 (ICP) → spend cap → SIGNAL COLLECT → Stage 10 (hook) →
 //   Stage 11 (body+subject) → insert lead+email
 // Signals collected after ICP-pass to avoid wasting adapter calls on dropped leads.
@@ -142,120 +146,7 @@ async function stage1_discover(niche, batchIndex, perBatch, cities, businessSize
   }
 }
 
-// ── Stages 2–6: Extraction + tech + signals + judge + DM finder ──
-async function stages2to6_extract(lead) {
-  const prompt = `Analyze this business website and return a JSON object with these fields:
-- owner_name: owner/founder name (string or null)
-- owner_role: their role e.g. "Founder", "Director" (string or null)
-- contact_email: guessed email from name + domain pattern firstname@domain.com (string or null)
-- contact_confidence: "high" if pattern match verified, "medium" if guessed, "low" if generic (string)
-- contact_source: where you found the contact info e.g. "about page", "linkedin", "pattern guess" (string)
-- tech_stack: JSON array of technologies detected e.g. ["WordPress","jQuery","PHP"] (array)
-- website_problems: JSON array of specific issues e.g. ["no SSL","broken links","outdated design"] (array)
-- last_updated: approximate date the site was last meaningfully updated (string or null)
-- has_ssl: 1 if HTTPS, 0 if not (number)
-- has_analytics: 1 if Google Analytics/GTM found, 0 if not (number)
-- business_signals: JSON array e.g. ["low reviews","no booking","dated design","active social"] (array)
-- social_active: 1 if active social media but neglected website, 0 otherwise (number)
-- website_quality_score: 1-10 where 1=terrible needs complete rebuild, 10=excellent modern site (number)
-- judge_reason: one sentence explaining the quality score (string)
-- employees_estimate: "1-10" | "10-50" | "50-200" | "unknown" (string). Use team/about page clues.
-- business_stage: "owner-operated" | "growing" | "established" | "unknown" (string).
-
-Business: ${lead.business_name}, Website: ${lead.website_url}, City: ${lead.city}
-
-Return only valid JSON, no markdown.`;
-  const result = await callGemini(prompt, { useGrounding: true });
-  try {
-    return { data: JSON.parse(stripJson(result.text)), costUsd: result.costUsd };
-  } catch {
-    return { data: null, costUsd: result.costUsd };
-  }
-}
-
 const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
-
-// ── Stage 10: Hook generation — Claude Sonnet (or Gemini fallback) ──
-function buildSignalsBlock(signals) {
-  if (!Array.isArray(signals) || signals.length === 0) return '';
-  const lines = signals.slice(0, 3).map((s, i) => `${i + 1}. [${s.signalType}] ${s.headline}${s.url ? ` (${s.url})` : ''}`);
-  return `\n\nRecent signals about this business (newest/strongest first):\n${lines.join('\n')}\n\nIf one of these signals is genuinely interesting, weave it into the hook. If none feel natural, ignore them and observe the website directly.`;
-}
-
-// Two prompt seeds for the A/B framework. Both stay within the same length/tone
-// constraints; the difference is angle, not voice. Variant winners surface in
-// the Sunday report (dailyReport.js) — retire losers manually after ~2 weeks.
-const VARIANT_SEEDS = {
-  A: { name: 'observation', angle: 'a hyper-specific observation about something concrete you\'d notice as' },
-  B: { name: 'curious-question', angle: 'a short curious question opening (max 20 words) that a' },
-};
-
-function buildHookPrompt(variant, lead, persona, signals) {
-  const seed = VARIANT_SEEDS[variant];
-  const opener = variant === 'A'
-    ? `Write ONE sentence (max 20 words) that makes ${seed.angle} a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`
-    : `${seed.angle.replace(/^a /, 'Write ')} ${persona.role} would ask ${lead.business_name}'s owner about their site (${lead.website_url}) — concrete, no fluff.`;
-  const manualNote = lead.manual_hook_note ? `\n\nManual hook hint from operator: ${lead.manual_hook_note}` : '';
-  return opener + buildSignalsBlock(signals) + manualNote;
-}
-
-async function generateHookVariant(variant, lead, persona, signals) {
-  const prompt = buildHookPrompt(variant, lead, persona, signals);
-  if (ANTHROPIC_DISABLED) {
-    const result = await callGemini(prompt);
-    return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
-  }
-  const result = await callClaude('sonnet', prompt, { maxTokens: 60 });
-  return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
-}
-
-// Generate both variants in parallel, pick one at random for actual send.
-// Returns the chosen variant's data + total cost (both calls billed).
-async function stage10_hook(lead, persona, signals = []) {
-  const [a, b] = await Promise.all([
-    generateHookVariant('A', lead, persona, signals),
-    generateHookVariant('B', lead, persona, signals),
-  ]);
-  const chosen = Math.random() < 0.5 ? a : b;
-  const totalCost = (a.costUsd || 0) + (b.costUsd || 0);
-  return { hook: chosen.hook, costUsd: totalCost, model: chosen.model, hookVariantId: chosen.variant };
-}
-
-// ── Stage 11: Email body — Claude Haiku (or Gemini fallback) ─────────
-async function stage11_body(lead, hook, persona) {
-  const prompt = `Write a cold email from ${persona.name} (${persona.role}, ${persona.company}) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
-
-Hook to open with: "${hook}"
-
-Services context: ${persona.services}
-
-Rules:
-- Plain text only, no HTML
-- 50-90 words total
-- No links, no URLs
-- CTA: ask to reply
-- Tone: ${persona.tone}
-- Do not mention price
-
-Return only the email body, no subject line.`;
-  if (ANTHROPIC_DISABLED) {
-    const result = await callGemini(prompt);
-    return { body: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
-  }
-  const result = await callClaude('haiku', prompt, { maxTokens: 200 });
-  return { body: result.text.trim(), costUsd: result.costUsd, model: result.model };
-}
-
-// ── Stage 11b: Subject line — Claude Haiku (or Gemini fallback) ──────
-async function stage11_subject(lead) {
-  const prompt = `Write a cold email subject line for ${lead.business_name}. Max 7 words. No ! or ? or ALL CAPS. Make it sound like a human colleague writing, not marketing. Return only the subject line text.`;
-  if (ANTHROPIC_DISABLED) {
-    const result = await callGemini(prompt);
-    return { subject: result.text.trim(), costUsd: result.costUsd };
-  }
-  const result = await callClaude('haiku', prompt, { maxTokens: 30 });
-  return { subject: result.text.trim(), costUsd: result.costUsd };
-}
 
 // ── Main pipeline ────────────────────────────────────────
 /**
@@ -436,7 +327,7 @@ export default async function findLeads(override = {}) {
         leadsProcessed++;
 
         // ── Stages 2-6: extract + tech + signals + judge + DM finder ─────
-        const { data: extracted, costUsd: extractCost } = await stages2to6_extract(raw);
+        const { data: extracted, costUsd: extractCost } = await reextract(raw);
         totalCost += extractCost;
         await bumpMetric('geminiCostUsd', extractCost);
         await bumpMetric('totalApiCostUsd', extractCost);
@@ -537,14 +428,14 @@ export default async function findLeads(override = {}) {
         const topSignals = allSignals.slice(0, 3);
 
         // ── Stage 10: hook ───────────────────────────────────────────────
-        const hookResult = await stage10_hook(lead, persona, topSignals);
+        const hookResult = await regenerateHook(lead, persona, topSignals);
         totalCost += hookResult.costUsd;
         aiSpendThisRun += hookResult.costUsd;
 
         // ── Stage 11: body + subject in parallel ─────────────────────────
         const [bodyResult, subjectResult] = await Promise.all([
-          stage11_body(lead, hookResult.hook, persona),
-          stage11_subject(lead),
+          regenerateBody(lead, hookResult.hook, persona),
+          regenerateSubject(lead),
         ]);
         const bodyCost = bodyResult.costUsd + subjectResult.costUsd;
         totalCost += bodyCost;
