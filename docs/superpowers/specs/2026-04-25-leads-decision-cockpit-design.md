@@ -192,10 +192,15 @@ Body: `{ leadIds, stage, dryRun? }` where `stage ∈ {'verify_email','regen_hook
   {
     "count": 14,
     "estimated_cost_usd": 0.21,
-    "breakdown_by_model": { "claude-sonnet-4-20250514": 0.18, "claude-haiku-4-5": 0.03 }
+    "breakdown_by_stage": { "regen_hook": 0.18, "regen_body": 0.03 }
   }
   ```
-  Estimate uses 30-day rolling average cost-per-call from `daily_metrics` (or the engine's published per-call cost when daily_metrics is empty). UI surfaces this in the confirm dialog.
+  Estimate is derived per-stage from real recent samples — NOT from `daily_metrics` (which rolls up by model family `gemini/sonnet/haiku/mev`, not by stage):
+  - `regen_hook`, `regen_body` → average of `Email.hookCostUsd` / `Email.bodyCostUsd` over the last 200 rows.
+  - `verify_email` → constant from `MEV_COST_PER_CALL` env (or fall back to `0.0006`).
+  - `rescore_icp`, `reextract`, `rejudge` → average of `Lead.geminiCostUsd` over the last 200 rows that have a non-null value, attributed to the corresponding stage.
+
+  When sample size is < 5 the response includes `"estimate_quality": "low"` and the dialog says "rough estimate — limited recent data". UI surfaces this in the confirm dialog.
 - Without `dryRun`: server opens an SSE response and streams `{ leadId, status, error? }` events as each retry completes. The bulk action bar shows a progress meter. Inline execution; no queue table.
 
 Server-side, retries import existing engine helpers (`verifyEmail()` from `core/integrations/mev.js`, `generateHook()` from `core/ai/claude.js`, etc.). Each retry:
@@ -295,7 +300,7 @@ Vitest:
 | Risk | Mitigation |
 |---|---|
 | Bulk queue floods send engine, breaks daily cap intent | Daily cap enforced by `sendEmails.js` regardless — bulk queue just changes order; no risk. |
-| SSE connection drops mid-retry | Each retry is per-lead atomic; UI on reconnect polls `/api/leads?ids=…` to reconcile. |
+| SSE connection drops mid-retry | Each retry is per-lead atomic; UI on reconnect issues parallel `GET /api/leads/:id` calls (existing endpoint, no API change) to reconcile the rows that were in the batch. |
 | Cost-estimate drift (averages stale) | Estimate clearly labeled "estimated"; real cost recorded post-call as today. |
 | Filter combinations explode query plan | Add Postgres composite index on `(status, icp_score)` with the migration; `lead_signals` join already indexed. |
 | Operator deletes a popular saved view by accident | Confirmation dialog on delete; if loss is felt, a spec-followup adds soft-delete + restore. |
