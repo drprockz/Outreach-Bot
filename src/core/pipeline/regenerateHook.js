@@ -18,17 +18,20 @@ const VARIANT_SEEDS = {
   B: { name: 'curious-question', angle: 'a short curious question opening (max 20 words) that a' },
 };
 
-function buildHookPrompt(variant, lead, persona, signals) {
+export function buildHookPrompt(variant, lead, persona, signals, competitorAnalysis = null) {
   const seed = VARIANT_SEEDS[variant];
   const opener = variant === 'A'
     ? `Write ONE sentence (max 20 words) that makes ${seed.angle} a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`
     : `${seed.angle.replace(/^a /, 'Write ')} ${persona.role} would ask ${lead.business_name}'s owner about their site (${lead.website_url}) — concrete, no fluff.`;
   const manualNote = lead.manual_hook_note ? `\n\nManual hook hint from operator: ${lead.manual_hook_note}` : '';
-  return opener + buildSignalsBlock(signals) + manualNote;
+  const competitorBlock = competitorAnalysis
+    ? `\n\nCompetitor context (use naturally, do not quote directly):\n- Hook insight: ${competitorAnalysis.opportunityHook}\n- Key gaps: ${(competitorAnalysis.cons || []).slice(0, 2).join('; ')}`
+    : '';
+  return opener + buildSignalsBlock(signals) + manualNote + competitorBlock;
 }
 
-async function generateHookVariant(variant, lead, persona, signals) {
-  const prompt = buildHookPrompt(variant, lead, persona, signals);
+async function generateHookVariant(variant, lead, persona, signals, competitorAnalysis = null) {
+  const prompt = buildHookPrompt(variant, lead, persona, signals, competitorAnalysis);
   if (ANTHROPIC_DISABLED) {
     const result = await callGemini(prompt);
     return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
@@ -39,10 +42,10 @@ async function generateHookVariant(variant, lead, persona, signals) {
 
 // Generate both variants in parallel, pick one at random for actual send.
 // Returns the chosen variant's data + total cost (both calls billed).
-export async function regenerateHook(lead, persona, signals = []) {
+export async function regenerateHook(lead, persona, signals = [], competitorAnalysis = null) {
   const [a, b] = await Promise.all([
-    generateHookVariant('A', lead, persona, signals),
-    generateHookVariant('B', lead, persona, signals),
+    generateHookVariant('A', lead, persona, signals, competitorAnalysis),
+    generateHookVariant('B', lead, persona, signals, competitorAnalysis),
   ]);
   const chosen = Math.random() < 0.5 ? a : b;
   const totalCost = (a.costUsd || 0) + (b.costUsd || 0);
