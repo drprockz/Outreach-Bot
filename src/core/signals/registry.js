@@ -6,6 +6,7 @@ import * as companyBlog from './adapters/companyBlog.js';
 import * as indianPress from './adapters/indianPress.js';
 import * as techStack from './adapters/techStack.js';
 import * as careersPage from './adapters/careersPage.js';
+import * as certTransparency from './adapters/certTransparency.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
@@ -13,7 +14,7 @@ const ALL_ADAPTERS = {
   indian_press: indianPress,
   tech_stack: techStack,
   careers_page: careersPage,
-  cert_transparency: null,
+  cert_transparency: certTransparency,
   pagespeed: null,
   product_hunt: null,
   github: null,
