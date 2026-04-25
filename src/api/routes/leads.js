@@ -48,6 +48,26 @@ function serializeLead(l) {
     discovery_model: l.discoveryModel,
     extraction_model: l.extractionModel,
     judge_model: l.judgeModel,
+    dm_linkedin_url: l.dmLinkedinUrl,
+    company_linkedin_url: l.companyLinkedinUrl,
+    founder_linkedin_url: l.founderLinkedinUrl,
+    manual_hook_note: l.manualHookNote,
+  };
+}
+
+function serializeSignal(s) {
+  if (!s) return null;
+  return {
+    id: s.id,
+    lead_id: s.leadId,
+    source: s.source,
+    signal_type: s.signalType,
+    headline: s.headline,
+    url: s.url || null,
+    payload: s.payloadJson,
+    confidence: s.confidence,
+    signal_date: s.signalDate,
+    collected_at: s.collectedAt,
   };
 }
 
@@ -151,16 +171,59 @@ router.get('/:id', async (req, res) => {
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-  const emails = await prisma.email.findMany({ where: { leadId: id }, orderBy: { createdAt: 'desc' } });
-  const replies = await prisma.reply.findMany({ where: { leadId: id }, orderBy: { receivedAt: 'desc' } });
-  const sequence = await prisma.sequenceState.findUnique({ where: { leadId: id } });
+  const [emails, replies, sequence, signals] = await Promise.all([
+    prisma.email.findMany({ where: { leadId: id }, orderBy: { createdAt: 'desc' } }),
+    prisma.reply.findMany({ where: { leadId: id }, orderBy: { receivedAt: 'desc' } }),
+    prisma.sequenceState.findUnique({ where: { leadId: id } }),
+    prisma.leadSignal.findMany({ where: { leadId: id }, orderBy: { confidence: 'desc' }, take: 10 }),
+  ]);
 
   res.json({
     lead: serializeLead(lead),
     emails: emails.map(serializeEmail),
     replies: replies.map(serializeReply),
     sequence: serializeSequence(sequence),
+    signals: signals.map(serializeSignal),
   });
+});
+
+router.get('/:id/signals', async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid id' });
+
+  const signals = await prisma.leadSignal.findMany({
+    where: { leadId: id },
+    orderBy: { confidence: 'desc' },
+    take: 10,
+  });
+  res.json({ signals: signals.map(serializeSignal) });
+});
+
+const PATCH_LEAD_WHITELIST = new Set(['manualHookNote', 'status']);
+
+router.patch('/:id', async (req, res) => {
+  const id = parseInt(req.params.id);
+  if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid id' });
+
+  const body = req.body || {};
+  const keys = Object.keys(body);
+  const rejected = keys.filter(k => !PATCH_LEAD_WHITELIST.has(k));
+  if (rejected.length > 0) {
+    return res.status(400).json({ error: `field(s) not allowed: ${rejected.join(', ')}` });
+  }
+  if (keys.length === 0) {
+    return res.status(400).json({ error: 'at least one whitelisted field is required' });
+  }
+
+  const lead = await prisma.lead.findUnique({ where: { id }, select: { id: true } });
+  if (!lead) return res.status(404).json({ error: 'Lead not found' });
+
+  const data = {};
+  if ('manualHookNote' in body) data.manualHookNote = body.manualHookNote === '' ? null : body.manualHookNote;
+  if ('status' in body) data.status = body.status;
+
+  const updated = await prisma.lead.update({ where: { id }, data });
+  res.json({ ok: true, lead: serializeLead(updated) });
 });
 
 router.patch('/:id/status', async (req, res) => {
@@ -176,5 +239,5 @@ router.patch('/:id/status', async (req, res) => {
   res.json({ ok: true });
 });
 
-export { serializeLead, serializeEmail, serializeReply };
+export { serializeLead, serializeEmail, serializeReply, serializeSignal };
 export default router;

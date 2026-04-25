@@ -214,6 +214,97 @@ describe('dashboard API', () => {
     expect(data).toHaveProperty('lead');
     expect(data).toHaveProperty('emails');
     expect(data).toHaveProperty('replies');
+    expect(data).toHaveProperty('signals');
+    expect(Array.isArray(data.signals)).toBe(true);
+  });
+
+  it('GET /api/leads/:id/signals returns persisted signals sorted by confidence desc', async () => {
+    const { getPrisma } = await import('../../src/core/db/index.js');
+    const prisma = getPrisma();
+    const lead = await prisma.lead.create({
+      data: { businessName: 'SigCo', contactEmail: 'sig@sigco.com', status: 'ready' },
+    });
+    await prisma.leadSignal.createMany({
+      data: [
+        { leadId: lead.id, source: 'google_news', signalType: 'press',   headline: 'low',  url: 'u1', confidence: 0.4 },
+        { leadId: lead.id, source: 'google_news', signalType: 'funding', headline: 'high', url: 'u2', confidence: 0.9 },
+        { leadId: lead.id, source: 'careers_page', signalType: 'hiring', headline: 'mid',  url: 'u3', confidence: 0.7 },
+      ],
+    });
+
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/leads/${lead.id}/signals`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.signals.map(s => s.confidence)).toEqual([0.9, 0.7, 0.4]);
+    expect(data.signals[0].signal_type).toBe('funding');
+  });
+
+  it('PATCH /api/leads/:id updates manualHookNote (whitelisted)', async () => {
+    const { getPrisma } = await import('../../src/core/db/index.js');
+    const prisma = getPrisma();
+    const lead = await prisma.lead.create({
+      data: { businessName: 'NoteCo', contactEmail: 'note@noteco.com', status: 'ready' },
+    });
+
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/leads/${lead.id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manualHookNote: 'Noticed they switched to Stripe Atlas — angle on US expansion?' }),
+    });
+    expect(res.status).toBe(200);
+
+    const row = await prisma.lead.findUnique({ where: { id: lead.id } });
+    expect(row.manualHookNote).toMatch(/Stripe Atlas/);
+  });
+
+  it('PATCH /api/leads/:id rejects non-whitelisted fields', async () => {
+    const { getPrisma } = await import('../../src/core/db/index.js');
+    const lead = await getPrisma().lead.create({
+      data: { businessName: 'RejectCo', contactEmail: 'r@rejectco.com', status: 'ready' },
+    });
+
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/leads/${lead.id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contactEmail: 'attacker@evil.com', manualHookNote: 'fine' }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toMatch(/contactEmail/);
+
+    const row = await getPrisma().lead.findUnique({ where: { id: lead.id } });
+    expect(row.contactEmail).toBe('r@rejectco.com');
+    expect(row.manualHookNote).toBeNull();
+  });
+
+  it('PATCH /api/leads/:id 404 when lead does not exist', async () => {
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/leads/9999999`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manualHookNote: 'x' }),
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('PATCH /api/leads/:id 400 with empty body', async () => {
+    const { getPrisma } = await import('../../src/core/db/index.js');
+    const lead = await getPrisma().lead.create({
+      data: { businessName: 'EmptyCo', contactEmail: 'e@emptyco.com', status: 'ready' },
+    });
+
+    const token = await getToken();
+    const res = await fetch(`${baseUrl}/api/leads/${lead.id}`, {
+      method: 'PATCH',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 
   it('GET /api/cron-status/:job/history returns job history', async () => {
