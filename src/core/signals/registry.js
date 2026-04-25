@@ -4,12 +4,13 @@
 import * as googleNews from './adapters/googleNews.js';
 import * as companyBlog from './adapters/companyBlog.js';
 import * as indianPress from './adapters/indianPress.js';
+import * as techStack from './adapters/techStack.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
   company_blog: companyBlog,
   indian_press: indianPress,
-  tech_stack: null,
+  tech_stack: techStack,
   careers_page: null,
   cert_transparency: null,
   pagespeed: null,
