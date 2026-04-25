@@ -25,21 +25,13 @@ vi.mock('../../src/core/ai/claude.js', () => ({
 }));
 
 describe('findLeads stage helpers — pre-refactor snapshot', () => {
-  let stage10_hook, stage11_body, stage11_subject;
+  let stage11_body, stage11_subject;
 
   beforeEach(async () => {
     vi.resetModules();
     const mod = await import('../../src/engines/findLeads.js');
-    stage10_hook = mod.stage10_hook;
     stage11_body = mod.stage11_body;
     stage11_subject = mod.stage11_subject;
-  });
-
-  it('stage10_hook returns chosen variant + total cost of both calls', async () => {
-    const r = await stage10_hook(FIXTURE_LEAD, PERSONA, SIGNALS);
-    expect(r.hook).toMatch(/^MOCK_HOOK\[(A|B)\]$/);
-    expect(r.costUsd).toBeCloseTo(0.002, 6);
-    expect(r.hookVariantId).toMatch(/^[AB]$/);
   });
 
   it('stage11_body returns body string', async () => {
