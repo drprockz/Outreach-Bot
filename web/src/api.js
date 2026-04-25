@@ -93,4 +93,28 @@ export const api = {
   engineLatest:     (engineName) => request(`/run-engine/latest/${engineName}`),
   engineStats:      (engineName, sample = 10) => request(`/run-engine/stats/${engineName}?sample=${sample}`),
   todayCosts:       () => request('/run-engine/today-costs'),
+
+  leadKpis:        (params = '') => request(`/leads/kpis${params}`),
+  leadFacets:      ()             => request('/leads/facets'),
+  bulkLeadStatus:  (body)         => request('/leads/bulk/status', { method: 'POST', body: JSON.stringify(body) }),
+  bulkLeadRetryDryRun: (body)     => request('/leads/bulk/retry?dry_run=1', { method: 'POST', body: JSON.stringify(body) }),
+  exportLeadsCsv:  (params, columns) => {
+    const token = localStorage.getItem('radar_token');
+    const sep = params && params.includes('?') ? '&' : '?';
+    const qs = (params || '') + sep + `columns=${columns}`;
+    return fetch(`/api/leads/export.csv${qs}`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async res => {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `leads-${Date.now()}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+      });
+  },
+  listSavedViews:  ()             => request('/saved-views'),
+  createSavedView: (body)         => request('/saved-views', { method: 'POST', body: JSON.stringify(body) }),
+  updateSavedView: (id, body)     => request(`/saved-views/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+  deleteSavedView: (id)           => fetch(`/api${'/saved-views/'+id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${localStorage.getItem('radar_token')}` } }).then(r => r.ok),
 };
