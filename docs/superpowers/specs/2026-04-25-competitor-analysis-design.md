@@ -41,7 +41,7 @@ Stage 10 → Hook generation       ← receives competitor context
 Stage 11 → Email body
 ```
 
-Stage 9.5 is non-blocking. Any failure returns `null` and logs to `error_log`. The pipeline continues with hook generation — just without competitor context.
+Stage 9.5 runs **after the spend-cap gate** (same position as signal collection) — only for leads that will actually reach stages 10/11. Wasting Gemini calls on leads that will be skipped by the Claude spend cap is avoided. Stage 9.5 is non-blocking: any failure returns `null` and logs to `error_log`. The pipeline continues with hook generation — just without competitor context.
 
 ### New Module
 
@@ -64,6 +64,7 @@ Called from `findLeads.js` as one `await analyzeCompetitors(lead)` call. Keeps p
 - Input: each competitor `name` + `website`
 - Prompt: find notable clients, case studies, or portfolio work listed by this competitor
 - Output per competitor: `{ clients: [], portfolioHighlights: [] }`
+- Each lambda inside `withConcurrency` must catch its own errors and return `null` on failure (per `concurrency.js` contract: callers must never let `fn` throw)
 
 **Call 3 — Gap Comparison** (single call, full context)
 - Input: lead's `websiteProblems`, `techStack`, all competitor profiles from calls 1–2
@@ -105,7 +106,7 @@ Stored JSON shape:
 
 ## Hook Generation Integration (Stage 10)
 
-When `competitorAnalysis` is non-null, the existing stage 10 prompt receives an appended section:
+When `competitorAnalysis` is non-null, the competitor context is appended to **both variant A and variant B** prompts inside `buildHookPrompt`:
 
 ```
 Competitor context (use naturally, do not quote directly):
@@ -113,7 +114,11 @@ Competitor context (use naturally, do not quote directly):
 - Key gaps: [top 2 cons]
 ```
 
-The AI uses this to write a more pointed hook — no changes to prompt structure, just additional context.
+`buildHookPrompt` receives a new 5th positional parameter with default null:
+```js
+function buildHookPrompt(variant, lead, persona, signals, competitorAnalysis = null)
+```
+Null-safe: the competitor context block is only appended when `competitorAnalysis` is non-null. The AI uses it to write a more pointed hook — no changes to prompt structure, just additional context.
 
 ---
 
@@ -123,16 +128,27 @@ The AI uses this to write a more pointed hook — no changes to prompt structure
 |---|---|
 | Any Gemini call fails / times out | Return `null`, log to `error_log` (engine=`findLeads`) |
 | Malformed JSON response | Parse error caught → return `null` |
-| Call 2 partial failure (one competitor) | Include successful competitors, skip failed one |
-| Daily Gemini call count ≥ 1,200 | Skip stage 9.5 entirely for remaining leads |
-
-The 1,200-call guard is checked against `daily_metrics` before stage 9.5 runs. Gives a 300-call buffer under the free tier ceiling.
+| Call 2 partial failure (one competitor) | Include successful competitors (non-null results), skip failed one |
+| Free-tier budget exhausted | No cap check in Phase 1 — current usage (~320/day) is well within the 1,500/day limit. Add a `geminiCallCount` metric column and gate if this approaches 1,200 in a future phase. |
 
 ---
 
 ## Cost Tracking
 
-`analyzeCompetitors` accumulates token costs across all three calls and returns a `geminiCostUsd` delta. `findLeads.js` adds this to the lead's `geminiCostUsd` field (same pattern as existing stages 1–9).
+`analyzeCompetitors` returns `{ ..., costUsd: number }`. In `findLeads.js`, after the call the cost is attached to the lead object via `Object.assign(lead, { competitorCost: result.costUsd })` — consistent with the `icpCost` pattern. `insertLead` is updated to include it:
+
+```js
+geminiCostUsd: (lead.extractCost || 0) + (lead.icpCost || 0) + (lead.competitorCost || 0)
+```
+
+Immediately after stage 9.5 completes, both cost metrics are bumped:
+
+```js
+await bumpMetric('geminiCostUsd', costUsd);
+await bumpMetric('totalApiCostUsd', costUsd);
+```
+
+This keeps `totalApiCostUsd` accurate for spend-cap accounting and cost reporting (consistent with all other Gemini call sites in `findLeads.js`).
 
 ---
 
@@ -142,21 +158,23 @@ File: `tests/core/ai/competitorAnalysis.test.js`
 
 | Test | Description |
 |---|---|
-| Happy path | Mock 3 Gemini responses → correct JSON shape returned |
+| Happy path | Mock 3 Gemini responses → correct JSON shape returned, `costUsd` accumulated |
 | Malformed JSON | Gemini returns non-JSON → returns `null`, no throw |
-| Partial call 2 failure | One competitor scrape fails → remaining competitors included |
-| Gemini cap exceeded | `daily_metrics` count ≥ 1,200 → returns `null` immediately |
+| Partial call 2 failure | One competitor scrape lambda returns `null` → remaining competitors included in result |
 
 ---
 
 ## Schema Migration
 
 ```bash
-# Add competitorAnalysis Json? to Lead model in schema.prisma
-npx prisma db push
+# Local dev
+npx prisma migrate dev --name add_competitor_analysis
+
+# VPS (production)
+npx prisma migrate deploy
 ```
 
-No breaking changes. Existing leads have `competitorAnalysis = null`.
+`competitorAnalysis` is only written on **ready-path lead inserts** (after stage 9.5 runs). Early-exit paths (e.g. `email_invalid` inserts that bypass stages 9–11) pass `competitorAnalysis: null`. No breaking changes — all existing leads default to `null`.
 
 ---
 
