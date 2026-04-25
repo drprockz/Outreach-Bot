@@ -75,6 +75,9 @@ async function runStage(stage, lead, ctx) {
   if (stage === 'verify_email') {
     if (!lead.contactEmail) throw new Error('no_contact_email');
     const r = await verifyEmail(lead.contactEmail);
+    if (!r || !r.status || r.status === 'skipped' || r.status === 'error') {
+      throw new Error(`verify_email_failed: ${r?.status || 'no_response'}`);
+    }
     await prisma.lead.update({ where: { id: lead.id }, data: { emailStatus: r.status, emailVerifiedAt: new Date() } });
     return { costUsd: r.costUsd || 0 };
   }
@@ -154,10 +157,16 @@ export async function bulkRetry(req, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+  let aborted = false;
+  res.on('close', () => { if (!res.writableEnded) aborted = true; });
 
   const ctx = await loadCtx(stage);
   const leads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
   for (const lead of leads) {
+    if (aborted) break;
     try {
       const r = await runStage(stage, lead, ctx);
       res.write(`data: ${JSON.stringify({ leadId: lead.id, status: 'ok', costUsd: r.costUsd })}\n\n`);
@@ -170,6 +179,8 @@ export async function bulkRetry(req, res) {
       res.write(`data: ${JSON.stringify({ leadId: lead.id, status: 'error', error: err.message })}\n\n`);
     }
   }
-  res.write('data: {"status":"done"}\n\n');
-  res.end();
+  if (!aborted) {
+    res.write('data: {"status":"done"}\n\n');
+    res.end();
+  }
 }

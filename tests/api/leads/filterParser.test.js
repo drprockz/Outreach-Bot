@@ -29,19 +29,26 @@ describe('parseLeadsQuery', () => {
     expect(out.where.icpScore).toEqual({ lt: 40 });
   });
 
-  it('translates multi-priority to OR of ranges', () => {
+  it('translates multi-priority to OR of ranges (in AND clause)', () => {
     const out = parseLeadsQuery({ icp_priority: ['A', 'C'] }, T);
-    expect(out.where.OR).toBeDefined();
-    expect(out.where.OR.length).toBeGreaterThanOrEqual(2);
+    expect(out.where.AND).toBeDefined();
+    expect(out.where.AND[0].OR.length).toBeGreaterThanOrEqual(2);
   });
 
   it('parses search across business_name / website_url / contact_email', () => {
     const out = parseLeadsQuery({ search: 'acme' }, T);
-    expect(out.where.OR).toEqual([
+    expect(out.where.AND[0].OR).toEqual([
       { businessName: { contains: 'acme', mode: 'insensitive' } },
       { websiteUrl:   { contains: 'acme', mode: 'insensitive' } },
       { contactEmail: { contains: 'acme', mode: 'insensitive' } },
     ]);
+  });
+
+  it('search + multi-priority AND-compose without OR collision', () => {
+    const out = parseLeadsQuery({ search: 'acme', icp_priority: ['A', 'C'] }, T);
+    expect(out.where.AND).toHaveLength(2);
+    expect(out.where.AND[0]).toHaveProperty('OR');
+    expect(out.where.AND[1]).toHaveProperty('OR');
   });
 
   it('parses icp_score range', () => {

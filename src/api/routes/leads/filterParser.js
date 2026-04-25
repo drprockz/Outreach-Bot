@@ -38,16 +38,18 @@ export function parseLeadsQuery(q, thresholds) {
     else if (arr.length > 1) where[dbkey] = { in: arr };
   }
 
-  // search
+  // search → push as one AND clause to avoid OR collision with other multi-value filters
   if (q.search) {
-    where.OR = [
-      { businessName: { contains: q.search, mode: 'insensitive' } },
-      { websiteUrl:   { contains: q.search, mode: 'insensitive' } },
-      { contactEmail: { contains: q.search, mode: 'insensitive' } },
-    ];
+    where.AND = (where.AND || []).concat([{
+      OR: [
+        { businessName: { contains: q.search, mode: 'insensitive' } },
+        { websiteUrl:   { contains: q.search, mode: 'insensitive' } },
+        { contactEmail: { contains: q.search, mode: 'insensitive' } },
+      ],
+    }]);
   }
 
-  // icp_priority
+  // icp_priority — single value sets icpScore directly; multi value goes into a separate AND clause
   const priorities = asArray(q.icp_priority);
   if (priorities.length === 1) {
     const r = priorityToRange(priorities[0], thresholds);
@@ -57,7 +59,7 @@ export function parseLeadsQuery(q, thresholds) {
       .map(p => priorityToRange(p, thresholds))
       .filter(Boolean)
       .map(r => ({ icpScore: r }));
-    where.OR = (where.OR || []).concat(ors);
+    if (ors.length) where.AND = (where.AND || []).concat([{ OR: ors }]);
   }
 
   // icp_score range
