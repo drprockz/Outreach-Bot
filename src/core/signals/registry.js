@@ -9,6 +9,7 @@ import * as careersPage from './adapters/careersPage.js';
 import * as certTransparency from './adapters/certTransparency.js';
 import * as pagespeed from './adapters/pagespeed.js';
 import * as productHunt from './adapters/productHunt.js';
+import * as github from './adapters/github.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
@@ -19,7 +20,7 @@ const ALL_ADAPTERS = {
   cert_transparency: certTransparency,
   pagespeed: pagespeed,
   product_hunt: productHunt,
-  github: null,
+  github: github,
   corp_filings: null,
 };
 
