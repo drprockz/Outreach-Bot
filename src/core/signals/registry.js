@@ -8,6 +8,7 @@ import * as techStack from './adapters/techStack.js';
 import * as careersPage from './adapters/careersPage.js';
 import * as certTransparency from './adapters/certTransparency.js';
 import * as pagespeed from './adapters/pagespeed.js';
+import * as productHunt from './adapters/productHunt.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
@@ -17,7 +18,7 @@ const ALL_ADAPTERS = {
   careers_page: careersPage,
   cert_transparency: certTransparency,
   pagespeed: pagespeed,
-  product_hunt: null,
+  product_hunt: productHunt,
   github: null,
   corp_filings: null,
 };
