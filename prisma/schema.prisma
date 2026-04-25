@@ -64,10 +64,16 @@ model Lead {
   extractionModel       String?   @map("extraction_model")
   judgeModel            String?   @map("judge_model")
 
+  dmLinkedinUrl         String?   @map("dm_linkedin_url")
+  companyLinkedinUrl    String?   @map("company_linkedin_url")
+  founderLinkedinUrl    String?   @map("founder_linkedin_url")
+  manualHookNote        String?   @map("manual_hook_note")
+
   emails         Email[]
   bounces        Bounce[]
   replies        Reply[]
   sequenceState  SequenceState?
+  signals        LeadSignal[]
 
   @@index([status])
   @@index([icpScore])
@@ -112,6 +118,9 @@ model Email {
   hookCostUsd           Decimal?  @db.Decimal(10, 6) @map("hook_cost_usd")
   bodyCostUsd           Decimal?  @db.Decimal(10, 6) @map("body_cost_usd")
   totalCostUsd          Decimal?  @db.Decimal(10, 6) @map("total_cost_usd")
+
+  hookVariantId         String?   @map("hook_variant_id")
+  signalsUsedJson       Json?     @map("signals_used_json")
 
   createdAt             DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
 
@@ -360,4 +369,25 @@ model IcpProfile {
   updatedAt            DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
 
   @@map("icp_profile")
+}
+
+// ────────────────── LEAD SIGNALS (Move #1) ──────────────────
+model LeadSignal {
+  id           Int       @id @default(autoincrement())
+  leadId       Int       @map("lead_id")
+  source       String
+  signalType   String    @map("signal_type")
+  headline     String?
+  url          String?
+  payloadJson  Json?     @map("payload_json")
+  confidence   Float
+  signalDate   DateTime? @db.Timestamptz(6) @map("signal_date")
+  collectedAt  DateTime  @default(now()) @db.Timestamptz(6) @map("collected_at")
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, source, signalType, url], map: "uq_lead_signals_dedup")
+  @@index([leadId])
+  @@index([leadId, confidence(sort: Desc)])
+  @@map("lead_signals")
 }
