@@ -93,5 +93,15 @@ export function parseLeadsQuery(q, thresholds) {
     if (q.date_to) where.discoveredAt.lte = new Date(q.date_to);
   }
 
-  return { where, orderBy: parseSort(q.sort) };
+  // signal filters — surfaced separately because they require a sub-query
+  // against lead_signals, AND-ed with `where` at route handler level.
+  const signalFilter = {};
+  if (q.has_signals === '1' || q.has_signals === 'true') signalFilter.has = true;
+  if (q.min_signal_count) signalFilter.minCount = Number(q.min_signal_count);
+  const sigTypes = asArray(q.signal_type);
+  if (sigTypes.length) signalFilter.types = sigTypes;
+  if (q.signal_date_from) signalFilter.from = new Date(q.signal_date_from);
+  if (q.signal_date_to)   signalFilter.to   = new Date(q.signal_date_to);
+
+  return { where, orderBy: parseSort(q.sort), signalFilter };
 }

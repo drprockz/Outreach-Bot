@@ -75,4 +75,14 @@ describe('parseLeadsQuery', () => {
     const out = parseLeadsQuery({ in_reject_list: 'all' }, T);
     expect(out.where.inRejectList).toBeUndefined();
   });
+
+  it('parses signal filters', () => {
+    const out = parseLeadsQuery({ has_signals: '1', min_signal_count: '2', signal_type: ['hiring', 'funding'] }, T);
+    expect(out.signalFilter).toMatchObject({ has: true, minCount: 2, types: ['hiring', 'funding'] });
+  });
+
+  it('signalFilter is empty when no signal params', () => {
+    const out = parseLeadsQuery({ status: 'ready' }, T);
+    expect(out.signalFilter).toEqual({});
+  });
 });

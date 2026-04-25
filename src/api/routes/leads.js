@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { Prisma } from '@prisma/client';
 import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
 import { parseLeadsQuery } from './leads/filterParser.js';
@@ -12,6 +13,22 @@ async function getThresholds() {
     threshA: getConfigInt(cfg, 'icp_threshold_a', 70),
     threshB: getConfigInt(cfg, 'icp_threshold_b', 40),
   };
+}
+
+// Returns ids of leads where the JSONB array column shares any element with `values`.
+// Uses Postgres `?|` operator on jsonb arrays; identifier interpolation goes
+// through Prisma.raw (safe — caller passes a hardcoded column name), the
+// values list is parameterized as text[]. Returns null when the cleaned
+// values list is empty (no constraint to apply).
+async function jsonArrayFilterIds(prisma, column, values) {
+  const clean = values.filter(v => typeof v === 'string' && v.length > 0);
+  if (!clean.length) return null;
+  const rows = await prisma.$queryRaw`
+    SELECT id FROM leads
+    WHERE jsonb_typeof(${Prisma.raw(`"${column}"`)}) = 'array'
+      AND ${Prisma.raw(`"${column}"`)} ?| ${clean}::text[]
+  `;
+  return rows.map(r => r.id);
 }
 
 function serializeLead(l, thresholds) {
@@ -167,7 +184,39 @@ router.get('/', async (req, res) => {
   const offset = (page - 1) * limit;
 
   const thresholds = await getThresholds();
-  const { where, orderBy } = parseLeadsQuery(req.query, thresholds);
+  const { where, orderBy, signalFilter } = parseLeadsQuery(req.query, thresholds);
+
+  // Signal sub-query: filter leadIds by lead_signals join + count threshold,
+  // then AND the eligible id list into `where`.
+  if (Object.keys(signalFilter).length) {
+    const sw = {};
+    if (signalFilter.types) sw.signalType = { in: signalFilter.types };
+    if (signalFilter.from || signalFilter.to) {
+      sw.signalDate = {};
+      if (signalFilter.from) sw.signalDate.gte = signalFilter.from;
+      if (signalFilter.to)   sw.signalDate.lte = signalFilter.to;
+    }
+    const grouped = await prisma.leadSignal.groupBy({
+      by: ['leadId'], where: sw, _count: { _all: true },
+    });
+    const minCount = signalFilter.minCount || 1;
+    const eligible = grouped.filter(g => g._count._all >= minCount).map(g => g.leadId);
+    where.AND = (where.AND || []).concat([{ id: { in: eligible.length ? eligible : [-1] } }]);
+  }
+
+  // JSONB array filters: ?| (any-of) on tech_stack / business_signals.
+  // Guarded by jsonb_typeof = 'array' so non-array JSON values don't error.
+  const techStack = Array.isArray(req.query.tech_stack) ? req.query.tech_stack : req.query.tech_stack ? [req.query.tech_stack] : [];
+  if (techStack.length) {
+    const ids = await jsonArrayFilterIds(prisma, 'tech_stack', techStack);
+    if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+  }
+
+  const bizSigs = Array.isArray(req.query.business_signals) ? req.query.business_signals : req.query.business_signals ? [req.query.business_signals] : [];
+  if (bizSigs.length) {
+    const ids = await jsonArrayFilterIds(prisma, 'business_signals', bizSigs);
+    if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+  }
 
   const [total, leads] = await Promise.all([
     prisma.lead.count({ where }),
