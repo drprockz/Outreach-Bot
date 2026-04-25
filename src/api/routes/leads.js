@@ -5,6 +5,7 @@ import { bucket } from '../../core/ai/icpScorer.js';
 import { parseLeadsQuery } from './leads/filterParser.js';
 import { bulkStatus } from './leads/bulkStatus.js';
 import { bulkRetry } from './leads/bulkRetry.js';
+import { exportCsv } from './leads/csvExport.js';
 
 const router = Router();
 
@@ -284,6 +285,12 @@ router.get('/facets', async (_req, res) => {
 
 router.post('/bulk/status', bulkStatus);
 router.post('/bulk/retry', bulkRetry);
+
+router.get('/export.csv', async (req, res) => {
+  const t = await getThresholds();
+  const { where, orderBy } = parseLeadsQuery(req.query, t);
+  await exportCsv(req, res, { where, orderBy, serializeLead, thresholds: t });
+});
 
 router.get('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
