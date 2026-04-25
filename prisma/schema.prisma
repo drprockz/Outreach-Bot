@@ -78,7 +78,20 @@ model Lead {
   @@index([status])
   @@index([icpScore])
   @@index([contactEmail])
+  @@index([status, icpScore(sort: Desc)], map: "idx_leads_status_icp_score")
+  @@index([domainLastContacted(sort: Desc)], map: "idx_leads_domain_last_contacted")
   @@map("leads")
+}
+
+model SavedView {
+  id          Int       @id @default(autoincrement())
+  name        String
+  filtersJson Json      @map("filters_json")
+  sort        String?
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+  updatedAt   DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
+
+  @@map("saved_views")
 }
 
 // ────────────────── EMAILS ──────────────────
