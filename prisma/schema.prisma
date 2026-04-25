@@ -68,6 +68,7 @@ model Lead {
   companyLinkedinUrl    String?   @map("company_linkedin_url")
   founderLinkedinUrl    String?   @map("founder_linkedin_url")
   manualHookNote        String?   @map("manual_hook_note")
+  competitorAnalysis    Json?     @map("competitor_analysis")
 
   emails         Email[]
   bounces        Bounce[]
