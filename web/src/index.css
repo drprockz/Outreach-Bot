@@ -1813,3 +1813,20 @@ tbody tr:hover { background: var(--bg-elevated); }
   margin-right: 8px;
 }
 
+.export-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.retry-progress {
+  padding: 8px 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  color: var(--text-1);
+  font-size: 13px;
+}
+
