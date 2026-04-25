@@ -12,9 +12,9 @@
 
 ## Conventions used in this plan
 
-- Test runner: `npm test -- <pattern>` (vitest run). Tests live under `tests/`.
-- Frontend tests: vitest + jsdom (see `web/vitest.config.js`). Suffix `.test.jsx`.
-- API tests boot the real server on a random port, talk over HTTP, reset Postgres in `beforeEach` (see `tests/api/api.test.js`).
+- **Backend tests** run from repo root: `npm test -- <pattern>` (vitest run). Tests live under `tests/`.
+- **Frontend tests** run from `web/`: `cd web && npm test -- <pattern>` (vitest + jsdom, see `web/vitest.config.js`). Suffix `.test.jsx`.
+- API tests boot the real server on a random port, talk over HTTP, reset Postgres in `beforeEach` (see `tests/api/api.test.js`). Always include `seedConfigDefaults()` AND `seedNichesAndDefaults()` in `beforeEach` (mirrors `tests/api/api.test.js:30-33`).
 - Commit per task using conventional commits (`feat:`, `refactor:`, `test:`, `chore:`).
 - All new server modules use ES modules (`export`, `import`).
 - All Prisma migrations go through `npx prisma migrate dev --name <slug>` then commit the generated SQL under `prisma/migrations/`.
@@ -646,7 +646,12 @@ function parseSort(s) {
   if (!s || typeof s !== 'string') return fallback;
   const [field, dir] = s.split(':');
   if (!SORT_ALLOWLIST[field] || !['asc', 'desc'].includes(dir)) return fallback;
-  if (SORT_ALLOWLIST[field] === '__signalCount') return [{ __signalCount: dir }, { discoveredAt: 'desc' }];
+  if (SORT_ALLOWLIST[field] === '__signalCount') {
+    // Signal-count sort can't be expressed in Prisma orderBy directly. The route
+    // strips this entry and (deferred) implements the sort via a sub-query.
+    // For now, fall through to default to avoid producing a broken orderBy.
+    return fallback;
+  }
   return [{ [SORT_ALLOWLIST[field]]: dir }, { discoveredAt: 'desc' }];
 }
 ```
@@ -747,22 +752,25 @@ describe('GET /api/leads — extended filters', () => {
 
 - [ ] **Step 3: Update `src/api/routes/leads.js`** GET handler (lines 163–193 today):
 
-Replace the inlined `where = {}` block with:
+Add `import { parseLeadsQuery } from './leads/filterParser.js';` at the top. Replace the inlined `where = {}` block with the parser call — but **preserve** the existing `signal_count` groupBy enrichment and `serializeLead` mapping that follow it. Final shape:
 
 ```javascript
-import { parseLeadsQuery } from './leads/filterParser.js';
-
-// ...inside router.get('/'):
 const t = await getThresholds();
 const { where, orderBy } = parseLeadsQuery(req.query, t);
 const limit = Number(req.query.limit) || 25;
-const offset = (Number(req.query.page) || 1 - 1) * limit;
-// note: signal_count sort handled separately (next task)
+const page = Number(req.query.page) || 1;
+const offset = (page - 1) * limit;  // NOTE: parens matter — `1 - 1` would coerce wrong
+
+// Drop signal_count sort entry from orderBy if present (handled separately in Task 3.3+)
+const dbOrderBy = orderBy.filter(o => !('__signalCount' in o));
+
 const [total, rows] = await Promise.all([
   prisma.lead.count({ where }),
-  prisma.lead.findMany({ where, orderBy, take: limit, skip: offset }),
+  prisma.lead.findMany({ where, orderBy: dbOrderBy, take: limit, skip: offset }),
 ]);
-// existing signal-count groupBy block stays as-is
+
+// PRESERVE existing signal-count enrichment + serializeLead mapping below this point
+// (look at current src/api/routes/leads.js:185-193 — keep it exactly).
 ```
 
 - [ ] **Step 4: Run — expect PASS**
@@ -881,19 +889,33 @@ it('tech_stack filter (any-of) using JSONB ?| operator', async () => {
 
 - [ ] **Step 3: Implement raw SQL guard in `src/api/routes/leads.js`**
 
-After the existing `where` is computed but before the count/findMany, when `tech_stack` is in query:
+After `where` is computed but before count/findMany. Apply to BOTH `tech_stack` and `business_signals` (spec §5 lists both as JSON-array filters):
 
 ```javascript
-const techStack = Array.isArray(req.query.tech_stack) ? req.query.tech_stack : req.query.tech_stack ? [req.query.tech_stack] : [];
-if (techStack.length) {
-  // JSONB array contains-any — guarded against rows where tech_stack is not an array
+async function jsonArrayFilterIds(prisma, column, values) {
+  // Sanitize: only string values, no empty
+  const clean = values.filter(v => typeof v === 'string' && v.length > 0);
+  if (!clean.length) return null;
+  // column is a literal identifier — interpolate via Prisma.raw
+  const { Prisma } = await import('@prisma/client');
   const rows = await prisma.$queryRaw`
     SELECT id FROM leads
-    WHERE jsonb_typeof(tech_stack) = 'array'
-      AND tech_stack ?| ${techStack}::text[]
+    WHERE jsonb_typeof(${Prisma.raw(column)}) = 'array'
+      AND ${Prisma.raw(column)} ?| ${clean}::text[]
   `;
-  const ids = rows.map(r => r.id);
-  where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+  return rows.map(r => r.id);
+}
+
+const techStack = Array.isArray(req.query.tech_stack) ? req.query.tech_stack : req.query.tech_stack ? [req.query.tech_stack] : [];
+if (techStack.length) {
+  const ids = await jsonArrayFilterIds(prisma, 'tech_stack', techStack);
+  if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
+}
+
+const bizSigs = Array.isArray(req.query.business_signals) ? req.query.business_signals : req.query.business_signals ? [req.query.business_signals] : [];
+if (bizSigs.length) {
+  const ids = await jsonArrayFilterIds(prisma, 'business_signals', bizSigs);
+  if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
 }
 ```
 
@@ -1114,7 +1136,8 @@ describe('POST /api/leads/bulk/status', () => {
 
 ```javascript
 // src/api/routes/leads/bulkStatus.js
-import { prisma } from '../../../core/db/index.js';
+import { prisma, getConfigMap, getConfigInt } from '../../../core/db/index.js';
+import { bucket } from '../../../core/ai/icpScorer.js';
 
 const ALLOWED = new Set(['nurture', 'unsubscribed', 'reject', 'requeue']);
 const TERMINAL = new Set(['bounced', 'replied']);
@@ -1125,7 +1148,18 @@ export async function bulkStatus(req, res) {
   if (!Array.isArray(leadIds) || leadIds.length === 0) return res.status(400).json({ error: 'no_lead_ids' });
   if (leadIds.length > 200) return res.status(400).json({ error: 'batch_too_large', max: 200 });
 
-  const leads = await prisma.lead.findMany({ where: { id: { in: leadIds } }, include: { emails: { where: { sequenceStep: 0, status: 'pending' }, take: 1 } } });
+  // ICP-C-cannot-queue rule (CLAUDE.md §15) — only relevant for requeue
+  let threshA = 70, threshB = 40;
+  if (action === 'requeue') {
+    const cfg = await getConfigMap();
+    threshA = getConfigInt(cfg, 'icp_threshold_a', 70);
+    threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
+  }
+
+  const leads = await prisma.lead.findMany({
+    where: { id: { in: leadIds } },
+    include: { emails: { where: { sequenceStep: 0, status: 'pending' }, take: 1 } },
+  });
   const updated = [];
   const skipped = [];
 
@@ -1138,18 +1172,23 @@ export async function bulkStatus(req, res) {
       await prisma.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed' } });
       updated.push(lead.id);
     } else if (action === 'reject') {
-      const domain = lead.contactEmail ? lead.contactEmail.split('@')[1] : null;
-      if (lead.contactEmail) {
-        await prisma.rejectList.upsert({
-          where: { email: lead.contactEmail },
-          update: {},
-          create: { email: lead.contactEmail, domain, reason: 'manual_bulk_reject' },
-        });
-      }
+      // Honor non-negotiable: reject_list is absolute. Skip leads without an email
+      // — we can't put them in the reject list, and marking inRejectList=true alone
+      // would be a half-rejection.
+      if (!lead.contactEmail) { skipped.push({ id: lead.id, reason: 'no_email' }); continue; }
+      const domain = lead.contactEmail.split('@')[1] || null;
+      await prisma.rejectList.upsert({
+        where: { email: lead.contactEmail },
+        update: {},
+        create: { email: lead.contactEmail, domain, reason: 'manual_bulk_reject' },
+      });
       await prisma.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed', inRejectList: true } });
       updated.push(lead.id);
     } else if (action === 'requeue') {
       if (!lead.emails.length) { skipped.push({ id: lead.id, reason: 'no_pending_email' }); continue; }
+      // ICP-C → nurture rule (CLAUDE.md §15): cannot requeue C-bucket leads to ready
+      const b = lead.icpScore != null ? bucket(lead.icpScore, threshA, threshB) : null;
+      if (b === 'low') { skipped.push({ id: lead.id, reason: 'icp_c_cannot_queue' }); continue; }
       await prisma.lead.update({ where: { id: lead.id }, data: { status: 'ready' } });
       updated.push(lead.id);
     }
@@ -1159,7 +1198,7 @@ export async function bulkStatus(req, res) {
 }
 ```
 
-Note: `rejectList.upsert` requires a unique on `email` — confirm `prisma/schema.prisma` has it. If only `@@index`, switch to `findFirst + create` pattern.
+`RejectList.email` is `@unique` (confirmed `prisma/schema.prisma:181`) so `upsert` works directly.
 
 - [ ] **Step 4: Wire into `src/api/routes/leads.js`**
 
@@ -1299,26 +1338,49 @@ Behavior: when `dry_run` is absent, open SSE response, run each retry sequential
 
 - [ ] **Step 1: Write failing tests**
 
-```javascript
-it('regen_hook: real run updates email row + writes SSE events', async () => {
-  // mock the pipeline
-  vi.doMock('../../src/core/pipeline/regenerateHook.js', () => ({
-    regenerateHook: async () => ({ hook: 'NEW_HOOK', costUsd: 0.001, model: 'mock', hookVariantId: 'A' }),
-  }));
-  // … set BULK_RETRY_ENABLED=true, run fetch with stream reader, assert events.
-});
+Note on mocking: `vi.doMock` does not auto-hoist and won't intercept modules already cached when the test server booted in `beforeAll`. Use a top-level `vi.mock(...)` (auto-hoisted before any imports) — these tests live in their own file so the mock doesn't bleed.
 
-it('returns 503 when BULK_RETRY_ENABLED is unset', async () => {
-  delete process.env.BULK_RETRY_ENABLED;
-  const r = await fetch(`${baseUrl}/api/leads/bulk/retry`, {
-    method: 'POST', headers: { ...h(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ leadIds: [1], stage: 'regen_hook' }),
+```javascript
+// tests/api/leads.bulk.retry.execution.test.js  (separate file from dryRun tests)
+import { describe, it, expect, vi, beforeAll, beforeEach, afterAll } from 'vitest';
+import { truncateAll, closeTestPrisma } from '../helpers/testDb.js';
+
+// Hoisted — must be at top of file, before imports of code that uses these.
+vi.mock('../../src/core/pipeline/regenerateHook.js', () => ({
+  regenerateHook: vi.fn(async () => ({ hook: 'NEW_HOOK', costUsd: 0.001, model: 'mock', hookVariantId: 'A' })),
+}));
+
+// (rest of boilerplate)
+
+describe('POST /api/leads/bulk/retry — real execution', () => {
+  it('returns 503 when BULK_RETRY_ENABLED is unset', async () => {
+    delete process.env.BULK_RETRY_ENABLED;
+    const r = await fetch(`${baseUrl}/api/leads/bulk/retry`, {
+      method: 'POST', headers: { ...h(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadIds: [1], stage: 'regen_hook' }),
+    });
+    expect(r.status).toBe(503);
   });
-  expect(r.status).toBe(503);
+
+  it('regen_hook: streams SSE event and updates email row', async () => {
+    process.env.BULK_RETRY_ENABLED = 'true';
+    const { prisma } = await import('../../src/core/db/index.js');
+    const a = await prisma.lead.findFirst({ where: { businessName: 'Alpha' } });
+    await prisma.email.create({ data: { leadId: a.id, sequenceStep: 0, status: 'pending' } });
+
+    const r = await fetch(`${baseUrl}/api/leads/bulk/retry`, {
+      method: 'POST', headers: { ...h(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leadIds: [a.id], stage: 'regen_hook' }),
+    });
+    const text = await r.text();
+    expect(text).toContain('"status":"ok"');
+    expect(text).toContain('"status":"done"');
+
+    const email = await prisma.email.findFirst({ where: { leadId: a.id, sequenceStep: 0 } });
+    expect(email.hook).toBe('NEW_HOOK');
+  });
 });
 ```
-
-(Full SSE test reads chunks from `r.body.getReader()` and parses each `data:` line. See an existing example or model after the bulk-retry test below.)
 
 - [ ] **Step 2: Run — expect FAIL**
 
@@ -1331,54 +1393,121 @@ import { regenerateHook } from '../../../core/pipeline/regenerateHook.js';
 import { regenerateBody } from '../../../core/pipeline/regenerateBody.js';
 import { regenerateSubject } from '../../../core/pipeline/regenerateSubject.js';
 import { reextract } from '../../../core/pipeline/reextract.js';
-import { rescoreIcp } from '../../../core/pipeline/rescoreIcp.js';
 import { verifyEmail } from '../../../core/pipeline/verifyEmailLib.js';
-// + load offer + persona + niche context once per batch
+import { scoreLead, loadScoringContext } from '../../../core/ai/icpScorer.js';
+import { getConfigMap, getConfigStr, getConfigInt } from '../../../core/db/index.js';
 
+// Load persona from Config table (NOT Offer — verified against findLeads.js:326-330).
 async function loadCtx() {
-  const offer = await prisma.offer.findFirst();
-  const icp = await prisma.icpProfile.findFirst();
-  const persona = { name: offer?.fromName || 'Operator', role: offer?.role || 'consultant', company: offer?.company || '', services: offer?.services || '', tone: offer?.tone || 'casual' };
-  return { persona, icp };
+  const cfg = await getConfigMap();
+  const persona = {
+    name:     getConfigStr(cfg, 'persona_name',     'Darshan Parmar'),
+    role:     getConfigStr(cfg, 'persona_role',     'Full-Stack Developer'),
+    company:  getConfigStr(cfg, 'persona_company',  'Simple Inc'),
+    tone:     getConfigStr(cfg, 'persona_tone',     'professional but direct'),
+    services: getConfigStr(cfg, 'persona_services', 'web rebuilds and custom software'),
+  };
+  const scoringCtx = await loadScoringContext(prisma);
+  // weights live on icp_profile or fall back to constants — mirror findLeads
+  const weights = {
+    firmographic: getConfigInt(cfg, 'icp_weight_firmographic', 20),
+    problem:      getConfigInt(cfg, 'icp_weight_problem',      20),
+    intent:       getConfigInt(cfg, 'icp_weight_intent',       15),
+    tech:         getConfigInt(cfg, 'icp_weight_tech',         15),
+    economic:     getConfigInt(cfg, 'icp_weight_economic',     15),
+    buying:       getConfigInt(cfg, 'icp_weight_buying',       15),
+  };
+  return { persona, scoringCtx: { ...scoringCtx, weights } };
+}
+
+// Convert Prisma camelCase Lead → snake_case shape that pipeline helpers expect
+// (they were lifted from findLeads.js where leads are read-back as snake_case).
+function toLegacyShape(lead) {
+  return {
+    id: lead.id,
+    business_name: lead.businessName,
+    website_url: lead.websiteUrl,
+    city: lead.city,
+    category: lead.category,
+    contact_name: lead.contactName,
+    contact_email: lead.contactEmail,
+    owner_name: lead.ownerName,
+    owner_role: lead.ownerRole,
+    employees_estimate: lead.employeesEstimate,
+    business_stage: lead.businessStage,
+    tech_stack: lead.techStack,
+    business_signals: lead.businessSignals,
+    website_problems: lead.websiteProblems,
+    judge_reason: lead.judgeReason,
+    manual_hook_note: lead.manualHookNote,
+  };
 }
 
 async function runStage(stage, lead, ctx) {
+  const legacy = toLegacyShape(lead);
   if (stage === 'verify_email') {
+    if (!lead.contactEmail) throw new Error('no_contact_email');
     const r = await verifyEmail(lead.contactEmail);
     await prisma.lead.update({ where: { id: lead.id }, data: { emailStatus: r.status, emailVerifiedAt: new Date() } });
     return { costUsd: r.costUsd || 0 };
   }
   if (stage === 'rescore_icp') {
-    const r = await rescoreIcp(lead, ctx.icp);
-    await prisma.lead.update({ where: { id: lead.id }, data: { icpScore: r.score, icpReason: r.reason, icpBreakdown: r.breakdown, icpKeyMatches: r.keyMatches, icpKeyGaps: r.keyGaps, icpDisqualifiers: r.disqualifiers } });
+    const r = await scoreLead(legacy, ctx.scoringCtx);
+    await prisma.lead.update({ where: { id: lead.id }, data: {
+      icpScore:         r.icp_score,
+      icpReason:        r.icp_reason,
+      icpBreakdown:     r.icp_breakdown,
+      icpKeyMatches:    r.icp_key_matches,
+      icpKeyGaps:       r.icp_key_gaps,
+      icpDisqualifiers: r.icp_disqualifiers,
+    }});
     return { costUsd: r.costUsd || 0 };
   }
   if (stage === 'regen_hook') {
-    const signals = await prisma.leadSignal.findMany({ where: { leadId: lead.id }, orderBy: { confidence: 'desc' }, take: 3 });
-    const r = await regenerateHook(lead, ctx.persona, signals);
-    // attach to next pending step-0 email row, or create one
     const email = await prisma.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
-    if (email) await prisma.email.update({ where: { id: email.id }, data: { hookCostUsd: r.costUsd, hookModel: r.model, hookVariantId: r.hookVariantId, body: null } });
+    if (!email) throw new Error('no_pending_email');
+    const signals = await prisma.leadSignal.findMany({ where: { leadId: lead.id }, orderBy: { confidence: 'desc' }, take: 3 });
+    const r = await regenerateHook(legacy, ctx.persona, signals);
+    await prisma.email.update({ where: { id: email.id }, data: {
+      hook: r.hook, hookCostUsd: r.costUsd, hookModel: r.model, hookVariantId: r.hookVariantId,
+    }});
     return { costUsd: r.costUsd, hook: r.hook };
   }
   if (stage === 'regen_body') {
-    const email = await prisma.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0 }, orderBy: { id: 'desc' } });
-    const hook = email?.subject || 'observed your site';
-    const r = await regenerateBody(lead, hook, ctx.persona);
-    if (email) await prisma.email.update({ where: { id: email.id }, data: { body: r.body, bodyCostUsd: r.costUsd, bodyModel: r.model } });
+    const email = await prisma.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
+    if (!email) throw new Error('no_pending_email');
+    if (!email.hook) throw new Error('no_hook_run_regen_hook_first');
+    const r = await regenerateBody(legacy, email.hook, ctx.persona);
+    await prisma.email.update({ where: { id: email.id }, data: {
+      body: r.body, bodyCostUsd: r.costUsd, bodyModel: r.model,
+    }});
     return { costUsd: r.costUsd };
   }
   if (stage === 'reextract') {
-    const r = await reextract(lead);
-    if (r.data) await prisma.lead.update({ where: { id: lead.id }, data: r.data });
+    const r = await reextract(legacy);
+    if (!r.data) throw new Error('reextract_failed');
+    // Map snake_case extraction output → camelCase Prisma update
+    await prisma.lead.update({ where: { id: lead.id }, data: {
+      ownerName: r.data.owner_name, ownerRole: r.data.owner_role,
+      contactEmail: r.data.contact_email, contactConfidence: r.data.contact_confidence, contactSource: r.data.contact_source,
+      techStack: r.data.tech_stack, websiteProblems: r.data.website_problems,
+      lastUpdated: r.data.last_updated, hasSsl: !!r.data.has_ssl, hasAnalytics: !!r.data.has_analytics,
+      businessSignals: r.data.business_signals, socialActive: !!r.data.social_active,
+      websiteQualityScore: r.data.website_quality_score, judgeReason: r.data.judge_reason,
+      employeesEstimate: r.data.employees_estimate, businessStage: r.data.business_stage,
+    }});
     return { costUsd: r.costUsd };
   }
-  // rejudge — same as reextract today (judge_reason is one field of stages2to6 output)
   if (stage === 'rejudge') {
-    const r = await reextract(lead);
-    if (r.data) await prisma.lead.update({ where: { id: lead.id }, data: { judgeReason: r.data.judge_reason, websiteQualityScore: r.data.website_quality_score } });
+    const r = await reextract(legacy);
+    if (!r.data) throw new Error('rejudge_failed');
+    await prisma.lead.update({ where: { id: lead.id }, data: {
+      judgeReason: r.data.judge_reason,
+      websiteQualityScore: r.data.website_quality_score,
+    }});
     return { costUsd: r.costUsd };
   }
+  throw new Error(`unknown_stage_${stage}`);
 }
 
 // Replace the 501 path with:
@@ -1394,7 +1523,10 @@ for (const lead of leads) {
     const r = await runStage(stage, lead, ctx);
     res.write(`data: ${JSON.stringify({ leadId: lead.id, status: 'ok', costUsd: r.costUsd })}\n\n`);
   } catch (err) {
-    await prisma.errorLog.create({ data: { source: 'bulk_retry', message: err.message, occurredAt: new Date() } });
+    // ErrorLog field is `errorMessage` (verified prisma/schema.prisma:274), NOT `message`.
+    await prisma.errorLog.create({ data: {
+      source: 'bulk_retry', errorType: stage, errorMessage: err.message, leadId: lead.id, occurredAt: new Date(),
+    }});
     res.write(`data: ${JSON.stringify({ leadId: lead.id, status: 'error', error: err.message })}\n\n`);
   }
 }
@@ -2084,8 +2216,9 @@ git commit -m "feat(web): wire decision cockpit pieces in Leads page"
 
 ### Task 5.2: Document BULK_RETRY_ENABLED + cockpit
 
-- [ ] Add a one-paragraph section to `CLAUDE.md` §3 (Environment Variables) documenting `BULK_RETRY_ENABLED`.
-- [ ] Add a brief "Decision Cockpit" subsection to `CLAUDE.md` §6 (Dashboard).
+- [ ] Add `BULK_RETRY_ENABLED=false` (default) to `.env.example` with a comment explaining the gate.
+- [ ] Document the same env var in `CLAUDE.md` §3 (Environment Variables) — one paragraph.
+- [ ] Add a brief "Decision Cockpit" subsection to `CLAUDE.md` §6 (Dashboard) listing the new endpoints + bulk-action surface.
 - [ ] Commit: `docs: BULK_RETRY_ENABLED env + cockpit overview`
 
 ### Task 5.3: End-to-end smoke checklist
@@ -2104,7 +2237,11 @@ git commit -m "feat(web): wire decision cockpit pieces in Leads page"
 ## Notes for the executing agent
 
 - The plan is structured around vertical slices that ship a feature per task. Resist horizontal sequencing (do not do "all backend first", "all frontend later").
-- When a task says "rewrite Leads.jsx", do NOT delete the existing file before extracting LeadDetailPanel — that lifts work in-place.
-- If `prisma.rejectList.upsert` fails (unique constraint missing), fall back to `findFirst` + `create` and add an issue note.
-- If `daily_metrics` cost columns are empty in test fixtures, `estimate_quality: 'low'` is correct — don't backfill data.
+- When a task says "rewrite Leads.jsx", do NOT delete the existing file before extracting LeadDetailPanel — lift work in-place.
+- If `daily_metrics` / Email cost columns are empty in test fixtures, `estimate_quality: 'low'` is correct — don't backfill data.
 - Plan uses YAGNI on column picker, soft-delete, BullMQ, multi-tenancy. Don't add them.
+- **Pipeline helpers expect snake_case lead shape** (they were lifted from findLeads.js where leads are passed as snake_case from earlier stages). The `toLegacyShape` helper in Task 3.9 converts Prisma camelCase → snake_case. Reuse it in any new caller.
+- **Persona is in Config table**, not Offer. Use `getConfigStr(cfg, 'persona_*', default)` — same pattern as `findLeads.js:326-330`.
+- **`scoreLead` returns snake_case keys** (`icp_score`, `icp_breakdown`, etc.) — destructure accordingly.
+- **`ErrorLog.errorMessage`**, not `message`. **`ErrorLog.errorType`** is useful for the stage name.
+- **Signal-count sort is deferred** — filterParser falls back to default. Spec mentions it; UI can hide that sort option until a follow-up.
