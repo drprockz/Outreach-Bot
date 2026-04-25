@@ -1,10 +1,25 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
+import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
+import { bucket } from '../../core/ai/icpScorer.js';
 
 const router = Router();
 
-function serializeLead(l) {
+// Cached thresholds — refreshed per request via getConfigMap. Cheap query.
+async function getThresholds() {
+  const cfg = await getConfigMap();
+  return {
+    threshA: getConfigInt(cfg, 'icp_threshold_a', 70),
+    threshB: getConfigInt(cfg, 'icp_threshold_b', 40),
+  };
+}
+
+function serializeLead(l, thresholds) {
   if (!l) return null;
+  const t = thresholds || { threshA: 70, threshB: 40 };
+  // Replace v1 stored icp_priority with a computed bucket from icp_score (ICP v2).
+  // 'high' (≥A) → A | 'medium' (≥B) → B | 'low' (<B) → C
+  const bucketName = l.icpScore != null ? bucket(l.icpScore, t.threshA, t.threshB) : null;
+  const priorityLetter = { high: 'A', medium: 'B', low: 'C' }[bucketName] || null;
   return {
     id: l.id,
     discovered_at: l.discoveredAt,
@@ -48,6 +63,8 @@ function serializeLead(l) {
     discovery_model: l.discoveryModel,
     extraction_model: l.extractionModel,
     judge_model: l.judgeModel,
+    icp_priority_v2: priorityLetter,
+    icp_bucket: bucketName,
     dm_linkedin_url: l.dmLinkedinUrl,
     company_linkedin_url: l.companyLinkedinUrl,
     founder_linkedin_url: l.founderLinkedinUrl,
@@ -157,9 +174,10 @@ router.get('/', async (req, res) => {
   // tech_stack filter: leave out — previously worked as LIKE against a string column,
   // now techStack is JSON. Skip for now to avoid raw SQL (contract: filter is optional).
 
-  const [total, leads] = await Promise.all([
+  const [total, leads, thresholds] = await Promise.all([
     prisma.lead.count({ where }),
     prisma.lead.findMany({ where, orderBy: { id: 'desc' }, take: limit, skip: offset }),
+    getThresholds(),
   ]);
 
   // Pre-join lead_signals counts so the dashboard can show a per-row badge
@@ -170,7 +188,7 @@ router.get('/', async (req, res) => {
     : [];
   const countByLead = new Map(signalCounts.map(g => [g.leadId, g._count._all]));
 
-  const enriched = leads.map(l => ({ ...serializeLead(l), signal_count: countByLead.get(l.id) || 0 }));
+  const enriched = leads.map(l => ({ ...serializeLead(l, thresholds), signal_count: countByLead.get(l.id) || 0 }));
   res.json({ leads: enriched, total, page, limit });
 });
 
@@ -180,15 +198,16 @@ router.get('/:id', async (req, res) => {
   const lead = await prisma.lead.findUnique({ where: { id } });
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-  const [emails, replies, sequence, signals] = await Promise.all([
+  const [emails, replies, sequence, signals, thresholds] = await Promise.all([
     prisma.email.findMany({ where: { leadId: id }, orderBy: { createdAt: 'desc' } }),
     prisma.reply.findMany({ where: { leadId: id }, orderBy: { receivedAt: 'desc' } }),
     prisma.sequenceState.findUnique({ where: { leadId: id } }),
     prisma.leadSignal.findMany({ where: { leadId: id }, orderBy: { confidence: 'desc' }, take: 10 }),
+    getThresholds(),
   ]);
 
   res.json({
-    lead: serializeLead(lead),
+    lead: serializeLead(lead, thresholds),
     emails: emails.map(serializeEmail),
     replies: replies.map(serializeReply),
     sequence: serializeSequence(sequence),
@@ -232,7 +251,8 @@ router.patch('/:id', async (req, res) => {
   if ('status' in body) data.status = body.status;
 
   const updated = await prisma.lead.update({ where: { id }, data });
-  res.json({ ok: true, lead: serializeLead(updated) });
+  const thresholds = await getThresholds();
+  res.json({ ok: true, lead: serializeLead(updated, thresholds) });
 });
 
 router.patch('/:id/status', async (req, res) => {

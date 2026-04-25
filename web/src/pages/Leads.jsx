@@ -196,7 +196,14 @@ export default function Leads() {
                   <td className="td-muted">{lead.contact_name || '-'}</td>
                   <td className="td-muted">{lead.contact_email || '-'}</td>
                   <td>{lead.email_status ? <span className={`badge ${lead.email_status === 'valid' ? 'badge-green' : lead.email_status === 'invalid' ? 'badge-red' : 'badge-amber'}`}>{lead.email_status}</span> : '-'}</td>
-                  <td style={{ color: 'var(--amber)' }}>{lead.icp_score ?? '-'}</td>
+                  <td style={{ color: 'var(--amber)' }}>
+                    {lead.icp_score ?? '-'}
+                    {lead.icp_priority_v2 && (
+                      <span className={`badge badge-${lead.icp_bucket === 'high' ? 'green' : lead.icp_bucket === 'medium' ? 'amber' : 'muted'}`} style={{ marginLeft: '6px' }}>
+                        {lead.icp_priority_v2}
+                      </span>
+                    )}
+                  </td>
                   <td className="td-muted td-center">{lead.website_quality_score ?? '-'}</td>
                   <td>
                     <span className={`badge ${statusBadge[lead.status] || 'badge-muted'}`}>{lead.status || 'unknown'}</span>
