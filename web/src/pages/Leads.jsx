@@ -31,6 +31,68 @@ function ChipList({ label, json, variant }) {
   );
 }
 
+function ManualHookNoteEditor({ leadId, initial, onSaved }) {
+  const [value, setValue] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(0);
+  const [error, setError] = useState(null);
+
+  async function handleBlur() {
+    if (value === initial) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await api.patchLead(leadId, { manualHookNote: value });
+      setSavedAt(Date.now());
+      onSaved?.(value);
+    } catch (err) {
+      setError(err?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const showSaved = savedAt && Date.now() - savedAt < 3000;
+
+  return (
+    <div>
+      <textarea
+        className="input"
+        rows={3}
+        style={{ width: '100%', fontFamily: 'inherit' }}
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={handleBlur}
+        placeholder="Add a hint for the next hook regenerate (e.g. 'noticed they switched payment provider — angle on US expansion?')"
+      />
+      <div className="td-dim" style={{ marginTop: '4px', fontSize: '11px' }}>
+        {saving && 'Saving…'}
+        {!saving && showSaved && <span style={{ color: 'var(--green)' }}>Saved</span>}
+        {error && <span style={{ color: 'var(--red)' }}>Error: {error}</span>}
+      </div>
+    </div>
+  );
+}
+
+function LinkedInLinks({ lead, compact = false }) {
+  const items = [
+    { url: lead.dm_linkedin_url, label: 'DM' },
+    { url: lead.company_linkedin_url, label: 'Co' },
+    { url: lead.founder_linkedin_url, label: 'Fo' },
+  ].filter(x => x.url);
+  if (items.length === 0) return null;
+  return (
+    <span className={compact ? 'li-icons-compact' : 'li-icons'}>
+      {items.map((it, i) => (
+        <a key={i} href={it.url} target="_blank" rel="noopener noreferrer"
+           onClick={e => e.stopPropagation()}
+           title={`LinkedIn (${it.label})`}
+           className="li-icon">in:{it.label}</a>
+      ))}
+    </span>
+  );
+}
+
 export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [total, setTotal] = useState(0);
@@ -128,6 +190,7 @@ export default function Leads() {
                         {lead.business_name || '-'}
                       </a>
                     ) : (lead.business_name || '-')}
+                    <LinkedInLinks lead={lead} compact />
                   </td>
                   <td className="td-muted">{lead.category || '-'}</td>
                   <td className="td-muted">{lead.contact_name || '-'}</td>
@@ -138,7 +201,17 @@ export default function Leads() {
                   <td>
                     <span className={`badge ${statusBadge[lead.status] || 'badge-muted'}`}>{lead.status || 'unknown'}</span>
                   </td>
-                  <td className="td-dim">{signals.length > 0 ? signals.slice(0, 2).join(', ') : '-'}</td>
+                  <td className="td-dim">
+                    {signals.length > 0 ? signals.slice(0, 2).join(', ') : '-'}
+                    {lead.signal_count > 0 && (
+                      <span
+                        className="badge badge-blue"
+                        style={{ marginLeft: '6px' }}
+                        title={`${lead.signal_count} aggregator signals — open detail to view`}>
+                        +{lead.signal_count}
+                      </span>
+                    )}
+                  </td>
                   <td>
                     {tech.length > 0 ? tech.slice(0, 3).map((t, i) => (
                       <span key={i} className="badge badge-outline" style={{ marginRight: '3px' }}>{t}</span>
@@ -262,6 +335,40 @@ export default function Leads() {
             <div className="detail-value">
               <span className={`badge ${statusBadge[selectedLead.status] || 'badge-muted'}`}>{selectedLead.status}</span>
             </div>
+
+            <div className="detail-label">LinkedIn</div>
+            <div className="detail-value">
+              <LinkedInLinks lead={selectedLead} />
+              {!selectedLead.dm_linkedin_url && !selectedLead.company_linkedin_url && !selectedLead.founder_linkedin_url && '-'}
+            </div>
+
+            <div className="detail-label">Manual hook note <span className="td-dim" style={{ fontWeight: 'normal' }}>(operator hint for next regenerate)</span></div>
+            <div className="detail-value">
+              <ManualHookNoteEditor
+                key={`hook-note-${selectedLead.id}`}
+                leadId={selectedLead.id}
+                initial={selectedLead.manual_hook_note || ''}
+                onSaved={note => setSelectedLead(s => s ? { ...s, manual_hook_note: note } : s)}
+              />
+            </div>
+
+            {detailData?.signals && detailData.signals.length > 0 && (
+              <div className="detail-section">
+                <div className="detail-section-title">Recent Signals (top {detailData.signals.length})</div>
+                {detailData.signals.map((s, i) => (
+                  <div key={i} className="detail-signal-row">
+                    <span className="badge badge-outline" style={{ marginRight: '6px' }}>{s.source}</span>
+                    <span className="badge badge-blue" style={{ marginRight: '6px' }}>{s.signal_type}</span>
+                    <span className="td-muted">conf {s.confidence?.toFixed(2)}</span>
+                    <div style={{ marginTop: '2px' }}>
+                      {s.url
+                        ? <a href={s.url} target="_blank" rel="noopener noreferrer">{s.headline || s.url}</a>
+                        : <span>{s.headline}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
             {detailData?.emails && detailData.emails.length > 0 && (
               <div className="detail-section">

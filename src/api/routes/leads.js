@@ -162,7 +162,16 @@ router.get('/', async (req, res) => {
     prisma.lead.findMany({ where, orderBy: { id: 'desc' }, take: limit, skip: offset }),
   ]);
 
-  res.json({ leads: leads.map(serializeLead), total, page, limit });
+  // Pre-join lead_signals counts so the dashboard can show a per-row badge
+  // without N+1 fetches. Empty when feature is unused.
+  const leadIds = leads.map(l => l.id);
+  const signalCounts = leadIds.length > 0
+    ? await prisma.leadSignal.groupBy({ by: ['leadId'], where: { leadId: { in: leadIds } }, _count: { _all: true } })
+    : [];
+  const countByLead = new Map(signalCounts.map(g => [g.leadId, g._count._all]));
+
+  const enriched = leads.map(l => ({ ...serializeLead(l), signal_count: countByLead.get(l.id) || 0 }));
+  res.json({ leads: enriched, total, page, limit });
 });
 
 router.get('/:id', async (req, res) => {
