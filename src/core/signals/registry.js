@@ -2,10 +2,11 @@
 // Until then, requested adapter names resolve to a placeholder that returns no signals.
 
 import * as googleNews from './adapters/googleNews.js';
+import * as companyBlog from './adapters/companyBlog.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
-  company_blog: null,
+  company_blog: companyBlog,
   indian_press: null,
   tech_stack: null,
   careers_page: null,
