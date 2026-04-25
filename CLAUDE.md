@@ -166,9 +166,15 @@ DASHBOARD_URL=https://radar.simpleinc.cloud
 DASHBOARD_PASSWORD=strong_password_here
 JWT_SECRET=64char_random_here
 JWT_EXPIRES_IN=7d
+
+# ── LEADS COCKPIT ──────────────────────────────────────────
+BULK_RETRY_ENABLED=false     # Gates POST /api/leads/bulk/retry execution
+MEV_COST_PER_CALL=0.0006     # Fallback cost-per-call for verify_email retries
 ```
 
 The `SPAM_WORDS` blocklist lives in `.env` and is read by `src/core/email/contentValidator.js`.
+
+`BULK_RETRY_ENABLED` controls the bulk-retry execution endpoint. Dry-run cost previews always work; flip to `true` only after smoke-testing estimates, since each retry stage (regen_hook, regen_body, etc.) can spend real money on Claude/Gemini per call.
 
 ---
 
@@ -226,6 +232,21 @@ React 18 + Vite SPA served by the same Express server from `web/dist`. Nginx rev
 Pages: Overview · Lead Pipeline · Send Log · Reply Feed · Sequence Tracker · Cron Job Status · Health Monitor · Cost Tracker · Error Log · Engine Config · ICP Rules · Email Persona · Funnel Analytics.
 
 Auth: password → bcrypt → JWT (7-day). `requireAuth` middleware guards everything except `POST /api/auth/login`.
+
+### Leads Decision Cockpit
+
+The Lead Pipeline page is an operator console, not a flat list. URL state drives all filters so views are shareable. Surfaces:
+
+- **KPI strip** — total / A·B·C distribution / ready-to-send / signals 7d / replies awaiting triage. Each tile shows `global · in-filter` when a filter is active.
+- **Saved views** — chip row with create/rename/delete (table `saved_views`). Click applies the view's filters + sort.
+- **Filters** — search, multi-value status / ICP priority A·B·C / email status / category / city / country / signal type / business stage / employees, ICP score range, quality score range, has-LinkedIn-DM, has-signals + min count, signal date range, discovered date range, in-reject-list toggle. Tech-stack and business-signals filtered via JSONB `?|` with `jsonb_typeof` guard.
+- **Sort** — ICP score / quality / discovered / domain_last_contacted (signal_count sort deferred).
+- **Bulk actions** (per-row checkbox + sticky bar):
+  - `nurture` / `unsubscribed` / `reject` (writes to `reject_list`, absolute) / `requeue` (sets status='ready'; precondition: pending step-0 email row exists; ICP-C blocked).
+  - `Retry ▾` runs one of six pipeline stages (`verify_email`, `regen_hook`, `regen_body`, `rescore_icp`, `reextract`, `rejudge`) with a dry-run cost preview before execution. Capped at 25 leads/batch. Streamed via SSE. Gated by `BULK_RETRY_ENABLED=true`.
+- **CSV export** — visible columns or all DB fields, streamed, escapes commas/quotes; auth via fetch+blob (not query-string token).
+
+Backend: `src/api/routes/leads.js` + `src/api/routes/leads/{filterParser,bulkStatus,bulkRetry,csvExport}.js` and `src/api/routes/savedViews.js`. The bulk-retry handler imports from `src/core/pipeline/` — non-engine consumers reuse the same stage helpers (`regenerateHook`, `regenerateBody`, `regenerateSubject`, `reextract`, `rescoreIcp`, `verifyEmail`).
 
 ---
 
