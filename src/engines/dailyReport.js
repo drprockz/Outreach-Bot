@@ -13,6 +13,44 @@ async function getMetrics() {
   return prisma.dailyMetrics.findUnique({ where: { date: d } });
 }
 
+// Hook variant performance over the last 7 days.
+// Returns array like [{ variant: 'A', sent: 100, replied: 9, replyRate: 0.09 }, ...]
+// Replies counted only when category is 'interested' or 'meeting' (positive intent).
+// JOIN-only: no denormalized stats table — variant id sits on emails, reply.email_id
+// links back. Future denormalization can wait until volume warrants.
+export async function getVariantPerformance7d() {
+  const since = new Date(Date.now() - 7 * 86400_000);
+  const sentRows = await prisma.email.groupBy({
+    by: ['hookVariantId'],
+    where: { sentAt: { gte: since }, hookVariantId: { not: null } },
+    _count: { _all: true },
+  });
+  const sentByVariant = new Map(sentRows.map(r => [r.hookVariantId, r._count._all]));
+
+  // Replies tied to emails with a known variant in the last 7d, positive intent only.
+  const positiveReplies = await prisma.reply.findMany({
+    where: {
+      receivedAt: { gte: since },
+      category: { in: ['interested', 'meeting'] },
+      emailId: { not: null },
+    },
+    select: { email: { select: { hookVariantId: true } } },
+  });
+  const repliedByVariant = new Map();
+  for (const r of positiveReplies) {
+    const v = r.email?.hookVariantId;
+    if (!v) continue;
+    repliedByVariant.set(v, (repliedByVariant.get(v) || 0) + 1);
+  }
+
+  const variants = [...new Set([...sentByVariant.keys(), ...repliedByVariant.keys()])].sort();
+  return variants.map(v => {
+    const sent = sentByVariant.get(v) || 0;
+    const replied = repliedByVariant.get(v) || 0;
+    return { variant: v, sent, replied, replyRate: sent > 0 ? replied / sent : 0 };
+  });
+}
+
 async function getReplyBreakdown() {
   const d = today();
   // received_at >= date(today) → compare against start of today
@@ -195,6 +233,10 @@ export default async function dailyReport() {
     const cronJobs = await getCronStatus();
     const errorCount = await getErrorCount();
 
+    // Sunday-only: hook variant performance digest. Surfaced in Telegram + email.
+    const isSunday = new Date().getDay() === 0;
+    const variantPerf = isSunday ? await getVariantPerformance7d() : [];
+
     // Update rolling rates in daily_metrics
     const bounceRate = metrics.emailsSent > 0 ? metrics.emailsHardBounced / metrics.emailsSent : 0;
     const unsubRate = metrics.emailsSent > 0 ? metrics.repliesUnsubscribe / metrics.emailsSent : 0;
@@ -209,8 +251,14 @@ export default async function dailyReport() {
       },
     });
 
-    // Send Telegram one-liner (spec §10)
-    const telegramMsg = buildTelegramSummary(metrics, replyBreakdown, replyRate7d);
+    // Send Telegram one-liner (spec §10) + Sunday variant digest if applicable
+    let telegramMsg = buildTelegramSummary(metrics, replyBreakdown, replyRate7d);
+    if (variantPerf.length > 0) {
+      const variantLines = variantPerf.map(v =>
+        `${v.variant}: ${v.replied}/${v.sent} (${(v.replyRate * 100).toFixed(1)}%)`
+      ).join(' | ');
+      telegramMsg += `\n📊 Hook variants 7d: ${variantLines}`;
+    }
     await sendAlert(telegramMsg);
 
     // Send HTML email digest to darshan@simpleinc.in

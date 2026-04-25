@@ -6,6 +6,13 @@ import { verifyEmail } from '../core/integrations/mev.js';
 import { sendAlert } from '../core/integrations/telegram.js';
 import { loadScoringContext, scoreLead } from '../core/ai/icpScorer.js';
 import { withConcurrency } from '../core/lib/concurrency.js';
+import { gatherSignals, persistSignals } from '../core/signals/index.js';
+
+// Pipeline stage map (per-lead body in processLead, line ~392):
+//   stages2to6_extract → Gate 1 → email check → dedup → Stage 7 (MEV) →
+//   Stage 9 (ICP) → spend cap → SIGNAL COLLECT → Stage 10 (hook) →
+//   Stage 11 (body+subject) → insert lead+email
+// Signals collected after ICP-pass to avoid wasting adapter calls on dropped leads.
 
 // ── Niche rotation: DB-backed ─────────────────────────────
 async function getNicheForToday() {
@@ -21,8 +28,17 @@ async function getNicheForToday() {
   });
 }
 
+// Gemini sometimes returns an array for owner_name when a business has multiple
+// partners/founders ("Designated Partner" filings often list 2+). Schema is
+// String? — pick the primary (first) so email personalization stays natural.
+function firstString(v) {
+  if (Array.isArray(v)) return v.find(x => typeof x === 'string') ?? null;
+  return typeof v === 'string' ? v : (v == null ? null : String(v));
+}
+
 // Exported for unit testing
 export async function insertLead(lead, niche, status) {
+  const ownerName = firstString(lead.owner_name);
   return prisma.lead.create({
     data: {
       businessName: lead.business_name,
@@ -36,13 +52,13 @@ export async function insertLead(lead, niche, status) {
       lastUpdated: lead.last_updated,
       hasSsl: Boolean(lead.has_ssl),
       hasAnalytics: Boolean(lead.has_analytics),
-      ownerName: lead.owner_name,
-      ownerRole: lead.owner_role,
+      ownerName,
+      ownerRole: firstString(lead.owner_role),
       businessSignals: lead.business_signals || [],
       socialActive: Boolean(lead.social_active),
       websiteQualityScore: lead.website_quality_score,
       judgeReason: lead.judge_reason,
-      contactName: lead.owner_name,
+      contactName: ownerName,
       contactEmail: lead.contact_email,
       contactConfidence: lead.contact_confidence,
       contactSource: lead.contact_source,
@@ -160,14 +176,49 @@ Return only valid JSON, no markdown.`;
 const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
 
 // ── Stage 10: Hook generation — Claude Sonnet (or Gemini fallback) ──
-async function stage10_hook(lead, persona) {
-  const prompt = `Write ONE sentence (max 20 words) that makes a hyper-specific observation about ${lead.business_name}'s website (${lead.website_url}). Focus on something concrete you'd notice as a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`;
+function buildSignalsBlock(signals) {
+  if (!Array.isArray(signals) || signals.length === 0) return '';
+  const lines = signals.slice(0, 3).map((s, i) => `${i + 1}. [${s.signalType}] ${s.headline}${s.url ? ` (${s.url})` : ''}`);
+  return `\n\nRecent signals about this business (newest/strongest first):\n${lines.join('\n')}\n\nIf one of these signals is genuinely interesting, weave it into the hook. If none feel natural, ignore them and observe the website directly.`;
+}
+
+// Two prompt seeds for the A/B framework. Both stay within the same length/tone
+// constraints; the difference is angle, not voice. Variant winners surface in
+// the Sunday report (dailyReport.js) — retire losers manually after ~2 weeks.
+const VARIANT_SEEDS = {
+  A: { name: 'observation', angle: 'a hyper-specific observation about something concrete you\'d notice as' },
+  B: { name: 'curious-question', angle: 'a short curious question opening (max 20 words) that a' },
+};
+
+function buildHookPrompt(variant, lead, persona, signals) {
+  const seed = VARIANT_SEEDS[variant];
+  const opener = variant === 'A'
+    ? `Write ONE sentence (max 20 words) that makes ${seed.angle} a ${persona.role} — outdated tech, missing feature, design issue. No fluff, no compliments.`
+    : `${seed.angle.replace(/^a /, 'Write ')} ${persona.role} would ask ${lead.business_name}'s owner about their site (${lead.website_url}) — concrete, no fluff.`;
+  const manualNote = lead.manual_hook_note ? `\n\nManual hook hint from operator: ${lead.manual_hook_note}` : '';
+  return opener + buildSignalsBlock(signals) + manualNote;
+}
+
+async function generateHookVariant(variant, lead, persona, signals) {
+  const prompt = buildHookPrompt(variant, lead, persona, signals);
   if (ANTHROPIC_DISABLED) {
     const result = await callGemini(prompt);
-    return { hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
+    return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: 'gemini-2.5-flash' };
   }
   const result = await callClaude('sonnet', prompt, { maxTokens: 60 });
-  return { hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
+  return { variant, hook: result.text.trim(), costUsd: result.costUsd, model: result.model };
+}
+
+// Generate both variants in parallel, pick one at random for actual send.
+// Returns the chosen variant's data + total cost (both calls billed).
+async function stage10_hook(lead, persona, signals = []) {
+  const [a, b] = await Promise.all([
+    generateHookVariant('A', lead, persona, signals),
+    generateHookVariant('B', lead, persona, signals),
+  ]);
+  const chosen = Math.random() < 0.5 ? a : b;
+  const totalCost = (a.costUsd || 0) + (b.costUsd || 0);
+  return { hook: chosen.hook, costUsd: totalCost, model: chosen.model, hookVariantId: chosen.variant };
 }
 
 // ── Stage 11: Email body — Claude Haiku (or Gemini fallback) ─────────
@@ -470,8 +521,23 @@ export default async function findLeads(override = {}) {
           leadsSkipped++; return;
         }
 
+        // ── Signal collection (Move #1) ──────────────────────────────────
+        // No-op when SIGNALS_ENABLED=false. Adapters run in memory here (lead has
+        // no DB id yet); we persist after insertLead below. Top 3 by confidence
+        // are passed to Stage 10 — token cost is bounded.
+        const signalContext = {
+          businessName: lead.business_name,
+          websiteUrl: lead.website_url,
+          ownerName: lead.owner_name,
+          city: lead.city,
+          country: lead.country,
+          category: lead.category,
+        };
+        const { signals: allSignals, bySource: signalsBySource } = await gatherSignals(signalContext);
+        const topSignals = allSignals.slice(0, 3);
+
         // ── Stage 10: hook ───────────────────────────────────────────────
-        const hookResult = await stage10_hook(lead, persona);
+        const hookResult = await stage10_hook(lead, persona, topSignals);
         totalCost += hookResult.costUsd;
         aiSpendThisRun += hookResult.costUsd;
 
@@ -492,6 +558,16 @@ export default async function findLeads(override = {}) {
         await bumpMetric('totalApiCostUsd', hookResult.costUsd + bodyCost);
 
         const leadInsert = await insertLead(lead, niche, 'ready');
+
+        // Persist gathered signals against the new lead id (no-op when none).
+        if (signalsBySource.length > 0) {
+          try {
+            await persistSignals(prisma, leadInsert.id, signalsBySource);
+          } catch (err) {
+            await logError('findLeads.signals.persist', err, { jobName: 'findLeads', leadId: leadInsert.id });
+          }
+        }
+
         await prisma.email.create({
           data: {
             leadId: leadInsert.id,
@@ -500,6 +576,8 @@ export default async function findLeads(override = {}) {
             body: bodyResult.body,
             wordCount: bodyResult.body.trim().split(/\s+/).filter(Boolean).length,
             hook: hookResult.hook,
+            hookVariantId: hookResult.hookVariantId || null,
+            signalsUsedJson: topSignals.length > 0 ? topSignals : null,
             containsLink: false,
             isHtml: false,
             isPlainText: true,

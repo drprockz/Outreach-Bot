@@ -1679,3 +1679,11 @@ tbody tr:hover { background: var(--bg-elevated); }
 .btn-secondary:hover { background: var(--bg-hover); }
 .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* Signal aggregator (Move #1) — LinkedIn icons + signal rows */
+.li-icons, .li-icons-compact { display: inline-flex; gap: 4px; margin-left: 6px; vertical-align: middle; }
+.li-icon { font-size: 10px; padding: 1px 5px; border: 1px solid var(--border); border-radius: 3px; color: var(--blue); text-decoration: none; }
+.li-icon:hover { background: var(--bg-hover); }
+.li-icons-compact .li-icon { font-size: 9px; padding: 0 4px; }
+.detail-signal-row { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+.detail-signal-row:last-child { border-bottom: 0; }
+

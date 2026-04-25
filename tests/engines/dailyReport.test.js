@@ -90,3 +90,53 @@ describe('dailyReport', () => {
     expect(msg).toContain('Found: 0');
   });
 });
+
+describe('getVariantPerformance7d', () => {
+  it('returns reply rate per hookVariantId, counting only positive replies', async () => {
+    const prisma = getTestPrisma();
+    const lead = await prisma.lead.create({ data: { businessName: 'V', contactEmail: 'v@v.com', status: 'sent' } });
+
+    // 10 emails for variant A, 2 with positive replies
+    for (let i = 0; i < 10; i++) {
+      const e = await prisma.email.create({
+        data: { leadId: lead.id, sequenceStep: i, hookVariantId: 'A', sentAt: new Date(), status: 'sent' },
+      });
+      if (i < 2) {
+        await prisma.reply.create({
+          data: { leadId: lead.id, emailId: e.id, category: 'interested', receivedAt: new Date(), rawText: 'yes' },
+        });
+      }
+    }
+
+    // 10 emails for variant B, 1 positive + 1 unsubscribe (should NOT count)
+    for (let i = 0; i < 10; i++) {
+      const e = await prisma.email.create({
+        data: { leadId: lead.id, sequenceStep: 100 + i, hookVariantId: 'B', sentAt: new Date(), status: 'sent' },
+      });
+      if (i === 0) {
+        await prisma.reply.create({
+          data: { leadId: lead.id, emailId: e.id, category: 'meeting', receivedAt: new Date(), rawText: 'sure' },
+        });
+      }
+      if (i === 1) {
+        await prisma.reply.create({
+          data: { leadId: lead.id, emailId: e.id, category: 'unsubscribe', receivedAt: new Date(), rawText: 'stop' },
+        });
+      }
+    }
+
+    const { getVariantPerformance7d } = await import('../../src/engines/dailyReport.js');
+    const perf = await getVariantPerformance7d();
+
+    const a = perf.find(p => p.variant === 'A');
+    const b = perf.find(p => p.variant === 'B');
+    expect(a).toMatchObject({ sent: 10, replied: 2, replyRate: 0.2 });
+    expect(b).toMatchObject({ sent: 10, replied: 1, replyRate: 0.1 });
+  });
+
+  it('returns empty array when no variants tracked', async () => {
+    const { getVariantPerformance7d } = await import('../../src/engines/dailyReport.js');
+    const perf = await getVariantPerformance7d();
+    expect(perf).toEqual([]);
+  });
+});

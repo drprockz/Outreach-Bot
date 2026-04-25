@@ -47,6 +47,8 @@ export const api = {
   overview:      () => request('/overview'),
   leads:         (params = '') => request(`/leads${params}`),
   lead:          (id) => request(`/leads/${id}`),
+  leadSignals:   (id) => request(`/leads/${id}/signals`),
+  patchLead:     (id, body) => request(`/leads/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
   updateStatus:  (id, status) => request(`/leads/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   sendLog:       (params = '') => request(`/send-log${params}`),
   replies:       () => request('/replies'),
