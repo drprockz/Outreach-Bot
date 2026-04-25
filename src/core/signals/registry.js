@@ -3,11 +3,12 @@
 
 import * as googleNews from './adapters/googleNews.js';
 import * as companyBlog from './adapters/companyBlog.js';
+import * as indianPress from './adapters/indianPress.js';
 
 const ALL_ADAPTERS = {
   google_news: googleNews,
   company_blog: companyBlog,
-  indian_press: null,
+  indian_press: indianPress,
   tech_stack: null,
   careers_page: null,
   cert_transparency: null,
