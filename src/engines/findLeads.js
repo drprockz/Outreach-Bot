@@ -143,7 +143,7 @@ async function stage1_discover(niche, batchIndex, perBatch, cities, businessSize
 }
 
 // ── Stages 2–6: Extraction + tech + signals + judge + DM finder ──
-async function stages2to6_extract(lead) {
+export async function stages2to6_extract(lead) {
   const prompt = `Analyze this business website and return a JSON object with these fields:
 - owner_name: owner/founder name (string or null)
 - owner_role: their role e.g. "Founder", "Director" (string or null)
@@ -211,7 +211,7 @@ async function generateHookVariant(variant, lead, persona, signals) {
 
 // Generate both variants in parallel, pick one at random for actual send.
 // Returns the chosen variant's data + total cost (both calls billed).
-async function stage10_hook(lead, persona, signals = []) {
+export async function stage10_hook(lead, persona, signals = []) {
   const [a, b] = await Promise.all([
     generateHookVariant('A', lead, persona, signals),
     generateHookVariant('B', lead, persona, signals),
@@ -222,7 +222,7 @@ async function stage10_hook(lead, persona, signals = []) {
 }
 
 // ── Stage 11: Email body — Claude Haiku (or Gemini fallback) ─────────
-async function stage11_body(lead, hook, persona) {
+export async function stage11_body(lead, hook, persona) {
   const prompt = `Write a cold email from ${persona.name} (${persona.role}, ${persona.company}) to ${lead.contact_name || lead.owner_name || 'the owner'} at ${lead.business_name}.
 
 Hook to open with: "${hook}"
@@ -247,7 +247,7 @@ Return only the email body, no subject line.`;
 }
 
 // ── Stage 11b: Subject line — Claude Haiku (or Gemini fallback) ──────
-async function stage11_subject(lead) {
+export async function stage11_subject(lead) {
   const prompt = `Write a cold email subject line for ${lead.business_name}. Max 7 words. No ! or ? or ALL CAPS. Make it sound like a human colleague writing, not marketing. Return only the subject line text.`;
   if (ANTHROPIC_DISABLED) {
     const result = await callGemini(prompt);
