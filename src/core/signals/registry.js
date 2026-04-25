@@ -1,8 +1,10 @@
 // Adapter registry. Chunks 2–3 will replace `null` entries with real adapter modules.
 // Until then, requested adapter names resolve to a placeholder that returns no signals.
 
+import * as googleNews from './adapters/googleNews.js';
+
 const ALL_ADAPTERS = {
-  google_news: null,
+  google_news: googleNews,
   company_blog: null,
   indian_press: null,
   tech_stack: null,
