@@ -97,9 +97,11 @@ Top to bottom on the page:
 1. **KPI strip** — 5 tiles. When a filter is active each tile renders `1,420 · 38` style (global · in-filter). Tiles:
    - Total leads
    - A / B / C distribution (single tile, three sub-counts)
-   - Ready to send (`status='ready'`)
-   - Signals last 7 days (count of distinct lead_ids with a signal in window)
-   - Replies awaiting triage (joins `replies` where unhandled)
+   - Ready to send: `status='ready'`
+   - Signals last 7 days: `COUNT(DISTINCT lead_id)` in `lead_signals` where `signal_date >= now() - interval '7 days'`
+   - Replies awaiting triage: `COUNT(*)` in `replies` where `actioned_at IS NULL`
+
+   **Filter-scoped semantics:** in-filter counts apply *all* current filters even when a filter "obviously" overlaps the tile's own predicate. Example: with `status=ready` filter active, the "Ready to send" tile shows `1,420 · 1,420`. This is intentional — the tile then doubles as a "your filter matches the actionable set" visual confirmation, and the global number stays useful as a baseline.
 2. **Saved-view chips** — horizontal scrollable row. Click applies `filters_json` + `sort` to URL state. A trailing `★ Save current view` button opens a name dialog. Hover on a chip reveals pencil (rename) and trash (delete).
 3. **Filter bar** — top row holds: search, status (multi), ICP priority (multi), email status (multi), discovered date range. A `More filters ▾` button opens a drawer with the rest (see §5).
 4. **Bulk action bar** — sticky bar that slides down from below the filter bar when ≥1 row is selected. Shows selection count + buttons: `Mark as nurture`, `Mark as unsubscribed`, `Add to reject list`, `Queue for send`, and a `Retry ▾` dropdown (verify email / regen hook / regen body / rescore ICP / re-extract / re-judge). Each retry option opens a confirm dialog showing estimated cost.
@@ -108,7 +110,15 @@ Top to bottom on the page:
 
 ## 5. Filters
 
-Multi-select where listed. Implementation: `URLSearchParams` accepts repeated keys (`?status=ready&status=queued`) — `req.query.status` becomes `string | string[]`; normalize to array in API.
+Multi-select where listed. Implementation: `URLSearchParams` accepts repeated keys (`?status=ready&status=nurture`) — `req.query.status` becomes `string | string[]`; normalize to array in API.
+
+**JSON-column filters (`tech_stack`, `business_signals`)** — these columns are `Json?` in Prisma and currently store `string[]`. The Postgres `?|` operator only works against JSONB array-of-strings; objects or nulls will throw. Filter implementation MUST:
+
+1. Guard with `WHERE jsonb_typeof(tech_stack) = 'array'` before applying `?|`.
+2. Assume `string[]` shape; document this assumption in the API route comment.
+3. Fall back to "no match" (not 500) if the guard fails for an individual row.
+
+This replaces the current silent-skip behavior at `src/api/routes/leads.js:174`.
 
 | Filter | Type | Backend treatment |
 |---|---|---|
@@ -131,7 +141,7 @@ Multi-select where listed. Implementation: `URLSearchParams` accepts repeated ke
 | Discovered date | range | existing |
 | In reject list | bool | hidden by default; toggleable |
 
-Multi-value distincts (categories, cities, countries) are exposed via small `GET /api/leads/facets` endpoint that returns `{ categories: [...], cities: [...], countries: [...] }` cached for 60s in process.
+Multi-value distincts (categories, cities, countries) are exposed via small `GET /api/leads/facets` endpoint that returns `{ categories: [...], cities: [...], countries: [...] }` cached for 60s per Node process. Note PM2 may run multiple workers (`infra/ecosystem.config.js`) — staleness is bounded per worker, which is acceptable for this read-only metadata.
 
 ## 6. Sort
 
@@ -143,7 +153,7 @@ Sort dropdown in the table header bar. Options:
 - Discovered date
 - Last contacted (`domain_last_contacted`)
 
-Default sort: `icpScore desc, discoveredAt desc`. Stored in URL as `sort=icp_score:desc`.
+Default sort: `icpScore desc, discoveredAt desc`. Stored in URL as `sort=icp_score:desc`. Sort by signal count reuses the `lead_signals.groupBy` join already present at `src/api/routes/leads.js:185` rather than introducing a fresh sub-select.
 
 ## 7. Saved Views
 
@@ -156,20 +166,22 @@ DELETE /api/saved-views/:id              → 204
 
 `filtersJson` is the URL query as an object. Hard delete (no soft-delete at this scale). Names not enforced unique — duplicates allowed (operator may want "Mumbai SaaS A — v1", "v2").
 
+**Sort validation:** `sort` field is stored as e.g. `"icp_score:desc"`. Both API endpoints (`GET /api/leads` and saved-views CRUD) parse with a strict allowlist (`{icp_score, website_quality_score, signal_count, discovered_at, domain_last_contacted}` × `{asc, desc}`). Invalid values → silently fall back to default `icp_score:desc, discovered_at:desc` and emit a `warn`-level log. This way a stale saved view never 500s the leads list after a future column rename.
+
 ## 8. Bulk Actions
 
 Both endpoints accept `{ leadIds: number[] }`. Reject if `leadIds.length > 25` for retry, `> 200` for status changes.
 
 ### 8.1 `POST /api/leads/bulk/status`
 
-Body: `{ leadIds, action }` where `action ∈ {'nurture','unsubscribed','reject','queue'}`.
+Body: `{ leadIds, action }` where `action ∈ {'nurture','unsubscribed','reject','requeue'}`. Mirrors the same column whitelist semantics as the existing `PATCH /api/leads/:id/status` (`src/api/routes/leads.js:258`).
 
 - `nurture` → `status='nurture'`.
 - `unsubscribed` → `status='unsubscribed'`.
 - `reject` → for each lead: insert email + domain into `reject_list` (idempotent on `@@index([email])`/`@@index([domain])`); set `status='unsubscribed'`, `in_reject_list=true`. **Honors the non-negotiable** that `reject_list` is absolute — once added, no path bypasses it.
-- `queue` → `status='queued'`. Send-time validators (`DAILY_SEND_LIMIT`, `contentValidator`, bounce rate) still gate actual sending. The confirm dialog says so verbatim.
+- `requeue` → set `status='ready'`. Verified against `src/engines/sendEmails.js:121–129`: the send engine selects leads where `status='ready' AND emails.some(sequenceStep=0, status='pending')`. Therefore `requeue` is **only allowed** when the lead already has a step-0 pending email row (typically true for leads that previously reached `ready`/`sent`/`nurture` and bounced back). If the precondition fails, that lead is returned in `skipped` with `reason='no_pending_email'` — the operator must run bulk `regen_body` first to reseed the email row. UI label for this action: "Send back to ready". Confirm dialog states verbatim that `DAILY_SEND_LIMIT`, `contentValidator`, and bounce-rate hard-stop still gate actual sending.
 
-Returns `{ updated: number, skipped: [{id, reason}] }`. Skipped rows include leads already in a terminal status (`bounced`, `replied`).
+Returns `{ updated: number, skipped: [{id, reason}] }`. Skipped rows include leads already in a terminal status (`bounced`, `replied`) and the `no_pending_email` case above.
 
 ### 8.2 `POST /api/leads/bulk/retry`
 
@@ -194,6 +206,29 @@ Server-side, retries import existing engine helpers (`verifyEmail()` from `core/
 
 If `leadIds.length > 25`, return `400 { error: 'batch_too_large', max: 25 }` and the UI tells the user to narrow selection.
 
+### 8.3 Pre-work refactor — engine helpers must become libraries
+
+Audit found that only `verifyEmail()` (`src/core/integrations/mev.js:14`) and `scoreLead()` (`src/core/ai/icpScorer.js:84`) are already importable. The other four stages live as **non-exported local functions** inside `src/engines/findLeads.js`:
+
+- `generateHookVariant` (line ~202) — used for `regen_hook`.
+- Body-generation block (around stage 11) — used for `regen_body`.
+- `stages2to6_extract` extraction block — used for `reextract`.
+- Quality-judge block — used for `rejudge`.
+
+Pre-work step (must land in the same PR series before the bulk-retry endpoint ships):
+
+1. Create `src/core/pipeline/` containing one file per stage helper:
+   - `regenerateHook.js` exporting `regenerateHook(lead, ctx)`.
+   - `regenerateBody.js` exporting `regenerateBody(lead, hook, ctx)`.
+   - `reextract.js` exporting `reextract(lead)`.
+   - `rejudge.js` exporting `rejudge(lead)`.
+   - `rescoreIcp.js` thin re-export of `scoreLead`.
+   - `verifyEmailLib.js` thin re-export of `verifyEmail`.
+2. Refactor `findLeads.js` to import from `core/pipeline/` instead of inlining. The engine's behavior must be byte-identical post-refactor — covered by existing `tests/engines/findLeads.test.js` plus a new snapshot of the stage 10/11 output for one canonical lead fixture.
+3. `ctx` arg carries niche, persona, offer/ICP profile (today these are read inside `findLeads`); the helpers must accept them as parameters so they're callable from the API route. The API route fetches `ctx` once per batch and passes it in.
+
+Without this refactor, only `verify_email` and `rescore_icp` could ship — the others would re-implement engine logic and drift. The plan must front-load this work.
+
 ## 9. CSV Export
 
 `GET /api/leads/export.csv?<all the filter params>&columns=visible|all`.
@@ -205,7 +240,7 @@ If `leadIds.length > 25`, return `400 { error: 'batch_too_large', max: 25 }` and
 - `columns=visible` → 12 columns matching the current table.
 - `columns=all` → every Lead column from `serializeLead`.
 
-Front-end: split-button (`Export CSV ▾`) with two items.
+Front-end: split-button (`Export CSV ▾`) with two items. **Auth**: the existing `requireAuth` middleware expects `Authorization: Bearer <jwt>`. A plain `<a href>` cannot attach headers, and putting the JWT in a query string would log it in the access log. Implementation MUST use `fetch()` with the auth header, then `URL.createObjectURL(blob)` + a hidden anchor click to trigger the download. Same pattern goes into a shared `web/src/api.js` helper.
 
 ## 10. Retry Orchestration
 
@@ -246,10 +281,14 @@ Vitest:
 
 ## 13. Migration / Rollout
 
-1. Prisma migration: create `saved_views` table.
-2. Ship API + UI behind no flag (single-operator, low blast radius — losing the Leads page is non-fatal, engines run on cron independently).
-3. Manual smoke: log in → run each filter → save a view → bulk retry 3 leads with `dryRun` → real retry → CSV export → bulk queue 5 leads → confirm send engine picks them up next tick.
-4. No data backfill required.
+1. Prisma migration in one step:
+   - Create `saved_views` table.
+   - Add composite index `idx_leads_status_icp_score` on `leads(status, icp_score DESC)` — supports the default sort + most common filter combo.
+   - Add index `idx_leads_domain_last_contacted` on `leads(domain_last_contacted DESC)` — supports the new sort option without sequential scans.
+2. Land the §8.3 pre-work refactor (engine helpers → `core/pipeline/`) BEFORE the bulk-retry endpoint. Verified by `tests/engines/findLeads.test.js` staying green.
+3. Ship API + UI behind one env gate: `BULK_RETRY_ENABLED` (default `false` until the operator has manually smoke-tested cost estimates against `dryRun`). When `false`, the retry dropdown is hidden and the endpoint returns `503`. All other features (filters, KPIs, saved views, status bulk actions, CSV export) ship unconditionally — they have no money-spending failure mode.
+4. Manual smoke: log in → run each filter → save a view → reload (view persists) → `dryRun` retry on 3 leads (cost matches expectation) → real retry → CSV export both flavors → bulk requeue 5 leads → confirm `sendEmails.js` picks them up next tick.
+5. No data backfill required.
 
 ## 14. Risks & Mitigations
 
@@ -263,4 +302,4 @@ Vitest:
 
 ## 15. Open Items
 
-None — all clarifying questions resolved during brainstorming session 2026-04-25.
+None — all clarifying questions resolved during brainstorming session 2026-04-25; spec-review issues addressed in revision 2.
