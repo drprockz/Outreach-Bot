@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
 import { parseLeadsQuery } from './leads/filterParser.js';
+import { bulkStatus } from './leads/bulkStatus.js';
 
 const router = Router();
 
@@ -279,6 +280,8 @@ router.get('/facets', async (_req, res) => {
   _facetsCache = { at: Date.now(), data: { categories, cities, countries } };
   res.json(_facetsCache.data);
 });
+
+router.post('/bulk/status', bulkStatus);
 
 router.get('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
