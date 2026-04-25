@@ -11,6 +11,7 @@ import { regenerateHook } from '../core/pipeline/regenerateHook.js';
 import { regenerateBody } from '../core/pipeline/regenerateBody.js';
 import { regenerateSubject } from '../core/pipeline/regenerateSubject.js';
 import { reextract } from '../core/pipeline/reextract.js';
+import { analyzeCompetitors } from '../core/ai/competitorAnalysis.js';
 
 // Pipeline stage map (per-lead body in processLead, line ~392):
 //   reextract → Gate 1 → email check → dedup → Stage 7 (MEV) →
@@ -77,9 +78,10 @@ export async function insertLead(lead, niche, status) {
       icpKeyGaps: lead.icp_key_gaps || [],
       icpDisqualifiers: lead.icp_disqualifiers || [],
       status,
-      geminiCostUsd: (lead.extractCost || 0) + (lead.icpCost || 0),
+      geminiCostUsd: (lead.extractCost || 0) + (lead.icpCost || 0) + (lead.competitorCost || 0),
       discoveryModel: 'gemini-2.5-flash',
       extractionModel: 'gemini-2.5-flash',
+      competitorAnalysis: lead.competitorAnalysis || null,
     },
   });
 }
@@ -427,8 +429,22 @@ export default async function findLeads(override = {}) {
         const { signals: allSignals, bySource: signalsBySource } = await gatherSignals(signalContext);
         const topSignals = allSignals.slice(0, 3);
 
+        // ── Stage 9.5: Competitor analysis ──────────────────────────────────
+        let competitorAnalysis = null;
+        const competitorResult = await analyzeCompetitors(lead);
+        if (competitorResult) {
+          const { costUsd: competitorCost, ...competitorData } = competitorResult;
+          competitorAnalysis = competitorData;
+          Object.assign(lead, { competitorCost, competitorAnalysis: competitorData });
+          // analyzeCompetitors always uses Gemini (not gated by ANTHROPIC_DISABLED),
+          // same as Stage 2 (extraction) and Stage 9 (ICP) which also bump unconditionally.
+          await bumpMetric('geminiCostUsd', competitorCost);
+          await bumpMetric('totalApiCostUsd', competitorCost);
+          totalCost += competitorCost;
+        }
+
         // ── Stage 10: hook ───────────────────────────────────────────────
-        const hookResult = await regenerateHook(lead, persona, topSignals);
+        const hookResult = await regenerateHook(lead, persona, topSignals, competitorAnalysis);
         totalCost += hookResult.costUsd;
         aiSpendThisRun += hookResult.costUsd;
 
