@@ -1,4 +1,6 @@
 .env
+.env.local
+.env.*.local
 db/*.sqlite
 db/*.sqlite-wal
 db/*.sqlite-shm
