@@ -5,8 +5,8 @@ db/*.sqlite
 db/*.sqlite-wal
 db/*.sqlite-shm
 node_modules/
-web/node_modules/
-web/dist/
+apps/web/node_modules/
+apps/web/dist/
 apps/*/dist/
 packages/*/dist/
 logs/

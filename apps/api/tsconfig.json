@@ -7,7 +7,8 @@
     "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "paths": { "shared": ["../../packages/shared/src/index.ts"] }
   },
   "include": ["src/**/*"]
 }
