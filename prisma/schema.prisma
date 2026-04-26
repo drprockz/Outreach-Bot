@@ -91,8 +91,8 @@ model Lead {
   manualHookNote        String?   @map("manual_hook_note")
   competitorAnalysis    Json?     @map("competitor_analysis")
 
-  orgId                 Int?      @map("org_id")
-  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId                 Int       @map("org_id")
+  org                   Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   emails         Email[]
   bounces        Bounce[]
@@ -117,8 +117,8 @@ model SavedView {
   createdAt   DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
 
-  orgId       Int?      @map("org_id")
-  org         Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId       Int       @map("org_id")
+  org         Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([orgId])
   @@map("saved_views")
@@ -167,8 +167,8 @@ model Email {
 
   createdAt             DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
 
-  orgId                 Int?      @map("org_id")
-  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId                 Int       @map("org_id")
+  org                   Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   lead    Lead?    @relation(fields: [leadId], references: [id])
   bounces Bounce[]
@@ -192,8 +192,8 @@ model Bounce {
   bouncedAt    DateTime  @default(now()) @db.Timestamptz(6) @map("bounced_at")
   retryAfter   DateTime? @db.Timestamptz(6) @map("retry_after")
 
-  orgId        Int?      @map("org_id")
-  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId        Int       @map("org_id")
+  org          Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   email Email? @relation(fields: [emailId], references: [id])
   lead  Lead?  @relation(fields: [leadId], references: [id])
@@ -219,8 +219,8 @@ model Reply {
   actionedAt            DateTime? @db.Timestamptz(6) @map("actioned_at")
   actionTaken           String?   @map("action_taken")
 
-  orgId                 Int?      @map("org_id")
-  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId                 Int       @map("org_id")
+  org                   Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   lead  Lead?  @relation(fields: [leadId], references: [id])
   email Email? @relation(fields: [emailId], references: [id])
@@ -238,8 +238,8 @@ model RejectList {
   reason   String?
   addedAt  DateTime @default(now()) @db.Timestamptz(6) @map("added_at")
 
-  orgId    Int?     @map("org_id")
-  org      Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId    Int      @map("org_id")
+  org      Org      @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([email])
   @@index([domain])
@@ -262,8 +262,8 @@ model CronLog {
   costUsd           Decimal?  @db.Decimal(10, 6) @map("cost_usd")
   notes             String?
 
-  orgId             Int?      @map("org_id")
-  org               Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId             Int       @map("org_id")
+  org               Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([jobName, scheduledAt])
   @@index([orgId])
@@ -322,8 +322,8 @@ model DailyMetrics {
 
   createdAt             DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
 
-  orgId                 Int?     @map("org_id")
-  org                   Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId                 Int      @map("org_id")
+  org                   Org      @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([date])
   @@index([orgId])
@@ -345,8 +345,8 @@ model ErrorLog {
   resolved     Boolean   @default(false)
   resolvedAt   DateTime? @db.Timestamptz(6) @map("resolved_at")
 
-  orgId        Int?      @map("org_id")
-  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId        Int       @map("org_id")
+  org          Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([source, occurredAt])
   @@index([orgId])
@@ -366,8 +366,8 @@ model SequenceState {
   pausedReason    String?   @map("paused_reason")
   updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @updatedAt @map("updated_at")
 
-  orgId           Int?      @map("org_id")
-  org             Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId           Int       @map("org_id")
+  org             Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   lead Lead @relation(fields: [leadId], references: [id])
 
@@ -380,8 +380,8 @@ model Config {
   key   String  @id
   value String?
 
-  orgId Int?    @map("org_id")
-  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId Int     @map("org_id")
+  org   Org     @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([orgId])
   @@map("config")
@@ -397,8 +397,8 @@ model Niche {
   sortOrder  Int      @default(0) @map("sort_order")
   createdAt  DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
 
-  orgId      Int?     @map("org_id")
-  org        Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId      Int      @map("org_id")
+  org        Org      @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([orgId])
   @@map("niches")
@@ -422,8 +422,8 @@ model Offer {
   proofPoints     Json?     @map("proof_points")
   updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
 
-  orgId           Int?      @map("org_id")
-  org             Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId           Int       @map("org_id")
+  org             Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([orgId])
   @@map("offer")
@@ -455,8 +455,8 @@ model IcpProfile {
   hardDisqualifiers    Json?     @map("hard_disqualifiers")
   updatedAt            DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
 
-  orgId                Int?      @map("org_id")
-  org                  Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId                Int       @map("org_id")
+  org                  Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   @@index([orgId])
   @@map("icp_profile")
@@ -475,8 +475,8 @@ model LeadSignal {
   signalDate   DateTime? @db.Timestamptz(6) @map("signal_date")
   collectedAt  DateTime  @default(now()) @db.Timestamptz(6) @map("collected_at")
 
-  orgId        Int?      @map("org_id")
-  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  orgId        Int       @map("org_id")
+  org          Org       @relation(fields: [orgId], references: [id], onDelete: Restrict)
 
   lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
