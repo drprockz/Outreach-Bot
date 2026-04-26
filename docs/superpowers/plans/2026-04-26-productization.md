@@ -151,7 +151,7 @@ npm --version   # should be 10+ (workspaces need npm 7+)
     "uuid": "^10.0.0",
     "nodemailer": "^6.9.0",
     "zod": "^3.23.0",
-    "shared": "workspace:*"
+    "shared": "*"
   },
   "devDependencies": {
     "@types/express": "^4.17.0",
