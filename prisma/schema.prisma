@@ -7,6 +7,27 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ────────────────── ENUMS ──────────────────
+enum Role {
+  owner
+  admin
+}
+
+enum OrgStatus {
+  trial
+  active
+  locked
+  suspended
+}
+
+enum SubscriptionStatus {
+  trial
+  active
+  grace
+  locked
+  cancelled
+}
+
 // ────────────────── LEADS ──────────────────
 model Lead {
   id                    Int       @id @default(autoincrement())
@@ -70,6 +91,9 @@ model Lead {
   manualHookNote        String?   @map("manual_hook_note")
   competitorAnalysis    Json?     @map("competitor_analysis")
 
+  orgId                 Int?      @map("org_id")
+  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   emails         Email[]
   bounces        Bounce[]
   replies        Reply[]
@@ -81,6 +105,7 @@ model Lead {
   @@index([contactEmail])
   @@index([status, icpScore(sort: Desc)], map: "idx_leads_status_icp_score")
   @@index([domainLastContacted(sort: Desc)], map: "idx_leads_domain_last_contacted")
+  @@index([orgId])
   @@map("leads")
 }
 
@@ -92,6 +117,10 @@ model SavedView {
   createdAt   DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
   updatedAt   DateTime  @updatedAt @db.Timestamptz(6) @map("updated_at")
 
+  orgId       Int?      @map("org_id")
+  org         Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
   @@map("saved_views")
 }
 
@@ -138,6 +167,9 @@ model Email {
 
   createdAt             DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
 
+  orgId                 Int?      @map("org_id")
+  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   lead    Lead?    @relation(fields: [leadId], references: [id])
   bounces Bounce[]
   replies Reply[]
@@ -145,6 +177,7 @@ model Email {
   @@index([leadId])
   @@index([sentAt])
   @@index([status])
+  @@index([orgId])
   @@map("emails")
 }
 
@@ -159,9 +192,13 @@ model Bounce {
   bouncedAt    DateTime  @default(now()) @db.Timestamptz(6) @map("bounced_at")
   retryAfter   DateTime? @db.Timestamptz(6) @map("retry_after")
 
+  orgId        Int?      @map("org_id")
+  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   email Email? @relation(fields: [emailId], references: [id])
   lead  Lead?  @relation(fields: [leadId], references: [id])
 
+  @@index([orgId])
   @@map("bounces")
 }
 
@@ -182,10 +219,14 @@ model Reply {
   actionedAt            DateTime? @db.Timestamptz(6) @map("actioned_at")
   actionTaken           String?   @map("action_taken")
 
+  orgId                 Int?      @map("org_id")
+  org                   Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   lead  Lead?  @relation(fields: [leadId], references: [id])
   email Email? @relation(fields: [emailId], references: [id])
 
   @@index([leadId])
+  @@index([orgId])
   @@map("replies")
 }
 
@@ -197,8 +238,12 @@ model RejectList {
   reason   String?
   addedAt  DateTime @default(now()) @db.Timestamptz(6) @map("added_at")
 
+  orgId    Int?     @map("org_id")
+  org      Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   @@index([email])
   @@index([domain])
+  @@index([orgId])
   @@map("reject_list")
 }
 
@@ -217,7 +262,11 @@ model CronLog {
   costUsd           Decimal?  @db.Decimal(10, 6) @map("cost_usd")
   notes             String?
 
+  orgId             Int?      @map("org_id")
+  org               Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   @@index([jobName, scheduledAt])
+  @@index([orgId])
   @@map("cron_log")
 }
 
@@ -273,7 +322,11 @@ model DailyMetrics {
 
   createdAt             DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
 
+  orgId                 Int?     @map("org_id")
+  org                   Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   @@index([date])
+  @@index([orgId])
   @@map("daily_metrics")
 }
 
@@ -292,7 +345,11 @@ model ErrorLog {
   resolved     Boolean   @default(false)
   resolvedAt   DateTime? @db.Timestamptz(6) @map("resolved_at")
 
+  orgId        Int?      @map("org_id")
+  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   @@index([source, occurredAt])
+  @@index([orgId])
   @@map("error_log")
 }
 
@@ -309,8 +366,12 @@ model SequenceState {
   pausedReason    String?   @map("paused_reason")
   updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @updatedAt @map("updated_at")
 
+  orgId           Int?      @map("org_id")
+  org             Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   lead Lead @relation(fields: [leadId], references: [id])
 
+  @@index([orgId])
   @@map("sequence_state")
 }
 
@@ -319,6 +380,10 @@ model Config {
   key   String  @id
   value String?
 
+  orgId Int?    @map("org_id")
+  org   Org?    @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
   @@map("config")
 }
 
@@ -332,6 +397,10 @@ model Niche {
   sortOrder  Int      @default(0) @map("sort_order")
   createdAt  DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
 
+  orgId      Int?     @map("org_id")
+  org        Org?     @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
   @@map("niches")
 }
 
@@ -353,6 +422,10 @@ model Offer {
   proofPoints     Json?     @map("proof_points")
   updatedAt       DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
 
+  orgId           Int?      @map("org_id")
+  org             Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
   @@map("offer")
 }
 
@@ -382,6 +455,10 @@ model IcpProfile {
   hardDisqualifiers    Json?     @map("hard_disqualifiers")
   updatedAt            DateTime  @default(now()) @db.Timestamptz(6) @map("updated_at")
 
+  orgId                Int?      @map("org_id")
+  org                  Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
+  @@index([orgId])
   @@map("icp_profile")
 }
 
@@ -398,10 +475,141 @@ model LeadSignal {
   signalDate   DateTime? @db.Timestamptz(6) @map("signal_date")
   collectedAt  DateTime  @default(now()) @db.Timestamptz(6) @map("collected_at")
 
+  orgId        Int?      @map("org_id")
+  org          Org?      @relation(fields: [orgId], references: [id], onDelete: Restrict)
+
   lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
 
   @@unique([leadId, source, signalType, url], map: "uq_lead_signals_dedup")
   @@index([leadId])
   @@index([leadId, confidence(sort: Desc)])
+  @@index([orgId])
   @@map("lead_signals")
+}
+
+// ────────────────── ORG / TENANCY ──────────────────
+model Org {
+  id          Int       @id @default(autoincrement())
+  name        String
+  slug        String    @unique
+  status      OrgStatus @default(trial)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  memberships  OrgMembership[]
+  subscription OrgSubscription?
+
+  // back-relations (Prisma requires both sides of a relation to be declared)
+  leads          Lead[]
+  emails         Email[]
+  bounces        Bounce[]
+  replies        Reply[]
+  rejectList     RejectList[]
+  cronLogs       CronLog[]
+  dailyMetrics   DailyMetrics[]
+  errorLogs      ErrorLog[]
+  sequenceStates SequenceState[]
+  configs        Config[]
+  niches         Niche[]
+  offers         Offer[]
+  icpProfiles    IcpProfile[]
+  savedViews     SavedView[]
+  leadSignals    LeadSignal[]
+
+  @@map("orgs")
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  googleId      String?   @unique @map("google_id")
+  isSuperadmin  Boolean   @default(false) @map("is_superadmin")
+  lastLoginAt   DateTime? @db.Timestamptz(6) @map("last_login_at")
+  createdAt     DateTime  @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  memberships OrgMembership[]
+  otpTokens   OtpToken[]
+
+  @@map("users")
+}
+
+model OrgMembership {
+  id     Int  @id @default(autoincrement())
+  orgId  Int  @map("org_id")
+  userId Int  @map("user_id")
+  role   Role
+
+  org  Org  @relation(fields: [orgId], references: [id])
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([orgId, userId])
+  @@map("org_memberships")
+}
+
+model OtpToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @map("user_id")
+  codeHash  String   @map("code_hash")
+  expiresAt DateTime @map("expires_at")
+  used      Boolean  @default(false)
+  attempts  Int      @default(0)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, used, expiresAt])
+  @@map("otp_tokens")
+}
+
+model Plan {
+  id         Int    @id @default(autoincrement())
+  name       String
+  priceInr   Int    @map("price_inr")
+  limitsJson Json   @map("limits_json")
+
+  subscriptions OrgSubscription[]
+
+  @@map("plans")
+}
+
+model OrgSubscription {
+  id                 Int                @id @default(autoincrement())
+  orgId              Int                @unique @map("org_id")
+  planId             Int                @map("plan_id")
+  status             SubscriptionStatus @default(trial)
+  razorpaySubId      String?            @map("razorpay_sub_id")
+  razorpayCustomerId String?            @map("razorpay_customer_id")
+  trialEndsAt        DateTime?          @db.Timestamptz(6) @map("trial_ends_at")
+  currentPeriodEnd   DateTime?          @db.Timestamptz(6) @map("current_period_end")
+  graceEndsAt        DateTime?          @db.Timestamptz(6) @map("grace_ends_at")
+  cancelAtPeriodEnd  Boolean            @default(false) @map("cancel_at_period_end")
+
+  org           Org                    @relation(fields: [orgId], references: [id])
+  plan          Plan                   @relation(fields: [planId], references: [id])
+  webhookEvents RazorpayWebhookEvent[]
+
+  @@map("org_subscriptions")
+}
+
+model RazorpayWebhookEvent {
+  id              Int      @id @default(autoincrement())
+  razorpayEventId String   @unique @map("razorpay_event_id")
+  eventType       String   @map("event_type")
+  orgSubId        Int      @map("org_sub_id")
+  processedAt     DateTime @default(now()) @db.Timestamptz(6) @map("processed_at")
+
+  orgSub OrgSubscription @relation(fields: [orgSubId], references: [id])
+
+  @@map("razorpay_webhook_events")
+}
+
+model AuditLog {
+  id          Int      @id @default(autoincrement())
+  action      String
+  actorId     Int      @map("actor_id")
+  targetOrgId Int?     @map("target_org_id")
+  meta        Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6) @map("created_at")
+
+  @@index([actorId])
+  @@index([targetOrgId])
+  @@map("audit_log")
 }
