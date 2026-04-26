@@ -2,10 +2,21 @@
   "name": "radar",
   "version": "2.0.0",
   "type": "module",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:db:reset": "DATABASE_URL=\"$DATABASE_URL_TEST\" prisma migrate reset --force --skip-seed"
+    "test:db:reset": "DATABASE_URL=\"$DATABASE_URL_TEST\" prisma migrate reset --force --skip-seed",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "test:api": "npm run test --workspace=apps/api",
+    "build:api": "npm run build --workspace=apps/api",
+    "build:web": "npm run build --workspace=apps/web",
+    "build:shared": "npm run build --workspace=packages/shared"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

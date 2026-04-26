@@ -7,6 +7,8 @@ db/*.sqlite-shm
 node_modules/
 web/node_modules/
 web/dist/
+apps/*/dist/
+packages/*/dist/
 logs/
 *.log
 .superpowers/
