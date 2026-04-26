@@ -4,9 +4,9 @@
 
 **Goal:** Transform Radar from a single-tenant personal tool into a production-grade multi-tenant SaaS with organizations, RBAC, Google OAuth + OTP auth, Razorpay billing, GraphQL API with real-time subscriptions, and a BullMQ job queue.
 
-**Architecture:** Row-level multi-tenancy via Prisma `$extends` scoped client; GraphQL (Pothos + graphql-yoga) for the API with `graphql-ws` subscriptions; BullMQ + Redis for durable job queuing replacing node-cron direct invocation. pnpm monorepo with `apps/api`, `apps/web`, and `packages/shared`.
+**Architecture:** Row-level multi-tenancy via Prisma `$extends` scoped client; GraphQL (Pothos + graphql-yoga) for the API with `graphql-ws` subscriptions; BullMQ + Redis for durable job queuing replacing node-cron direct invocation. npm workspaces monorepo with `apps/api`, `apps/web`, and `packages/shared`.
 
-**Tech Stack:** TypeScript (strict), Prisma + PostgreSQL, GraphQL (Pothos + graphql-yoga + graphql-ws), BullMQ + ioredis, passport + passport-google-oauth20, Razorpay SDK, React 18 + Vite + shadcn/ui + Tailwind, urql, TanStack Query, pnpm workspaces, Docker Compose (local dev), Vitest.
+**Tech Stack:** TypeScript (strict), Prisma + PostgreSQL, GraphQL (Pothos + graphql-yoga + graphql-ws), BullMQ + ioredis, passport + passport-google-oauth20, Razorpay SDK, React 18 + Vite + shadcn/ui + Tailwind, urql, TanStack Query, npm workspaces, Docker Compose (local dev), Vitest.
 
 **Spec:** `docs/superpowers/specs/2026-04-26-productization-design.md`
 
@@ -16,7 +16,6 @@
 
 ### New files created
 ```
-pnpm-workspace.yaml
 apps/api/package.json
 apps/api/tsconfig.json
 apps/api/src/server.ts
@@ -89,41 +88,32 @@ infra/ecosystem.config.js     — add Redis worker process
 
 ## Chunk 1: Monorepo + TypeScript + Docker
 
-### Task 1: pnpm monorepo setup
+### Task 1: npm workspaces monorepo setup
 
 **Files:**
-- Create: `pnpm-workspace.yaml`
 - Modify: `package.json` (root)
 - Create: `apps/api/package.json`
 - Create: `apps/api/tsconfig.json`
 - Create: `packages/shared/package.json`
 - Create: `packages/shared/tsconfig.json`
 
-- [ ] **Step 1: Install pnpm globally if not present**
+- [ ] **Step 1: Verify Node + npm version**
 ```bash
-npm install -g pnpm
-pnpm --version  # should be 8+
+node --version  # should be 20+
+npm --version   # should be 10+ (workspaces need npm 7+)
 ```
 
-- [ ] **Step 2: Create workspace config**
-```yaml
-# pnpm-workspace.yaml
-packages:
-  - 'apps/*'
-  - 'packages/*'
-```
-
-- [ ] **Step 3: Update root package.json**
+- [ ] **Step 2: Update root package.json (npm workspaces — no separate config file needed)**
 ```json
 {
   "name": "radar",
   "private": true,
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev:api": "pnpm --filter api dev",
-    "dev:web": "pnpm --filter web dev",
-    "test": "pnpm --filter api test",
-    "build": "pnpm --filter api build && pnpm --filter web build"
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "test":    "npm run test --workspace=apps/api",
+    "build":   "npm run build --workspace=packages/shared && npm run build --workspace=apps/api && npm run build --workspace=apps/web"
   }
 }
 ```
@@ -242,15 +232,15 @@ packages:
 
 - [ ] **Step 8: Install all deps and build shared package**
 ```bash
-pnpm install
-pnpm --filter shared build
+npm install
+npm run build --workspace=packages/shared
 ```
 Expected: workspace installed, `packages/shared/dist/` created with compiled JS
 
 - [ ] **Step 9: Commit**
 ```bash
-git add pnpm-workspace.yaml package.json apps/api/package.json apps/api/tsconfig.json packages/shared/package.json packages/shared/tsconfig.json
-git commit -m "chore: set up pnpm monorepo with apps/api and packages/shared"
+git add package.json apps/api/package.json apps/api/tsconfig.json packages/shared/package.json packages/shared/tsconfig.json
+git commit -m "chore: set up npm workspaces monorepo with apps/api and packages/shared"
 ```
 
 ---
@@ -1060,7 +1050,7 @@ git commit -m "feat(auth): requireAuth + requireRole + requireSuperadmin middlew
 
 - [ ] **Step 0: Add supertest to devDependencies**
 ```bash
-pnpm --filter api add -D supertest @types/supertest
+npm install -D supertest @types/supertest --workspace=apps/api
 ```
 
 - [ ] **Step 1: Write failing tests**
@@ -1215,8 +1205,8 @@ git commit -m "feat(auth): OTP send + verify endpoints with brute-force protecti
 
 - [ ] **Step 1: Install passport deps**
 ```bash
-pnpm --filter api add passport passport-google-oauth20
-pnpm --filter api add -D @types/passport @types/passport-google-oauth20
+npm install passport passport-google-oauth20 --workspace=apps/api
+npm install -D @types/passport @types/passport-google-oauth20 --workspace=apps/api
 ```
 
 - [ ] **Step 2: Implement Google OAuth routes**
@@ -1432,7 +1422,7 @@ git commit -m "feat(plans): plan enforcement middleware + org/OTP rate limiting"
 
 - [ ] **Step 1: Install Razorpay SDK**
 ```bash
-pnpm --filter api add razorpay
+npm install razorpay --workspace=apps/api
 ```
 
 - [ ] **Step 2: Implement Razorpay webhook handler**
@@ -1577,8 +1567,8 @@ git commit -m "feat(billing): Razorpay webhook handler (idempotent) + billing ro
 
 - [ ] **Step 1: Install GraphQL deps**
 ```bash
-pnpm --filter api add graphql graphql-yoga @pothos/core @pothos/plugin-prisma @pothos/plugin-errors ws graphql-ws
-pnpm --filter api add -D @types/ws
+npm install graphql graphql-yoga @pothos/core @pothos/plugin-prisma @pothos/plugin-errors ws graphql-ws --workspace=apps/api
+npm install -D @types/ws --workspace=apps/api
 ```
 
 - [ ] **Step 2: Create Pothos builder**
@@ -1783,7 +1773,7 @@ httpServer.listen(PORT, () => logger.info({ port: PORT }, 'Radar API started'))
 
 - [ ] **Step 2: Install bull-board**
 ```bash
-pnpm --filter api add @bull-board/express @bull-board/api eventemitter3
+npm install @bull-board/express @bull-board/api eventemitter3 --workspace=apps/api
 ```
 
 - [ ] **Step 3: Start server and verify it boots**
@@ -1943,8 +1933,8 @@ git commit -m "feat(workers): BullMQ scheduler + worker shells for all 6 engines
 
 - [ ] **Step 1: Add frontend deps**
 ```bash
-pnpm --filter web add @urql/core @urql/react graphql graphql-ws @tanstack/react-query
-pnpm --filter web add -D tailwindcss postcss autoprefixer @types/react @types/react-dom typescript
+npm install @urql/core @urql/react graphql graphql-ws @tanstack/react-query --workspace=apps/web
+npm install -D tailwindcss postcss autoprefixer @types/react @types/react-dom typescript --workspace=apps/web
 npx --prefix apps/web shadcn-ui@latest init
 ```
 Follow shadcn prompts: TypeScript=yes, Tailwind=yes, CSS variables=yes
@@ -2384,7 +2374,7 @@ git commit -m "chore: final integration wiring — productization complete"
 | Layer | Technology |
 |---|---|
 | Language | TypeScript 5.4 strict |
-| Monorepo | pnpm workspaces |
+| Monorepo | npm workspaces |
 | API | Express 4 + graphql-yoga (Pothos) |
 | Real-time | graphql-ws WebSocket subscriptions |
 | Job queue | BullMQ + ioredis |

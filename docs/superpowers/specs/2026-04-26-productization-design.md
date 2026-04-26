@@ -60,7 +60,7 @@ Transform Radar from a single-tenant personal tool into a production-grade multi
 ### Monorepo
 | | |
 |---|---|
-| Workspace manager | pnpm workspaces |
+| Workspace manager | npm workspaces |
 | Structure | `apps/api` + `apps/web` + `packages/shared` |
 | Shared package | Prisma-generated types, GraphQL codegen types |
 
