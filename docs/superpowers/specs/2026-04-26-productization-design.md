@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-26
 **Author:** Darshan Parmar (Simple Inc)
-**Status:** Approved — rev 3 (post spec-review fixes)
+**Status:** Approved — rev 4 (post spec-review fixes)
 
 ---
 
@@ -94,6 +94,11 @@ RAZORPAY_WEBHOOK_SECRET=
 ### New Prisma models
 
 ```prisma
+enum Role {
+  owner
+  admin
+}
+
 enum OrgStatus {
   trial
   active
@@ -136,7 +141,7 @@ model OrgMembership {
   id     Int    @id @default(autoincrement())
   orgId  Int    @map("org_id")
   userId Int    @map("user_id")
-  role   String // owner | admin
+  role   Role   // owner | admin
 
   org  Org  @relation(fields: [orgId], references: [id])
   user User @relation(fields: [userId], references: [id])
@@ -203,7 +208,7 @@ model RazorpayWebhookEvent {
 
   orgSub OrgSubscription @relation(fields: [orgSubId], references: [id])
 
-  @@index([razorpayEventId])
+  // @@index([razorpayEventId]) — omitted: @unique above already creates the index
 }
 ```
 
@@ -617,12 +622,16 @@ Steps 2 and 3 from the original design are merged into a single Prisma `--create
 BEGIN;
 
 -- Seed Org 1
+-- IMPORTANT: set OWNER_EMAIL to the Google/OTP login email (NOT the outreach inbox).
+-- Using the outreach address (darshan@trysimpleinc.com) as the login email will
+-- create a duplicate User row on first OAuth login, leaving the superadmin flag orphaned.
+-- Use the personal Gmail or a simpleinc.in address that will be used to log in.
 INSERT INTO orgs (id, name, slug, status, created_at)
   VALUES (1, 'Simple Inc', 'simpleinc', 'active', NOW())
   ON CONFLICT DO NOTHING;
 
 INSERT INTO users (id, email, is_superadmin, created_at)
-  VALUES (1, 'darshan@trysimpleinc.com', true, NOW())
+  VALUES (1, :'OWNER_EMAIL', true, NOW())   -- pass via: psql -v OWNER_EMAIL=your@email.com
   ON CONFLICT DO NOTHING;
 
 INSERT INTO org_memberships (org_id, user_id, role)
