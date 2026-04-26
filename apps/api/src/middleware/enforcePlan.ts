@@ -30,7 +30,9 @@ export async function checkOrgStatus(req: Request, res: Response, next: NextFunc
   if (sub.status === 'locked') {
     return res.status(402).json({ error: 'Subscription required', code: 'PAYMENT_REQUIRED' })
   }
-  if (sub.status === 'suspended' || (await prisma.org.findUnique({ where: { id: user.orgId } }))?.status === 'suspended') {
+  // Note: SubscriptionStatus enum has no 'suspended' value — only OrgStatus does. Check the org.
+  const org = await prisma.org.findUnique({ where: { id: user.orgId } })
+  if (org?.status === 'suspended') {
     return res.status(403).json({ error: 'Account suspended', code: 'SUSPENDED' })
   }
 
