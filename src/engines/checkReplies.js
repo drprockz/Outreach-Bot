@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, addToRejectList, getConfigMap, getConfigInt } from '../core/db/index.js';
+import { prisma, runWithOrg, logCron, finishCron, logError, bumpMetric, bumpCostMetric, addToRejectList, getConfigMap, getConfigInt } from '../core/db/index.js';
 import { fetchUnseen } from '../core/email/imap.js';
 import { callClaude } from '../core/ai/claude.js';
 import { callGemini } from '../core/ai/gemini.js';
@@ -99,7 +99,8 @@ async function handleClassification(category, lead, replyId) {
   }
 }
 
-export default async function checkReplies() {
+export default async function checkReplies(orgId) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('checkReplies');
   let repliesProcessed = 0;
   let totalCost = 0;
@@ -208,9 +209,10 @@ export default async function checkReplies() {
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`checkReplies failed: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  checkReplies().catch(console.error);
+  checkReplies(null).catch(console.error);
 }

@@ -1,7 +1,18 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { PrismaClient } from '@prisma/client';
+import { createScopedPrisma } from 'shared';
 import 'dotenv/config';
 
 let _prisma;
+// orgId -> scoped client. Avoids reallocating $extends proxies on every
+// engine helper call; one entry per active tenant for the lifetime of
+// the process is fine.
+const _scopedCache = new Map();
+// Async-local context that engines push when invoked per-org. Helpers
+// read it via getDb() so the existing `prisma` proxy and direct calls
+// transparently route to the requesting org's scoped client without
+// having to thread the client through every function signature.
+const orgContext = new AsyncLocalStorage();
 
 export function getPrisma() {
   if (!_prisma) {
@@ -10,14 +21,54 @@ export function getPrisma() {
   return _prisma;
 }
 
-// Convenience: `import { prisma } from '...'` — same instance as getPrisma()
+function getScopedFor(orgId) {
+  let s = _scopedCache.get(orgId);
+  if (!s) {
+    s = createScopedPrisma(orgId);
+    _scopedCache.set(orgId, s);
+  }
+  return s;
+}
+
+/**
+ * Run `fn` with `orgId` set as the active tenant for any nested call to
+ * `getDb()` / the `prisma` proxy / db helpers (bumpMetric, logError, …).
+ * If `orgId` is null/undefined, falls back to the raw global client —
+ * preserves single-tenant behaviour for tests, scripts, and the legacy
+ * `src/scheduler/cron.js` rollback path.
+ */
+export function runWithOrg(orgId, fn) {
+  if (orgId == null) return fn();
+  return orgContext.run({ orgId, db: getScopedFor(orgId) }, fn);
+}
+
+/** Active orgId, or null when no runWithOrg context is open. */
+export function currentOrgId() {
+  return orgContext.getStore()?.orgId ?? null;
+}
+
+/**
+ * Returns the scoped Prisma client when running inside runWithOrg(),
+ * otherwise the raw client. Helpers + the `prisma` proxy use this so
+ * single-tenant callers (legacy tests, scripts, server boot seeds) keep
+ * working unchanged.
+ */
+export function getDb() {
+  return orgContext.getStore()?.db ?? getPrisma();
+}
+
+// `import { prisma } from '...'` — context-aware. Inside runWithOrg,
+// every property access resolves to the scoped client; outside, it's
+// the raw global client. This is what makes the engine refactor ~free:
+// the engine body doesn't change, only its entry signature does.
 export const prisma = new Proxy({}, {
-  get(_t, prop) { return getPrisma()[prop]; },
+  get(_t, prop) { return getDb()[prop]; },
 });
 
 /** For tests only */
 export async function resetDb() {
   if (_prisma) { await _prisma.$disconnect(); _prisma = null; }
+  _scopedCache.clear();
 }
 
 export function today() {
@@ -25,7 +76,7 @@ export function today() {
 }
 
 async function ensureDailyMetricsRow(date) {
-  await getPrisma().dailyMetrics.upsert({
+  await getDb().dailyMetrics.upsert({
     where: { date },
     create: { date },
     update: {},
@@ -35,7 +86,7 @@ async function ensureDailyMetricsRow(date) {
 export async function bumpMetric(field, amount = 1) {
   const d = today();
   await ensureDailyMetricsRow(d);
-  await getPrisma().dailyMetrics.update({
+  await getDb().dailyMetrics.update({
     where: { date: d },
     data: { [field]: { increment: amount } },
   });
@@ -45,7 +96,7 @@ export async function bumpMetric(field, amount = 1) {
 export async function bumpCostMetric(field, amountUsd) {
   const d = today();
   await ensureDailyMetricsRow(d);
-  await getPrisma().dailyMetrics.update({
+  await getDb().dailyMetrics.update({
     where: { date: d },
     data: {
       [field]: { increment: amountUsd },
@@ -55,7 +106,7 @@ export async function bumpCostMetric(field, amountUsd) {
 }
 
 export async function logError(source, err, { jobName, errorType, errorCode, leadId, emailId } = {}) {
-  await getPrisma().errorLog.create({
+  await getDb().errorLog.create({
     data: {
       source,
       jobName: jobName ?? null,
@@ -71,7 +122,7 @@ export async function logError(source, err, { jobName, errorType, errorCode, lea
 
 export async function logCron(jobName) {
   const now = new Date();
-  const row = await getPrisma().cronLog.create({
+  const row = await getDb().cronLog.create({
     data: { jobName, scheduledAt: now, startedAt: now, status: 'running' },
     select: { id: true },
   });
@@ -79,9 +130,9 @@ export async function logCron(jobName) {
 }
 
 export async function finishCron(id, { status = 'success', recordsProcessed = 0, recordsSkipped = 0, costUsd = 0, error = null } = {}) {
-  const row = await getPrisma().cronLog.findUnique({ where: { id }, select: { startedAt: true } });
+  const row = await getDb().cronLog.findUnique({ where: { id }, select: { startedAt: true } });
   const durationMs = row?.startedAt ? Date.now() - row.startedAt.getTime() : null;
-  await getPrisma().cronLog.update({
+  await getDb().cronLog.update({
     where: { id },
     data: {
       completedAt: new Date(),
@@ -97,7 +148,7 @@ export async function finishCron(id, { status = 'success', recordsProcessed = 0,
 
 export async function isRejected(email) {
   const domain = email.split('@')[1];
-  const row = await getPrisma().rejectList.findFirst({
+  const row = await getDb().rejectList.findFirst({
     where: { OR: [{ email }, { domain }] },
     select: { id: true },
   });
@@ -106,7 +157,7 @@ export async function isRejected(email) {
 
 export async function addToRejectList(email, reason) {
   const domain = email.split('@')[1];
-  await getPrisma().rejectList.upsert({
+  await getDb().rejectList.upsert({
     where: { email },
     create: { email, domain, reason },
     update: {},
@@ -114,7 +165,7 @@ export async function addToRejectList(email, reason) {
 }
 
 export async function todaySentCount() {
-  const row = await getPrisma().dailyMetrics.findUnique({
+  const row = await getDb().dailyMetrics.findUnique({
     where: { date: today() },
     select: { emailsSent: true },
   });
@@ -122,7 +173,7 @@ export async function todaySentCount() {
 }
 
 export async function todayBounceRate() {
-  const row = await getPrisma().dailyMetrics.findUnique({
+  const row = await getDb().dailyMetrics.findUnique({
     where: { date: today() },
     select: { emailsSent: true, emailsHardBounced: true },
   });
@@ -132,7 +183,7 @@ export async function todayBounceRate() {
 
 export async function getConfigMap() {
   try {
-    const rows = await getPrisma().config.findMany();
+    const rows = await getDb().config.findMany();
     return Object.fromEntries(rows.map(r => [r.key, r.value]));
   } catch {
     return {};
@@ -202,7 +253,7 @@ export async function seedConfigDefaults() {
     })],
     ['check_replies_interval_minutes', '120'],
   ];
-  await getPrisma().config.createMany({
+  await getDb().config.createMany({
     data: defaults.map(([key, value]) => ({ key, value })),
     skipDuplicates: true,
   });

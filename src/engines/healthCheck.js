@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { writeFileSync, readFileSync } from 'fs';
-import { prisma, logCron, finishCron, logError, today } from '../core/db/index.js';
+import { prisma, runWithOrg, logCron, finishCron, logError, today } from '../core/db/index.js';
 import { checkDomain } from '../core/integrations/blacklistCheck.js';
 import { sendAlert } from '../core/integrations/telegram.js';
 
@@ -25,7 +25,8 @@ async function forceDailySendLimitZero() {
   });
 }
 
-export default async function healthCheck() {
+export default async function healthCheck(orgId) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('healthCheck');
   try {
     const d = today();
@@ -96,9 +97,10 @@ export default async function healthCheck() {
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`healthCheck error: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  healthCheck().catch(console.error);
+  healthCheck(null).catch(console.error);
 }

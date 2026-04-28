@@ -28,9 +28,19 @@ function injectCreateData(orgId: number): Op {
   }
 }
 
+// Upsert: inject orgId into `create` only. Prisma requires `where` to match
+// exactly one unique constraint as declared in the schema, and most legacy
+// tenant tables today have unique keys that DON'T include orgId
+// (config.key, lead_signals' composite, dailyMetrics.date, …). Adding orgId
+// to `where` would make Prisma reject the call. Once the schema migrates to
+// compound `@@unique([orgId, …])` keys, this can be tightened.
+//
+// Caller responsibility: when an upsert's `where` could match a row belonging
+// to another org (e.g. config.upsert({ where: { key } }) under multi-tenancy),
+// hand-implement find-then-update-or-create using the scoped client. See
+// src/api/routes/{offer,icpProfile}.js for the pattern.
 function injectUpsert(orgId: number): Op {
   return async ({ args, query }) => {
-    args.where = { ...((args.where as Args) ?? {}), orgId }
     args.create = { orgId, ...((args.create as Args) ?? {}) }
     return query(args)
   }

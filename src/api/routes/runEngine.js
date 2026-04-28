@@ -90,8 +90,10 @@ router.post('/:engineName', async (req, res) => {
   // Capture the cron_log id created by the engine, so we can return it.
   // The engine calls logCron() internally; we poll for its row just after kickoff.
   // Simplest: kick off async, then in a short wait, query the latest running row.
+  // Engines now accept orgId as first arg (Tier 1.G1.2) so their internal
+  // Prisma queries route to the requesting org's scoped client.
   const startedAt = new Date();
-  engineFn(override).catch(err => {
+  engineFn(req.user.orgId, override).catch(err => {
     // Engine has its own try/catch + finishCron — this catches anything it throws
     // before/after. Log to console; cron_log already has the failed row.
     console.error(`[run-engine] ${engineName} rejected:`, err?.message || err);

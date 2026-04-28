@@ -36,11 +36,15 @@ if (LEGACY_CRON_ENABLED) {
   sweepStaleLocksOnBoot();
 }
 
-// Helper: wrap any async engine call, log errors to error_log + console
+// Helper: wrap any async engine call, log errors to error_log + console.
+// Engines now accept `orgId` as their first arg and wrap their body in
+// runWithOrg(orgId, …). This legacy rollback path is single-tenant by
+// design — pass null so the engine falls through to the raw global
+// client (org_id=1 default per schema) instead of a scoped client.
 async function runJob(jobName, loader) {
   try {
     const mod = await loader();
-    await mod.default();
+    await mod.default(null);
   } catch (err) {
     try {
       await logError('cron', err, { jobName });

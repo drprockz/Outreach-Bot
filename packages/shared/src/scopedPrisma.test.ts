@@ -104,19 +104,18 @@ describe('createScopedPrisma — writes', () => {
     )
   })
 
-  it('injects orgId into both where and create on upsert', async () => {
+  it('injects orgId into upsert.create only (where is left untouched — Prisma requires a unique key)', async () => {
     const scoped = createScopedPrisma(13) as unknown as Scoped
     await scoped.lead.upsert({
       where: { id: 1 },
       create: { businessName: 'Acme' },
       update: { businessName: 'Acme 2' },
     })
-    expect(ops.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ orgId: 13, id: 1 }),
-        create: expect.objectContaining({ orgId: 13, businessName: 'Acme' }),
-      })
-    )
+    expect(ops.upsert).toHaveBeenCalledWith({
+      where: { id: 1 },
+      create: expect.objectContaining({ orgId: 13, businessName: 'Acme' }),
+      update: { businessName: 'Acme 2' },
+    })
   })
 
   it('injects orgId into update where', async () => {
