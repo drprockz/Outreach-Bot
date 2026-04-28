@@ -4,11 +4,24 @@ import { prisma } from 'shared'
 import { revokeOrgTokens } from '../lib/tokenRevocation.js'
 
 interface RazorpayWebhookPayload {
-  event: string
+  entity: string         // 'event' for webhooks
+  account_id: string
+  event: string          // e.g. 'subscription.activated'
+  contains: string[]
+  created_at: number     // epoch seconds — used as idempotency timestamp
   payload?: {
     subscription?: { entity?: { id?: string; notes?: Record<string, string> } }
     payment?: { entity?: { id?: string; subscription_id?: string } }
   }
+}
+
+// Reject events older than this — replays beyond the window are dropped.
+const WEBHOOK_REPLAY_WINDOW_SECONDS = 60 * 60 * 24 * 5  // 5 days
+
+function tooOld(createdAtSec: number | undefined): boolean {
+  if (!createdAtSec || !Number.isFinite(createdAtSec)) return true
+  const ageSec = Math.floor(Date.now() / 1000) - createdAtSec
+  return ageSec > WEBHOOK_REPLAY_WINDOW_SECONDS
 }
 
 interface RawBodyRequest extends Request {
@@ -42,18 +55,25 @@ razorpayWebhookRouter.post('/', async (req: Request, res: Response) => {
   }
 
   const body = req.body as RazorpayWebhookPayload
-  const eventId =
-    body.payload?.subscription?.entity?.id ??
-    body.payload?.payment?.entity?.id ??
-    `${body.event}-${Date.now()}`
 
-  // Find target subscription
+  // Reject obviously-too-old replays before doing any DB work
+  if (tooOld(body.created_at)) {
+    return res.status(400).json({ error: 'Event too old (replay window exceeded)' })
+  }
+
+  // Find target subscription FIRST — every event we care about is sub-scoped
   const rzpSubId =
     body.payload?.subscription?.entity?.id ??
     body.payload?.payment?.entity?.subscription_id
   if (!rzpSubId) {
     return res.json({ ok: true, ignored: 'no subscription id' })
   }
+
+  // Idempotency key: event-type + subscription-id + Razorpay's created_at.
+  // This makes every distinct event uniquely identifiable while retries of
+  // the SAME event (same created_at) collide on the @unique constraint
+  // and get deduped.
+  const eventId = `${body.event}|${rzpSubId}|${body.created_at}`
 
   const orgSub = await prisma.orgSubscription.findFirst({ where: { razorpaySubId: rzpSubId } })
   if (!orgSub) {

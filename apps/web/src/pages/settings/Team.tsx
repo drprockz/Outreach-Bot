@@ -1,45 +1,110 @@
 import { useState } from 'react'
+import { useQuery, useMutation, gql } from 'urql'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-interface Member { id: number; email: string; role: 'owner' | 'admin' }
+interface Member { userId: number; email: string; role: 'owner' | 'admin' }
+
+const MEMBERS_QUERY = gql`
+  query Members {
+    members { userId email role }
+    me { id email isSuperadmin }
+  }
+`
+
+const INVITE_MUTATION = gql`
+  mutation InviteMember($email: String!) {
+    inviteMember(email: $email) { userId email role }
+  }
+`
+
+const REMOVE_MUTATION = gql`
+  mutation RemoveMember($userId: Int!) {
+    removeMember(userId: $userId)
+  }
+`
 
 export default function Team() {
-  // TODO: wire to GraphQL `query { members { id email role } }` when resolver exists.
-  const [members] = useState<Member[]>([
-    { id: 1, email: 'darshanrajeshparmar@gmail.com', role: 'owner' },
-  ])
-  const [inviteEmail, setInviteEmail] = useState('')
-  const [error, setError] = useState('')
+  const [{ data, fetching, error }, refetch] = useQuery<{
+    members: Member[]
+    me: { id: number; email: string; isSuperadmin: boolean } | null
+  }>({ query: MEMBERS_QUERY })
 
-  const handleInvite = () => {
+  const [, invite] = useMutation(INVITE_MUTATION)
+  const [, remove] = useMutation(REMOVE_MUTATION)
+
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviting, setInviting] = useState(false)
+  const [opError, setOpError] = useState('')
+  const [opSuccess, setOpSuccess] = useState('')
+
+  const isOwner = data?.members?.some((m) => m.email === data.me?.email && m.role === 'owner') ?? false
+
+  const handleInvite = async () => {
+    setOpError('')
+    setOpSuccess('')
     if (!inviteEmail.includes('@')) {
-      setError('Valid email required')
+      setOpError('Valid email required')
       return
     }
-    // TODO: call inviteMember GraphQL mutation
-    setError('Invite functionality not yet implemented (GraphQL mutation pending)')
+    setInviting(true)
+    try {
+      const result = await invite({ email: inviteEmail })
+      if (result.error) {
+        setOpError(result.error.graphQLErrors[0]?.message ?? result.error.message)
+      } else {
+        setOpSuccess(`Invitation email sent to ${inviteEmail}`)
+        setInviteEmail('')
+        refetch({ requestPolicy: 'network-only' })
+      }
+    } finally {
+      setInviting(false)
+    }
   }
+
+  const handleRemove = async (userId: number, email: string) => {
+    if (!confirm(`Remove ${email} from your team? Their session will be ended.`)) return
+    setOpError('')
+    setOpSuccess('')
+    const result = await remove({ userId })
+    if (result.error) {
+      setOpError(result.error.graphQLErrors[0]?.message ?? result.error.message)
+    } else {
+      setOpSuccess(`Removed ${email}`)
+      refetch({ requestPolicy: 'network-only' })
+    }
+  }
+
+  if (fetching && !data) return <div style={{ padding: 32 }}>Loading team...</div>
+  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
+
+  const members = data?.members ?? []
 
   return (
     <div style={{ maxWidth: 800, margin: '40px auto', padding: 24 }}>
       <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Team</h1>
       <p style={{ color: '#64748b', marginBottom: 24 }}>Manage who has access to your workspace</p>
 
-      <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: 24 }}>
-        <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Invite a member</h2>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Input
-            type="email"
-            placeholder="colleague@company.com"
-            value={inviteEmail}
-            onChange={(e) => setInviteEmail(e.target.value)}
-            style={{ flex: 1 }}
-          />
-          <Button onClick={handleInvite}>Send invite</Button>
+      {isOwner && (
+        <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: 24 }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Invite a member</h2>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input
+              type="email"
+              placeholder="colleague@company.com"
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !inviting) void handleInvite() }}
+              style={{ flex: 1 }}
+            />
+            <Button onClick={() => void handleInvite()} disabled={inviting || !inviteEmail}>
+              {inviting ? 'Sending...' : 'Send invite'}
+            </Button>
+          </div>
+          {opError && <p style={{ color: '#dc2626', fontSize: 14, marginTop: 8 }}>{opError}</p>}
+          {opSuccess && <p style={{ color: '#166534', fontSize: 14, marginTop: 8 }}>{opSuccess}</p>}
         </div>
-        {error && <p style={{ color: '#dc2626', fontSize: 14, marginTop: 8 }}>{error}</p>}
-      </div>
+      )}
 
       <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Current members ({members.length})</h2>
@@ -53,12 +118,14 @@ export default function Team() {
           </thead>
           <tbody>
             {members.map((m) => (
-              <tr key={m.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+              <tr key={m.userId} style={{ borderBottom: '1px solid #f1f5f9' }}>
                 <td style={{ padding: '12px 0' }}>{m.email}</td>
                 <td style={{ padding: '12px 0', textTransform: 'capitalize' }}>{m.role}</td>
                 <td style={{ padding: '12px 0', textAlign: 'right' }}>
-                  {m.role !== 'owner' && (
-                    <Button variant="ghost" size="sm" disabled>Remove</Button>
+                  {isOwner && m.role !== 'owner' && (
+                    <Button variant="ghost" size="sm" onClick={() => void handleRemove(m.userId, m.email)}>
+                      Remove
+                    </Button>
                   )}
                 </td>
               </tr>

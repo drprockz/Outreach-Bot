@@ -1,38 +1,124 @@
-import type { ReactNode } from 'react'
+import { useState } from 'react'
 import { useParams } from 'react-router-dom'
+import { useQuery, useMutation, gql } from 'urql'
+import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+
+interface AdminOrg {
+  id: number; name: string; slug: string
+  status: 'trial' | 'active' | 'locked' | 'suspended'
+  planName: string | null
+  planPriceInr: number | null
+  subscriptionStatus: string | null
+  createdAt: string
+}
+
+const ADMIN_ORG_QUERY = gql`
+  query AdminOrg($id: Int!) {
+    adminOrg(id: $id) {
+      id name slug status planName planPriceInr subscriptionStatus createdAt
+    }
+  }
+`
+
+const SUSPEND = gql`mutation Suspend($orgId: Int!) { adminSuspendOrg(orgId: $orgId) }`
+const OVERRIDE = gql`mutation Override($orgId: Int!, $planId: Int!) { adminOverridePlan(orgId: $orgId, planId: $planId) }`
+const RESET_TRIAL = gql`mutation ResetTrial($orgId: Int!, $days: Int!) { adminResetTrial(orgId: $orgId, days: $days) }`
+const IMPERSONATE = gql`mutation Impersonate($orgId: Int!) { adminImpersonate(orgId: $orgId) { token } }`
+const DELETE_ORG = gql`mutation DeleteOrg($orgId: Int!, $confirmToken: String!) { adminDeleteOrg(orgId: $orgId, confirmToken: $confirmToken) }`
 
 export default function OrgDetail() {
   const { id } = useParams()
+  const orgId = parseInt(id ?? '0', 10)
+  const [{ data, fetching, error }, refetch] = useQuery<{ adminOrg: AdminOrg | null }>({
+    query: ADMIN_ORG_QUERY, variables: { id: orgId }, pause: !orgId,
+  })
+
+  const [, suspend] = useMutation(SUSPEND)
+  const [, override] = useMutation(OVERRIDE)
+  const [, resetTrial] = useMutation(RESET_TRIAL)
+  const [, impersonate] = useMutation(IMPERSONATE)
+  const [, deleteOrg] = useMutation(DELETE_ORG)
+
+  const [planIdInput, setPlanIdInput] = useState('')
+  const [trialDays, setTrialDays] = useState('14')
+  const [opError, setOpError] = useState('')
+  const [opSuccess, setOpSuccess] = useState('')
+
+  const wrap = async (label: string, action: () => Promise<{ error?: { message: string; graphQLErrors: { message: string }[] } }>) => {
+    setOpError(''); setOpSuccess('')
+    const result = await action()
+    if (result.error) {
+      setOpError(result.error.graphQLErrors[0]?.message ?? result.error.message)
+    } else {
+      setOpSuccess(`${label} succeeded`)
+      refetch({ requestPolicy: 'network-only' })
+    }
+  }
+
+  if (fetching && !data) return <div style={{ padding: 32 }}>Loading...</div>
+  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
+  if (!data?.adminOrg) return <div style={{ padding: 32, color: '#dc2626' }}>Org not found</div>
+
+  const org = data.adminOrg
 
   return (
     <div style={{ maxWidth: 1000, margin: '40px auto', padding: 24 }}>
       <a href="/superadmin/orgs" style={{ color: '#64748b', fontSize: 14, textDecoration: 'none' }}>← All organizations</a>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>Org #{id}</h1>
+      <h1 style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>{org.name}</h1>
+      <p style={{ color: '#64748b', marginBottom: 24 }}>
+        #{org.id} · {org.slug} · {org.planName ?? 'no plan'} · status: <strong>{org.status}</strong>
+      </p>
 
-      <div style={{ marginTop: 24, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <Card title="Members">
-          <p style={{ color: '#64748b' }}>TODO: list members from <code>adminOrg(id).memberships</code></p>
-        </Card>
-        <Card title="Billing history">
-          <p style={{ color: '#64748b' }}>TODO: list webhook events</p>
-        </Card>
+      {opError && <div style={{ background: '#fee2e2', color: '#991b1b', padding: 12, borderRadius: 6, fontSize: 14, marginBottom: 16 }}>{opError}</div>}
+      {opSuccess && <div style={{ background: '#dcfce7', color: '#166534', padding: 12, borderRadius: 6, fontSize: 14, marginBottom: 16 }}>{opSuccess}</div>}
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <Card title="Plan override">
-          <p style={{ color: '#64748b', marginBottom: 12 }}>Force a plan change without billing</p>
-          <Button variant="outline" disabled>Change plan</Button>
-        </Card>
-        <Card title="Actions">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <Button variant="outline" disabled>Reset trial</Button>
-            <Button variant="outline" disabled>Impersonate</Button>
-            <Button variant="destructive" disabled>Suspend org</Button>
+          <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>Force a plan change without billing.</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input placeholder="Plan ID (1-4)" value={planIdInput} onChange={(e) => setPlanIdInput(e.target.value.replace(/\D/g, ''))} />
+            <Button variant="outline" onClick={() => void wrap('Plan override', () => override({ orgId, planId: parseInt(planIdInput, 10) }))} disabled={!planIdInput}>Apply</Button>
           </div>
         </Card>
-      </div>
 
-      <p style={{ marginTop: 24, fontSize: 13, color: '#94a3b8', fontStyle: 'italic' }}>
-        TODO: wire to <code>adminOrg(id)</code> GraphQL query + admin mutations (resolvers pending)
-      </p>
+        <Card title="Reset trial">
+          <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>Set trial back to N days from now.</p>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Input type="number" value={trialDays} onChange={(e) => setTrialDays(e.target.value)} />
+            <Button variant="outline" onClick={() => void wrap('Trial reset', () => resetTrial({ orgId, days: parseInt(trialDays, 10) }))}>Reset</Button>
+          </div>
+        </Card>
+
+        <Card title="Impersonate">
+          <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>Issues a 1-hour scoped JWT and redirects to dashboard as this org.</p>
+          <Button variant="outline" onClick={async () => {
+            const result = await impersonate({ orgId })
+            if (result.error) { setOpError(result.error.message); return }
+            const token = (result.data as { adminImpersonate: { token: string } } | undefined)?.adminImpersonate.token
+            if (token) {
+              // Set the impersonation token as cookie via the URL hash, then redirect.
+              // For now we just store and redirect; backend needs an /api/auth/exchange endpoint
+              // to convert the token into a cookie. As a workaround, frontend uses Bearer.
+              localStorage.setItem('impersonation_token', token)
+              alert('Impersonation token issued (1h). Open dashboard with Bearer token; future enhancement: cookie exchange endpoint.')
+            }
+          }}>Impersonate</Button>
+        </Card>
+
+        <Card title="Suspend / Delete">
+          <p style={{ color: '#64748b', fontSize: 13, marginBottom: 12 }}>Hard suspend revokes all org sessions immediately.</p>
+          <Button variant="outline" onClick={() => { if (confirm('Suspend org?')) void wrap('Suspend', () => suspend({ orgId })) }}>Suspend</Button>
+          <Button variant="destructive" style={{ marginLeft: 8 }} onClick={async () => {
+            const token = prompt(`Type the org slug "${org.slug}" to confirm hard delete:`)
+            if (token === org.slug) {
+              await wrap('Delete', () => deleteOrg({ orgId, confirmToken: token }))
+              setTimeout(() => { window.location.href = '/superadmin/orgs' }, 1500)
+            }
+          }}>Delete</Button>
+        </Card>
+      </div>
     </div>
   )
 }
