@@ -28,8 +28,9 @@ export async function verifyOtp(email: string, code: string): Promise<{ token: s
 }
 
 export async function logout(): Promise<void> {
-  // Clear client-side state. Server-side revocation is handled by clearing cookie via a future endpoint.
   await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
+  // TODO: remove once legacy bcrypt password login is fully retired
+  localStorage.removeItem('radar_token')
   window.location.href = '/login'
 }
 

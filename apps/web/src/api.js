@@ -7,6 +7,7 @@ function getToken() {
 async function request(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${getToken()}`,
@@ -26,6 +27,7 @@ async function request(path, opts = {}) {
 async function requestWithStatus(path, opts = {}) {
   const res = await fetch(`${BASE}${path}`, {
     ...opts,
+    credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${getToken()}`,

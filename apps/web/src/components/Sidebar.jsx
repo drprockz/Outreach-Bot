@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { NavLink } from 'react-router-dom';
 import { api } from '../api';
+import { logout } from '../lib/auth';
 
 const SECTIONS = [
   {
@@ -44,7 +45,6 @@ const SECTIONS = [
 ];
 
 export default function Sidebar() {
-  const navigate = useNavigate();
   const [unresolvedErrors, setUnresolvedErrors] = useState(0);
 
   useEffect(() => {
@@ -54,8 +54,7 @@ export default function Sidebar() {
   }, []);
 
   function handleLogout() {
-    localStorage.removeItem('radar_token');
-    navigate('/login');
+    logout();
   }
 
   return (
