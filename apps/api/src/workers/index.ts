@@ -6,13 +6,14 @@ import { sendFollowupsWorker } from './sendFollowups.worker.js'
 import { checkRepliesWorker } from './checkReplies.worker.js'
 import { dailyReportWorker } from './dailyReport.worker.js'
 import { healthCheckWorker } from './healthCheck.worker.js'
+import { trialExpiryWorker } from './trialExpiry.worker.js'
 import { redis } from '../lib/redis.js'
 
 const logger = pino({ name: 'workers' })
 
 const allWorkers = [
   findLeadsWorker, sendEmailsWorker, sendFollowupsWorker,
-  checkRepliesWorker, dailyReportWorker, healthCheckWorker,
+  checkRepliesWorker, dailyReportWorker, healthCheckWorker, trialExpiryWorker,
 ]
 
 logger.info({ count: allWorkers.length }, 'workers booting')

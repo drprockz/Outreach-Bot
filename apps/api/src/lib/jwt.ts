@@ -13,10 +13,13 @@ export interface JwtPayload {
   isSuperadmin: boolean
   iat: number
   exp: number
+  // Impersonation-only (set when adminImpersonate issues a scoped token)
+  impersonating?: true
+  originalAdminId?: number
 }
 
-export function signToken(payload: Omit<JwtPayload, 'jti' | 'iat' | 'exp'>): string {
-  return jwt.sign({ ...payload, jti: uuidv4() }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN } as jwt.SignOptions)
+export function signToken(payload: Omit<JwtPayload, 'jti' | 'iat' | 'exp'>, expiresIn?: string): string {
+  return jwt.sign({ ...payload, jti: uuidv4() }, JWT_SECRET, { expiresIn: expiresIn ?? JWT_EXPIRES_IN } as jwt.SignOptions)
 }
 
 export function verifyToken(token: string): JwtPayload {

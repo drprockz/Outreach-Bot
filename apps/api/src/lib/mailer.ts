@@ -18,3 +18,13 @@ export async function sendOtpEmail(to: string, code: string): Promise<void> {
     text: `Your one-time login code is: ${code}\n\nThis code expires in 5 minutes. If you didn't request it, ignore this email.`,
   })
 }
+
+export async function sendInviteEmail(to: string, orgName: string, inviterEmail: string): Promise<void> {
+  const dashboardUrl = process.env.DASHBOARD_URL ?? 'https://radar.simpleinc.cloud'
+  await transport.sendMail({
+    from: process.env.INBOX_1_USER,
+    to,
+    subject: `You've been invited to ${orgName} on Radar`,
+    text: `${inviterEmail} has invited you to join ${orgName} on Radar.\n\nSign in at: ${dashboardUrl}\n\nIf you didn't expect this invitation, you can ignore this email.`,
+  })
+}
