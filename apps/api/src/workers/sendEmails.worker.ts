@@ -2,12 +2,15 @@ import { Worker, type Job } from 'bullmq'
 import pino from 'pino'
 import { redis } from '../lib/redis.js'
 import { prisma } from 'shared'
+import { assertSingleActiveOrg } from '../lib/multiTenantGuard.js'
 
 const logger = pino({ name: 'worker:sendEmails' })
 
 interface JobData { orgId: number }
 
 async function runForOrg(orgId: number, jobId: string | undefined): Promise<void> {
+  await assertSingleActiveOrg('sendEmails')
+
   const sub = await prisma.orgSubscription.findUnique({ where: { orgId }, include: { plan: true } })
   if (!sub || sub.status === 'locked' || sub.status === 'cancelled') {
     logger.warn({ orgId, status: sub?.status }, 'skipping — subscription not eligible')

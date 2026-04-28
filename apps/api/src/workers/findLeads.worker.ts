@@ -2,12 +2,17 @@ import { Worker, type Job } from 'bullmq'
 import pino from 'pino'
 import { redis } from '../lib/redis.js'
 import { prisma } from 'shared'
+import { assertSingleActiveOrg } from '../lib/multiTenantGuard.js'
 
 const logger = pino({ name: 'worker:findLeads' })
 
 interface JobData { orgId: number }
 
 async function runForOrg(orgId: number, jobId: string | undefined): Promise<void> {
+  // Refuses to run if >1 active org exists — engines are still single-tenant.
+  // See docs/runbooks/multi-tenant-pipeline-migration.md
+  await assertSingleActiveOrg('findLeads')
+
   const sub = await prisma.orgSubscription.findUnique({
     where: { orgId },
     include: { plan: true },
