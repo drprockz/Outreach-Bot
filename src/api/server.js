@@ -109,8 +109,8 @@ app.use('/api/engines', enginesRoutes);
 app.use('/api/engines', engineGuardrailsRoutes);
 app.use('/api/saved-views', savedViewsRoutes);
 
-// Serve the built web SPA (web/dist) if it exists
-const distPath = join(repoRoot, 'web/dist');
+// Serve the built web SPA (apps/web/dist) if it exists
+const distPath = join(repoRoot, 'apps/web/dist');
 if (existsSync(distPath)) {
   app.use(express.static(distPath));
   app.get('*', (req, res) => {
