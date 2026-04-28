@@ -83,7 +83,13 @@ if (process.env.NODE_ENV !== 'test') {
   })();
 }
 
-// Auth-free routes
+// DEPRECATED. /api/auth/* is owned by the v2 stack (apps/api on :3002 —
+// Nginx routes /api/auth/* there). This local mount remains ONLY because
+// every legacy test in tests/api/*.test.js fetches /api/auth/login to
+// obtain a token. Once those tests migrate to a sign-in helper that calls
+// signToken() directly (or uses the v2 OTP flow), this mount can be
+// removed and a direct LAN hit on :3001 will no longer accept the
+// bcrypt password.
 app.use('/api/auth', authRoutes);
 
 // All routes below require a valid JWT, then receive a per-request scoped
