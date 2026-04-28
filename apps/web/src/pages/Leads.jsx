@@ -145,10 +145,10 @@ export default function Leads() {
 }
 
 async function runStreamedRetry(leadIds, stage, onEvent) {
-  const token = localStorage.getItem('radar_token');
   const r = await fetch('/api/leads/bulk/retry', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ leadIds, stage }),
   });
   if (r.status === 503) throw new Error('Bulk retry disabled (set BULK_RETRY_ENABLED=true on server)');

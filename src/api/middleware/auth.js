@@ -32,13 +32,33 @@ export function signToken(payload = { role: 'admin' }) {
   return jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
+function readCookie(req, name) {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  for (const part of raw.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    if (part.slice(0, eq).trim() === name) {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    }
+  }
+  return null;
+}
+
 export function requireAuth(req, res, next) {
   const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
+  let token = null;
+  if (header && header.startsWith('Bearer ') && header.slice(7) !== 'null') {
+    token = header.slice(7);
+  } else {
+    token = readCookie(req, 'token');
+  }
+  if (!token) {
     return res.status(401).json({ error: 'Authentication required' });
   }
   try {
-    jwt.verify(header.slice(7), JWT_SECRET);
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = payload;
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
