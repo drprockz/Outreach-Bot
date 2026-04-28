@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { Prisma } from '@prisma/client';
-import { prisma, getConfigInt, getConfigMap } from '../../core/db/index.js';
+import { getConfigInt, getConfigMap } from '../../core/db/index.js';
 import { bucket } from '../../core/ai/icpScorer.js';
 import { parseLeadsQuery } from './leads/filterParser.js';
 import { bulkStatus } from './leads/bulkStatus.js';
@@ -23,12 +23,17 @@ async function getThresholds() {
 // through Prisma.raw (safe — caller passes a hardcoded column name), the
 // values list is parameterized as text[]. Returns null when the cleaned
 // values list is empty (no constraint to apply).
-async function jsonArrayFilterIds(prisma, column, values) {
+//
+// $queryRaw is NOT auto-scoped by createScopedPrisma's $extends proxy
+// (extensions only intercept model-level methods), so we pass orgId
+// explicitly and AND it into the SQL.
+async function jsonArrayFilterIds(db, orgId, column, values) {
   const clean = values.filter(v => typeof v === 'string' && v.length > 0);
   if (!clean.length) return null;
-  const rows = await prisma.$queryRaw`
+  const rows = await db.$queryRaw`
     SELECT id FROM leads
-    WHERE jsonb_typeof(${Prisma.raw(`"${column}"`)}) = 'array'
+    WHERE org_id = ${orgId}
+      AND jsonb_typeof(${Prisma.raw(`"${column}"`)}) = 'array'
       AND ${Prisma.raw(`"${column}"`)} ?| ${clean}::text[]
   `;
   return rows.map(r => r.id);
@@ -199,7 +204,7 @@ router.get('/', async (req, res) => {
       if (signalFilter.from) sw.signalDate.gte = signalFilter.from;
       if (signalFilter.to)   sw.signalDate.lte = signalFilter.to;
     }
-    const grouped = await prisma.leadSignal.groupBy({
+    const grouped = await req.db.leadSignal.groupBy({
       by: ['leadId'], where: sw, _count: { _all: true },
     });
     const minCount = signalFilter.minCount || 1;
@@ -211,26 +216,26 @@ router.get('/', async (req, res) => {
   // Guarded by jsonb_typeof = 'array' so non-array JSON values don't error.
   const techStack = Array.isArray(req.query.tech_stack) ? req.query.tech_stack : req.query.tech_stack ? [req.query.tech_stack] : [];
   if (techStack.length) {
-    const ids = await jsonArrayFilterIds(prisma, 'tech_stack', techStack);
+    const ids = await jsonArrayFilterIds(req.db, req.user.orgId, 'tech_stack', techStack);
     if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
   }
 
   const bizSigs = Array.isArray(req.query.business_signals) ? req.query.business_signals : req.query.business_signals ? [req.query.business_signals] : [];
   if (bizSigs.length) {
-    const ids = await jsonArrayFilterIds(prisma, 'business_signals', bizSigs);
+    const ids = await jsonArrayFilterIds(req.db, req.user.orgId, 'business_signals', bizSigs);
     if (ids !== null) where.AND = (where.AND || []).concat([{ id: { in: ids.length ? ids : [-1] } }]);
   }
 
   const [total, leads] = await Promise.all([
-    prisma.lead.count({ where }),
-    prisma.lead.findMany({ where, orderBy, take: limit, skip: offset }),
+    req.db.lead.count({ where }),
+    req.db.lead.findMany({ where, orderBy, take: limit, skip: offset }),
   ]);
 
   // Pre-join lead_signals counts so the dashboard can show a per-row badge
   // without N+1 fetches. Empty when feature is unused.
   const leadIds = leads.map(l => l.id);
   const signalCounts = leadIds.length > 0
-    ? await prisma.leadSignal.groupBy({ by: ['leadId'], where: { leadId: { in: leadIds } }, _count: { _all: true } })
+    ? await req.db.leadSignal.groupBy({ by: ['leadId'], where: { leadId: { in: leadIds } }, _count: { _all: true } })
     : [];
   const countByLead = new Map(signalCounts.map(g => [g.leadId, g._count._all]));
 
@@ -244,11 +249,11 @@ router.get('/kpis', async (req, res) => {
 
   async function summarize(scopedWhere) {
     const [total, readyToSend, icpA, icpB, icpC] = await Promise.all([
-      prisma.lead.count({ where: scopedWhere }),
-      prisma.lead.count({ where: { ...scopedWhere, status: 'ready' } }),
-      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshA } } }),
-      prisma.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshB, lt: t.threshA } } }),
-      prisma.lead.count({ where: { ...scopedWhere, icpScore: { lt: t.threshB } } }),
+      req.db.lead.count({ where: scopedWhere }),
+      req.db.lead.count({ where: { ...scopedWhere, status: 'ready' } }),
+      req.db.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshA } } }),
+      req.db.lead.count({ where: { ...scopedWhere, icpScore: { gte: t.threshB, lt: t.threshA } } }),
+      req.db.lead.count({ where: { ...scopedWhere, icpScore: { lt: t.threshB } } }),
     ]);
     return { total, readyToSend, icpA, icpB, icpC };
   }
@@ -260,8 +265,8 @@ router.get('/kpis', async (req, res) => {
   const [globalCounts, inFilterCounts, signals7dRows, repliesAwaiting] = await Promise.all([
     summarize(globalWhere),
     summarize(where),
-    prisma.leadSignal.findMany({ where: { signalDate: { gte: sevenDaysAgo } }, distinct: ['leadId'], select: { leadId: true } }),
-    prisma.reply.count({ where: { actionedAt: null } }),
+    req.db.leadSignal.findMany({ where: { signalDate: { gte: sevenDaysAgo } }, distinct: ['leadId'], select: { leadId: true } }),
+    req.db.reply.count({ where: { actionedAt: null } }),
   ]);
 
   res.json({
@@ -270,17 +275,21 @@ router.get('/kpis', async (req, res) => {
   });
 });
 
-let _facetsCache = { at: 0, data: null };
-export function _resetFacetsCacheForTests() { _facetsCache = { at: 0, data: null }; }
-router.get('/facets', async (_req, res) => {
-  if (_facetsCache.data && Date.now() - _facetsCache.at < 60_000) return res.json(_facetsCache.data);
+// Per-org cache so Org A's categories/cities/countries never leak into Org B's
+// /facets response within the 60s TTL window.
+const _facetsCache = new Map();
+export function _resetFacetsCacheForTests() { _facetsCache.clear(); }
+router.get('/facets', async (req, res) => {
+  const cached = _facetsCache.get(req.user.orgId);
+  if (cached && Date.now() - cached.at < 60_000) return res.json(cached.data);
   const [categories, cities, countries] = await Promise.all([
-    prisma.lead.findMany({ where: { category: { not: null } }, distinct: ['category'], select: { category: true } }).then(r => r.map(x => x.category)),
-    prisma.lead.findMany({ where: { city:     { not: null } }, distinct: ['city'],     select: { city: true } }).then(r => r.map(x => x.city)),
-    prisma.lead.findMany({ where: { country:  { not: null } }, distinct: ['country'],  select: { country: true } }).then(r => r.map(x => x.country)),
+    req.db.lead.findMany({ where: { category: { not: null } }, distinct: ['category'], select: { category: true } }).then(r => r.map(x => x.category)),
+    req.db.lead.findMany({ where: { city:     { not: null } }, distinct: ['city'],     select: { city: true } }).then(r => r.map(x => x.city)),
+    req.db.lead.findMany({ where: { country:  { not: null } }, distinct: ['country'],  select: { country: true } }).then(r => r.map(x => x.country)),
   ]);
-  _facetsCache = { at: Date.now(), data: { categories, cities, countries } };
-  res.json(_facetsCache.data);
+  const entry = { at: Date.now(), data: { categories, cities, countries } };
+  _facetsCache.set(req.user.orgId, entry);
+  res.json(entry.data);
 });
 
 router.post('/bulk/status', bulkStatus);
@@ -295,14 +304,14 @@ router.get('/export.csv', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
 
-  const lead = await prisma.lead.findUnique({ where: { id } });
+  const lead = await req.db.lead.findUnique({ where: { id } });
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
   const [emails, replies, sequence, signals, thresholds] = await Promise.all([
-    prisma.email.findMany({ where: { leadId: id }, orderBy: { createdAt: 'desc' } }),
-    prisma.reply.findMany({ where: { leadId: id }, orderBy: { receivedAt: 'desc' } }),
-    prisma.sequenceState.findUnique({ where: { leadId: id } }),
-    prisma.leadSignal.findMany({ where: { leadId: id }, orderBy: { confidence: 'desc' }, take: 10 }),
+    req.db.email.findMany({ where: { leadId: id }, orderBy: { createdAt: 'desc' } }),
+    req.db.reply.findMany({ where: { leadId: id }, orderBy: { receivedAt: 'desc' } }),
+    req.db.sequenceState.findUnique({ where: { leadId: id } }),
+    req.db.leadSignal.findMany({ where: { leadId: id }, orderBy: { confidence: 'desc' }, take: 10 }),
     getThresholds(),
   ]);
 
@@ -319,7 +328,7 @@ router.get('/:id/signals', async (req, res) => {
   const id = parseInt(req.params.id);
   if (Number.isNaN(id)) return res.status(400).json({ error: 'invalid id' });
 
-  const signals = await prisma.leadSignal.findMany({
+  const signals = await req.db.leadSignal.findMany({
     where: { leadId: id },
     orderBy: { confidence: 'desc' },
     take: 10,
@@ -343,14 +352,14 @@ router.patch('/:id', async (req, res) => {
     return res.status(400).json({ error: 'at least one whitelisted field is required' });
   }
 
-  const lead = await prisma.lead.findUnique({ where: { id }, select: { id: true } });
+  const lead = await req.db.lead.findUnique({ where: { id }, select: { id: true } });
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
   const data = {};
   if ('manualHookNote' in body) data.manualHookNote = body.manualHookNote === '' ? null : body.manualHookNote;
   if ('status' in body) data.status = body.status;
 
-  const updated = await prisma.lead.update({ where: { id }, data });
+  const updated = await req.db.lead.update({ where: { id }, data });
   const thresholds = await getThresholds();
   res.json({ ok: true, lead: serializeLead(updated, thresholds) });
 });
@@ -361,10 +370,10 @@ router.patch('/:id/status', async (req, res) => {
 
   if (!status) return res.status(400).json({ error: 'status is required' });
 
-  const lead = await prisma.lead.findUnique({ where: { id }, select: { id: true } });
+  const lead = await req.db.lead.findUnique({ where: { id }, select: { id: true } });
   if (!lead) return res.status(404).json({ error: 'Lead not found' });
 
-  await prisma.lead.update({ where: { id }, data: { status } });
+  await req.db.lead.update({ where: { id }, data: { status } });
   res.json({ ok: true });
 });
 

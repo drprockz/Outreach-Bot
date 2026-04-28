@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today } from '../../core/db/index.js';
+import { today } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -21,9 +21,9 @@ const ENGINES = {
 // safe headroom. Override via env STALE_LOCK_MINUTES.
 const STALE_LOCK_MINUTES = Math.max(1, parseInt(process.env.STALE_LOCK_MINUTES || '30', 10));
 
-async function sweepStaleLocks(jobName) {
+async function sweepStaleLocks(db, jobName) {
   const cutoff = new Date(Date.now() - STALE_LOCK_MINUTES * 60 * 1000);
-  const { count } = await prisma.cronLog.updateMany({
+  const { count } = await db.cronLog.updateMany({
     where: { jobName, status: 'running', startedAt: { lt: cutoff } },
     data: {
       status: 'failed',
@@ -54,10 +54,10 @@ router.post('/:engineName', async (req, res) => {
 
   // Sweep crashed/orphaned 'running' rows older than threshold so a prior
   // PM2 kill / OOM / hard-exit doesn't permanently block future triggers.
-  const recovered = await sweepStaleLocks(engineName);
+  const recovered = await sweepStaleLocks(req.db, engineName);
 
   // Refuse to start if something is genuinely still running for this engine
-  const inFlight = await prisma.cronLog.findFirst({
+  const inFlight = await req.db.cronLog.findFirst({
     where: { jobName: engineName, status: 'running' },
     select: { id: true, startedAt: true },
   });
@@ -99,7 +99,7 @@ router.post('/:engineName', async (req, res) => {
 
   // Wait briefly for the engine's logCron() to write its row, then find it
   await new Promise(r => setTimeout(r, 150));
-  const row = await prisma.cronLog.findFirst({
+  const row = await req.db.cronLog.findFirst({
     where: { jobName: engineName, startedAt: { gte: startedAt } },
     orderBy: { id: 'desc' },
     select: { id: true, startedAt: true, status: true },
@@ -131,7 +131,7 @@ router.post('/:engineName/unlock', async (req, res) => {
   if (!ENGINES[engineName]) {
     return res.status(404).json({ error: `Unknown engine: ${engineName}` });
   }
-  const { count } = await prisma.cronLog.updateMany({
+  const { count } = await req.db.cronLog.updateMany({
     where: { jobName: engineName, status: 'running' },
     data: {
       status: 'failed',
@@ -152,7 +152,7 @@ router.get('/status/:cronLogId', async (req, res) => {
     return res.status(400).json({ error: 'cronLogId must be a number' });
   }
 
-  const cronLog = await prisma.cronLog.findUnique({
+  const cronLog = await req.db.cronLog.findUnique({
     where: { id: cronLogId },
     select: {
       id: true, jobName: true, status: true, startedAt: true, completedAt: true,
@@ -162,7 +162,7 @@ router.get('/status/:cronLogId', async (req, res) => {
   });
   if (!cronLog) return res.status(404).json({ error: 'Not found' });
 
-  const metrics = await prisma.dailyMetrics.findUnique({
+  const metrics = await req.db.dailyMetrics.findUnique({
     where: { date: today() },
     select: {
       date: true,
@@ -219,7 +219,7 @@ router.get('/latest/:engineName', async (req, res) => {
   if (!ENGINES[engineName]) {
     return res.status(404).json({ error: `Unknown engine: ${engineName}` });
   }
-  const row = await prisma.cronLog.findFirst({
+  const row = await req.db.cronLog.findFirst({
     where: { jobName: engineName },
     orderBy: { id: 'desc' },
     select: {
@@ -262,7 +262,7 @@ router.get('/stats/:engineName', async (req, res) => {
 
   const sample = Math.min(50, Math.max(1, parseInt(req.query.sample, 10) || 10));
 
-  const runs = await prisma.cronLog.findMany({
+  const runs = await req.db.cronLog.findMany({
     where: {
       jobName: engineName,
       status: 'success',
@@ -311,7 +311,7 @@ router.get('/stats/:engineName', async (req, res) => {
  * Returns just today's running cost totals.
  */
 router.get('/today-costs', async (req, res) => {
-  const metrics = await prisma.dailyMetrics.findUnique({
+  const metrics = await req.db.dailyMetrics.findUnique({
     where: { date: today() },
     select: {
       date: true,

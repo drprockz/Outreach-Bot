@@ -4,6 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import 'dotenv/config';
 
+import { createScopedPrisma } from 'shared';
 import { seedConfigDefaults, seedNichesAndDefaults } from '../core/db/index.js';
 import { requireAuth } from './middleware/auth.js';
 
@@ -85,8 +86,14 @@ if (process.env.NODE_ENV !== 'test') {
 // Auth-free routes
 app.use('/api/auth', authRoutes);
 
-// All routes below require a valid JWT
-app.use('/api', requireAuth);
+// All routes below require a valid JWT, then receive a per-request scoped
+// Prisma client at req.db that auto-injects org_id on every tenant-table
+// query. This is what enforces multi-tenant isolation in the legacy stack;
+// routes must read/write through req.db instead of importing prisma directly.
+app.use('/api', requireAuth, (req, _res, next) => {
+  req.db = createScopedPrisma(req.user.orgId);
+  next();
+});
 
 app.use('/api/config', configRoutes);
 app.use('/api/niches', nichesRoutes);

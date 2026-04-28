@@ -16,10 +16,13 @@ function stripJson(text) {
   return text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
 }
 
-// Async + takes a Prisma client. JSON fields come back already parsed.
+// Async + takes a Prisma client (raw or scoped). JSON fields come back already
+// parsed. We use findFirst (not findUnique) so a scoped client picks up the
+// requesting org's row by its auto-injected orgId filter, and a raw client
+// still gets the single org-1 row that exists today (single-tenant fallback).
 export async function loadScoringContext(prisma) {
-  const offer = await prisma.offer.findUnique({ where: { id: 1 } });
-  const icp   = await prisma.icpProfile.findUnique({ where: { id: 1 } });
+  const offer = await prisma.offer.findFirst({});
+  const icp   = await prisma.icpProfile.findFirst({});
   if (!offer || !icp) {
     throw new Error('ICP scoring requires offer + icp_profile rows to exist');
   }

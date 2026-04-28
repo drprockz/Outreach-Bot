@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today, getConfigMap, getConfigInt } from '../../core/db/index.js';
+import { today, getConfigMap, getConfigInt } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -59,9 +59,9 @@ function metricsToSnake(m) {
   };
 }
 
-async function sumWindow(nDays) {
+async function sumWindow(db, nDays) {
   const windowStart = datesWithin(nDays)[0];
-  const rows = await prisma.dailyMetrics.findMany({
+  const rows = await db.dailyMetrics.findMany({
     where: { date: { gte: windowStart } },
     select: {
       leadsDiscovered: true,
@@ -94,16 +94,16 @@ async function sumWindow(nDays) {
 router.get('/', async (req, res) => {
   const d = today();
 
-  const todayRow = await prisma.dailyMetrics.findUnique({ where: { date: d } });
+  const todayRow = await req.db.dailyMetrics.findUnique({ where: { date: d } });
   const todayMetrics = todayRow ? metricsToSnake(todayRow) : {};
 
-  const weekMetrics = await sumWindow(7);
-  const monthMetrics = await sumWindow(30);
+  const weekMetrics = await sumWindow(req.db, 7);
+  const monthMetrics = await sumWindow(req.db, 30);
 
   const cfg = await getConfigMap();
   const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
 
-  const leads = await prisma.lead.findMany({
+  const leads = await req.db.lead.findMany({
     select: {
       status: true,
       websiteQualityScore: true,
@@ -133,7 +133,7 @@ router.get('/', async (req, res) => {
     if (l.status === 'replied') funnel.replied++;
   }
 
-  const activeSeq = await prisma.sequenceState.count({ where: { status: 'active' } });
+  const activeSeq = await req.db.sequenceState.count({ where: { status: 'active' } });
 
   const replyRate = weekMetrics.emails_sent > 0
     ? (weekMetrics.replies_total / weekMetrics.emails_sent * 100).toFixed(1)
@@ -144,7 +144,7 @@ router.get('/', async (req, res) => {
     : '0.0';
 
   const windowStart = datesWithin(90)[0];
-  const sendRows = await prisma.dailyMetrics.findMany({
+  const sendRows = await req.db.dailyMetrics.findMany({
     where: { date: { gte: windowStart } },
     orderBy: { date: 'asc' },
     select: { date: true, emailsSent: true },

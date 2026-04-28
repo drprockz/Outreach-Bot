@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -30,8 +29,8 @@ router.get('/', async (req, res) => {
   if (req.query.date_to) where.occurredAt = { ...(where.occurredAt || {}), lte: new Date(req.query.date_to) };
 
   const [rows, unresolvedCount] = await Promise.all([
-    prisma.errorLog.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 200 }),
-    prisma.errorLog.count({ where: { resolved: false } }),
+    req.db.errorLog.findMany({ where, orderBy: { occurredAt: 'desc' }, take: 200 }),
+    req.db.errorLog.count({ where: { resolved: false } }),
   ]);
 
   res.json({ errors: rows.map(serialize), unresolvedCount });
@@ -40,10 +39,10 @@ router.get('/', async (req, res) => {
 router.patch('/:id/resolve', async (req, res) => {
   const id = parseInt(req.params.id);
 
-  const err = await prisma.errorLog.findUnique({ where: { id }, select: { id: true } });
+  const err = await req.db.errorLog.findUnique({ where: { id }, select: { id: true } });
   if (!err) return res.status(404).json({ error: 'Error not found' });
 
-  await prisma.errorLog.update({
+  await req.db.errorLog.update({
     where: { id },
     data: { resolved: true, resolvedAt: new Date() },
   });

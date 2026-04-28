@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, getConfigMap, getConfigInt } from '../../core/db/index.js';
+import { getConfigMap, getConfigInt } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
   const threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
 
   // Aggregate over every lead — easiest to fetch lean projection and fold in JS
-  const leads = await prisma.lead.findMany({
+  const leads = await req.db.lead.findMany({
     select: {
       status: true,
       websiteQualityScore: true,
@@ -141,7 +141,7 @@ router.get('/', async (req, res) => {
 
   // Daily trend (30 days)
   const windowStart = datesWithin(30)[0];
-  const dm = await prisma.dailyMetrics.findMany({
+  const dm = await req.db.dailyMetrics.findMany({
     where: { date: { gte: windowStart } },
     orderBy: { date: 'asc' },
     select: {

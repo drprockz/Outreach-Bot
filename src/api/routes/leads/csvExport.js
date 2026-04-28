@@ -1,4 +1,3 @@
-import { prisma } from '../../../core/db/index.js';
 
 const VISIBLE_COLS = [
   'id','business_name','category','contact_name','contact_email','email_status',
@@ -23,7 +22,7 @@ export async function exportCsv(req, res, { where, orderBy, serializeLead, thres
   let cursor = 0;
   const PAGE = 200;
   while (true) {
-    const rows = await prisma.lead.findMany({ where, orderBy, skip: cursor, take: PAGE });
+    const rows = await req.db.lead.findMany({ where, orderBy, skip: cursor, take: PAGE });
     if (!rows.length) break;
     if (!header) {
       header = all ? Object.keys(serializeLead(rows[0], thresholds)) : VISIBLE_COLS;

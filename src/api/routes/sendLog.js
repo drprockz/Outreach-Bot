@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 import { serializeEmail } from './leads.js';
 
 const router = Router();
@@ -17,8 +16,8 @@ router.get('/', async (req, res) => {
   if (req.query.date_to) where.sentAt = { ...(where.sentAt || {}), lte: new Date(req.query.date_to) };
 
   const [total, rows] = await Promise.all([
-    prisma.email.count({ where }),
-    prisma.email.findMany({
+    req.db.email.count({ where }),
+    req.db.email.findMany({
       where,
       orderBy: { id: 'desc' },
       take: limit,
@@ -35,7 +34,7 @@ router.get('/', async (req, res) => {
   }));
 
   // Aggregates
-  const allRows = await prisma.email.findMany({
+  const allRows = await req.db.email.findMany({
     where,
     select: {
       status: true,

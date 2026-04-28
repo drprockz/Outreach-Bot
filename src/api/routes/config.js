@@ -1,10 +1,9 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const rows = await prisma.config.findMany();
+  const rows = await req.db.config.findMany();
   res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
 });
 
@@ -27,7 +26,7 @@ router.put('/', async (req, res) => {
   }
 
   for (const [key, value] of Object.entries(updates)) {
-    await prisma.config.upsert({
+    await req.db.config.upsert({
       where: { key },
       create: { key, value: String(value) },
       update: { value: String(value) },
