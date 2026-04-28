@@ -31,5 +31,5 @@ export const builder = new SchemaBuilder<{
 // they have at least one field declared (Pothos rejects empty root types).
 // Uncomment when adding the first mutation / subscription resolver.
 builder.queryType({})
-// builder.mutationType({})
-// builder.subscriptionType({})
+builder.mutationType({})
+// builder.subscriptionType({}) — uncomment when adding first subscription resolver

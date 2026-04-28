@@ -25,6 +25,7 @@ export const queues = {
   checkReplies: makeQueue('checkReplies'),
   dailyReport: makeQueue('dailyReport'),
   healthCheck: makeQueue('healthCheck'),
+  trialExpiry: makeQueue('trialExpiry'),
 } as const
 
 // Enqueue one job per active org. Trial / active orgs run; locked / suspended skip.
@@ -55,6 +56,10 @@ export function startScheduler(): void {
   cron.schedule('30 20 * * *', () => enqueueForAllOrgs('dailyReport'), { timezone: TZ })
   // healthCheck: 02:00 IST Sunday
   cron.schedule('0 2 * * 0', () => enqueueForAllOrgs('healthCheck'), { timezone: TZ })
+  // trialExpiry: midnight IST daily — locks expired trials and grace periods globally
+  cron.schedule('0 0 * * *', () => {
+    void queues.trialExpiry.add('trialExpiry', {})
+  }, { timezone: TZ })
 
   logger.info('scheduler started — engines enqueue per active org on IST schedule')
 }

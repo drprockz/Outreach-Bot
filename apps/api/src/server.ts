@@ -19,6 +19,7 @@ import { googleRouter } from './webhooks/google.js'
 import { razorpayWebhookRouter } from './webhooks/razorpay.js'
 import { otpRouter } from './routes/otp.js'
 import { billingRouter } from './routes/billing.js'
+import { authRouter, getMeHandler } from './routes/auth.js'
 
 import { requireAuth } from './middleware/requireAuth.js'
 import { requireSuperadmin } from './middleware/requireSuperadmin.js'
@@ -61,6 +62,10 @@ app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 app.use('/auth/google', googleRouter)
 app.use('/api/otp', otpRateLimit, otpRouter)
 
+// === AUTH ROUTES (auth-required) ===
+app.use('/api/auth', authRouter)
+app.get('/api/me', requireAuth, getMeHandler)
+
 // === RAZORPAY WEBHOOK — MUST come BEFORE /api/billing ===
 // No auth; HMAC verified inside the handler using req.rawBody.
 app.use('/api/billing/webhook', razorpayWebhookRouter)
@@ -83,7 +88,7 @@ app.use('/graphql', requireAuth, checkOrgStatus, orgRateLimit, yoga)
 // === BULL BOARD (superadmin only) ===
 // Workers come in Task 15. For now, scaffold the queues so the route exists
 // but the dashboard shows empty queues.
-const queueNames = ['findLeads', 'sendEmails', 'sendFollowups', 'checkReplies', 'dailyReport', 'healthCheck'] as const
+const queueNames = ['findLeads', 'sendEmails', 'sendFollowups', 'checkReplies', 'dailyReport', 'healthCheck', 'trialExpiry'] as const
 const bullQueues = queueNames.map((name) => new Queue(name, { connection: redis }))
 const serverAdapter = new ExpressAdapter()
 serverAdapter.setBasePath('/admin/queues')
