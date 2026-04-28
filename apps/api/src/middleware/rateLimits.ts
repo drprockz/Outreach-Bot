@@ -38,3 +38,17 @@ export const otpRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 })
+
+/**
+ * IP-based rate limiting for Google OAuth start. Bots that hit /auth/google
+ * harvest cookies + state params. 20 starts per 5 minutes per IP is plenty
+ * for a real user retrying.
+ */
+export const googleRateLimit = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 20,
+  keyGenerator: (req: Request) => req.ip ?? 'unknown',
+  message: { error: 'Too many login attempts. Try again in a few minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+})

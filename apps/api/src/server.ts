@@ -1,11 +1,14 @@
 import express, { type NextFunction, type Request, type Response } from 'express'
 import cookieParser from 'cookie-parser'
+import cors from 'cors'
 import passport from 'passport'
 import { createYoga } from 'graphql-yoga'
 import { WebSocketServer } from 'ws'
 import { useServer } from 'graphql-ws/lib/use/ws'
 import { createServer } from 'node:http'
 import pino from 'pino'
+import { pinoHttp } from 'pino-http'
+import depthLimit from 'graphql-depth-limit'
 
 import { schema } from './graphql/schema.js'
 import { createContext } from './graphql/context.js'
@@ -24,7 +27,7 @@ import { authRouter, getMeHandler } from './routes/auth.js'
 import { requireAuth } from './middleware/requireAuth.js'
 import { requireSuperadmin } from './middleware/requireSuperadmin.js'
 import { checkOrgStatus } from './middleware/enforcePlan.js'
-import { orgRateLimit, otpRateLimit } from './middleware/rateLimits.js'
+import { orgRateLimit, otpRateLimit, googleRateLimit } from './middleware/rateLimits.js'
 
 import { Queue } from 'bullmq'
 import { createBullBoard } from '@bull-board/api'
@@ -37,6 +40,49 @@ const logger = pino({
 
 const app = express()
 const httpServer = createServer(app)
+
+// Trust the reverse proxy (nginx) so req.ip + req.protocol are accurate.
+app.set('trust proxy', 1)
+
+// HTTP request logging — every request gets one structured log line with
+// method, path, status, duration, x-forwarded-for. Customise to skip noisy
+// endpoints (Bull Board polls hard) and the public health check.
+// pino-http v11 type overloads make it hard to pass an existing logger via options.
+// We let it construct its own pino logger (same default config) and apply the
+// global pretty-print transport in dev via PINO_TRANSPORT env var.
+app.use(pinoHttp({
+  customLogLevel: (_req: unknown, res: { statusCode: number }, err: Error | undefined) => {
+    if (err || res.statusCode >= 500) return 'error'
+    if (res.statusCode >= 400) return 'warn'
+    return 'info'
+  },
+  autoLogging: {
+    ignore: (req: { url?: string }) =>
+      req.url === '/health' || (req.url?.startsWith('/admin/queues/api/queues') ?? false),
+  },
+}))
+
+// CORS — locked to the dashboard domain in production. In dev we allow
+// localhost on any port so Vite + curl + GraphiQL all work.
+const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean)
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // No origin header = same-origin / curl / mobile — allow.
+    if (!origin) return callback(null, true)
+    if (process.env.NODE_ENV !== 'production' && /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin)) {
+      return callback(null, true)
+    }
+    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
+    return callback(new Error(`CORS: origin ${origin} not allowed`))
+  },
+  credentials: true,  // required for HttpOnly auth cookie
+  methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'PATCH', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Razorpay-Signature'],
+}))
 
 // Cookie parsing FIRST so all downstream middleware can read req.cookies
 app.use(cookieParser())
@@ -59,7 +105,7 @@ app.use(passport.initialize())
 app.get('/health', (_req, res) => res.json({ ok: true, ts: Date.now() }))
 
 // === AUTH ROUTES (public) ===
-app.use('/auth/google', googleRouter)
+app.use('/auth/google', googleRateLimit, googleRouter)
 app.use('/api/otp', otpRateLimit, otpRouter)
 
 // === AUTH ROUTES (auth-required) ===
@@ -82,6 +128,17 @@ const yoga = createYoga({
   graphiql: process.env.NODE_ENV === 'development',
   // Disable masked errors in dev for easier debugging
   maskedErrors: process.env.NODE_ENV === 'production',
+  // Reject deeply-nested queries (DoS surface). 7 is generous for our schema.
+  // graphql-yoga 5.x: pass extra validation rules via plugins -> useValidationCache /
+  // direct validation rules. Simplest path is the validationRules envelop helper.
+  // We use a small custom plugin that adds depthLimit to graphql-js's validate() call.
+  plugins: [
+    {
+      onValidate(context: { addValidationRule: (rule: unknown) => void }) {
+        context.addValidationRule(depthLimit(7))
+      },
+    },
+  ],
 })
 app.use('/graphql', requireAuth, checkOrgStatus, orgRateLimit, yoga)
 

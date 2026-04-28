@@ -10,7 +10,14 @@ authRouter.post('/logout', requireAuth, async (req: Request, res: Response) => {
   const { jti, exp } = (req as AuthedRequest).user
   const ttl = Math.max(1, exp - Math.floor(Date.now() / 1000))
   await revokeToken(jti, ttl)
-  res.clearCookie('token', { httpOnly: true, secure: true, sameSite: 'lax', path: '/' })
+  // Match the cookie attributes used at set-time (otp.ts + webhooks/google.ts)
+  // so the browser actually evicts it. In dev cookies are non-secure.
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+    path: '/',
+  })
   return res.status(200).json({ ok: true })
 })
 
