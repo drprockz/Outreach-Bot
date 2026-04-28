@@ -26,7 +26,9 @@ import jwt from 'jsonwebtoken'
 import { authRouter, getMeHandler } from './auth.js'
 import { requireAuth } from '../middleware/requireAuth.js'
 
-const JWT_SECRET = 'change-me-in-production'
+// Test secret matches the one set in vitest.setup.ts so tokens we forge here
+// can be verified by the same code path that loads JWT_SECRET from env.
+const JWT_SECRET = process.env.JWT_SECRET!
 
 function makeValidToken(overrides = {}) {
   const payload = {

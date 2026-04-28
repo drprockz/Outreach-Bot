@@ -4,6 +4,10 @@
 db/*.sqlite
 db/*.sqlite-wal
 db/*.sqlite-shm
+# Local DB backups (pg_dump output) — contains real customer data, never commit
+db/backups/
+*.dump
+*.sql.gz
 node_modules/
 apps/web/node_modules/
 apps/web/dist/
@@ -12,3 +16,4 @@ packages/*/dist/
 logs/
 *.log
 .superpowers/
+.claude/worktrees/

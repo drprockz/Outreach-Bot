@@ -1,8 +1,25 @@
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 
-const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || 'radar';
-const JWT_SECRET = process.env.JWT_SECRET || 'default-secret-change-me';
+const INSECURE_JWT_DEFAULTS = new Set(['default-secret-change-me', 'change-me-in-production', '']);
+
+function loadJwtSecret() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || INSECURE_JWT_DEFAULTS.has(secret)) {
+    throw new Error('JWT_SECRET is missing or set to a known-insecure default. Set JWT_SECRET in .env (e.g. `openssl rand -hex 32`).');
+  }
+  if (secret.length < 32) {
+    throw new Error(`JWT_SECRET is only ${secret.length} characters; require at least 32.`);
+  }
+  return secret;
+}
+
+const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD;
+if (!DASHBOARD_PASSWORD || DASHBOARD_PASSWORD === 'radar' || DASHBOARD_PASSWORD === 'strong_password_here') {
+  throw new Error('DASHBOARD_PASSWORD is missing or set to a known-insecure default. Set a strong password in .env.');
+}
+
+const JWT_SECRET = loadJwtSecret();
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 const passwordHash = bcrypt.hashSync(DASHBOARD_PASSWORD, 10);
