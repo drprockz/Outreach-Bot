@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today } from '../../core/db/index.js';
+import { today } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -40,7 +40,7 @@ router.get('/', async (req, res) => {
   const dayStart = new Date(`${d}T00:00:00.000Z`);
   const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
 
-  const todayLogs = await prisma.cronLog.findMany({
+  const todayLogs = await req.db.cronLog.findMany({
     where: { startedAt: { gte: dayStart, lt: dayEnd } },
     orderBy: { startedAt: 'asc' },
   });
@@ -80,7 +80,7 @@ router.get('/', async (req, res) => {
 });
 
 router.get('/:job/history', async (req, res) => {
-  const history = await prisma.cronLog.findMany({
+  const history = await req.db.cronLog.findMany({
     where: { jobName: req.params.job },
     orderBy: { startedAt: 'desc' },
     take: 30,

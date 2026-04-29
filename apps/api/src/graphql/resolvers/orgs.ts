@@ -122,3 +122,38 @@ builder.mutationField('changeRole', (t) =>
     },
   }),
 )
+
+builder.mutationField('updateOrg', (t) =>
+  t.prismaField({
+    type: 'Org',
+    args: {
+      name: t.arg.string({ required: false }),
+      slug: t.arg.string({ required: false }),
+    },
+    resolve: async (query, _root, { name, slug }, ctx) => {
+      if (!ctx.user) throw new Error('Unauthenticated')
+      if (ctx.user.role !== 'owner') throw new Error('Owner only')
+      const data: { name?: string; slug?: string } = {}
+      if (name !== null && name !== undefined) {
+        const trimmed = name.trim()
+        if (trimmed.length < 2) throw new Error('Name must be at least 2 characters')
+        if (trimmed.length > 80) throw new Error('Name must be at most 80 characters')
+        data.name = trimmed
+      }
+      if (slug !== null && slug !== undefined) {
+        const trimmed = slug.trim().toLowerCase()
+        if (!/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/.test(trimmed)) {
+          throw new Error('Slug must be 1–40 chars, lowercase a–z, 0–9, or "-" (no leading/trailing dash)')
+        }
+        const taken = await prisma.org.findFirst({
+          where: { slug: trimmed, NOT: { id: ctx.user.orgId } },
+          select: { id: true },
+        })
+        if (taken) throw new Error('Slug is already in use')
+        data.slug = trimmed
+      }
+      if (Object.keys(data).length === 0) throw new Error('Nothing to update')
+      return prisma.org.update({ ...query, where: { id: ctx.user.orgId }, data })
+    },
+  }),
+)

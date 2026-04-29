@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today } from '../../core/db/index.js';
+import { today } from '../../core/db/index.js';
 
 // All engines known to the dashboard. `enabledKey` is the config KV flag
 // consulted by the Status tab; engines without a flag (healthCheck) are
@@ -16,7 +16,7 @@ const ENGINES = [
 const router = Router();
 
 router.get('/', async (_req, res) => {
-  const cfgRows = await prisma.config.findMany();
+  const cfgRows = await req.db.config.findMany();
   const cfg = Object.fromEntries(cfgRows.map(r => [r.key, r.value]));
 
   // Today's window in UTC — cronLog.startedAt is a TIMESTAMPTZ so we compare
@@ -24,7 +24,7 @@ router.get('/', async (_req, res) => {
   const todayStart = new Date(today() + 'T00:00:00Z');
 
   const items = await Promise.all(ENGINES.map(async def => {
-    const last = await prisma.cronLog.findFirst({
+    const last = await req.db.cronLog.findFirst({
       where: { jobName: def.name },
       orderBy: { startedAt: 'desc' },
       select: {
@@ -32,7 +32,7 @@ router.get('/', async (_req, res) => {
         recordsProcessed: true, costUsd: true,
       },
     });
-    const todaysCost = await prisma.cronLog.aggregate({
+    const todaysCost = await req.db.cronLog.aggregate({
       where: { jobName: def.name, startedAt: { gte: todayStart } },
       _sum: { costUsd: true },
     });

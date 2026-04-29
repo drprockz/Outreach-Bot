@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate,
+import { prisma, runWithOrg, logCron, finishCron, logError, bumpMetric, isRejected, todaySentCount, todayBounceRate,
          getConfigMap, getConfigInt, getConfigFloat, getConfigStr } from '../core/db/index.js';
 import { sendMail } from '../core/email/mailer.js';
 import { callClaude } from '../core/ai/claude.js';
@@ -67,7 +67,8 @@ function daysFromNow(days) {
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
 }
 
-export default async function sendFollowups() {
+export default async function sendFollowups(orgId) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('sendFollowups');
   let emailsSent = 0;
   let totalCost = 0;
@@ -302,9 +303,10 @@ export default async function sendFollowups() {
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`sendFollowups failed: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  sendFollowups().catch(console.error);
+  sendFollowups(null).catch(console.error);
 }

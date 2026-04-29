@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -17,7 +16,7 @@ function serialize(n) {
 }
 
 router.get('/', async (req, res) => {
-  const niches = await prisma.niche.findMany({
+  const niches = await req.db.niche.findMany({
     orderBy: [{ sortOrder: 'asc' }, { id: 'asc' }],
   });
   res.json({ items: niches.map(serialize) });
@@ -28,7 +27,7 @@ router.post('/', async (req, res) => {
   if (!label || !query) return res.status(400).json({ error: 'label and query are required', field: !label ? 'label' : 'query' });
   if (query.length < 10) return res.status(400).json({ error: 'query must be at least 10 characters', field: 'query' });
 
-  const created = await prisma.$transaction(async (tx) => {
+  const created = await req.db.$transaction(async (tx) => {
     const agg = await tx.niche.aggregate({ _max: { sortOrder: true } });
     const maxOrder = agg._max.sortOrder ?? -1;
 
@@ -57,10 +56,10 @@ router.put('/:id', async (req, res) => {
   const { label, query, day_of_week = null, enabled = 1, sort_order } = req.body || {};
   if (!label || !query) return res.status(400).json({ error: 'label and query are required', field: !label ? 'label' : 'query' });
 
-  const existing = await prisma.niche.findUnique({ where: { id } });
+  const existing = await req.db.niche.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Niche not found' });
 
-  const updated = await prisma.$transaction(async (tx) => {
+  const updated = await req.db.$transaction(async (tx) => {
     if (day_of_week !== null) {
       await tx.niche.updateMany({
         where: { dayOfWeek: day_of_week, id: { not: id } },
@@ -84,9 +83,9 @@ router.put('/:id', async (req, res) => {
 
 router.delete('/:id', async (req, res) => {
   const id = parseInt(req.params.id);
-  const existing = await prisma.niche.findUnique({ where: { id } });
+  const existing = await req.db.niche.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Niche not found' });
-  await prisma.niche.delete({ where: { id } });
+  await req.db.niche.delete({ where: { id } });
   res.json({ ok: true });
 });
 

@@ -1,11 +1,10 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 import { serializeReply } from './leads.js';
 
 const router = Router();
 
 router.get('/', async (req, res) => {
-  const rows = await prisma.reply.findMany({
+  const rows = await req.db.reply.findMany({
     include: { lead: { select: { businessName: true, contactName: true, contactEmail: true } } },
     orderBy: { receivedAt: 'desc' },
   });
@@ -34,10 +33,10 @@ router.patch('/:id/action', async (req, res) => {
 
   if (!action) return res.status(400).json({ error: 'action is required' });
 
-  const reply = await prisma.reply.findUnique({ where: { id }, select: { id: true } });
+  const reply = await req.db.reply.findUnique({ where: { id }, select: { id: true } });
   if (!reply) return res.status(404).json({ error: 'Reply not found' });
 
-  await prisma.reply.update({
+  await req.db.reply.update({
     where: { id },
     data: { actionedAt: new Date(), actionTaken: action },
   });
@@ -47,7 +46,7 @@ router.patch('/:id/action', async (req, res) => {
 router.post('/:id/reject', async (req, res) => {
   const id = parseInt(req.params.id);
 
-  const reply = await prisma.reply.findUnique({
+  const reply = await req.db.reply.findUnique({
     where: { id },
     select: { leadId: true, lead: { select: { contactEmail: true } } },
   });
@@ -56,7 +55,7 @@ router.post('/:id/reject', async (req, res) => {
   const email = reply.lead?.contactEmail;
   if (email) {
     const domain = email.split('@')[1];
-    await prisma.rejectList.upsert({
+    await req.db.rejectList.upsert({
       where: { email },
       create: { email, domain, reason: 'manual' },
       update: {},
@@ -64,8 +63,8 @@ router.post('/:id/reject', async (req, res) => {
   }
 
   if (reply.leadId) {
-    await prisma.lead.update({ where: { id: reply.leadId }, data: { status: 'unsubscribed' } });
-    await prisma.sequenceState.updateMany({
+    await req.db.lead.update({ where: { id: reply.leadId }, data: { status: 'unsubscribed' } });
+    await req.db.sequenceState.updateMany({
       where: { leadId: reply.leadId },
       data: { status: 'unsubscribed', updatedAt: new Date() },
     });

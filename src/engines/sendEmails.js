@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, bumpMetric, bumpCostMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList,
+import { prisma, runWithOrg, logCron, finishCron, logError, bumpMetric, bumpCostMetric, isRejected, todaySentCount, todayBounceRate, addToRejectList,
          getConfigMap, getConfigInt, getConfigFloat } from '../core/db/index.js';
 import { verifyConnections, sendMail } from '../core/email/mailer.js';
 import { validate } from '../core/email/contentValidator.js';
@@ -65,7 +65,8 @@ function getInboxUser(inboxNumber) {
   return inboxNumber === 1 ? process.env.INBOX_1_USER : process.env.INBOX_2_USER;
 }
 
-export default async function sendEmails() {
+export default async function sendEmails(orgId) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('sendEmails');
   let emailsSent = 0;
   let totalCost = 0;
@@ -352,9 +353,10 @@ Return only the email body, no subject line.`;
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`sendEmails failed: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  sendEmails().catch(console.error);
+  sendEmails(null).catch(console.error);
 }

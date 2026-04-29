@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -22,12 +21,12 @@ function serialize(s) {
 }
 
 router.get('/', async (req, res) => {
-  const rows = await prisma.sequenceState.findMany({
+  const rows = await req.db.sequenceState.findMany({
     include: { lead: { select: { businessName: true, contactName: true, contactEmail: true } } },
     orderBy: { updatedAt: 'desc' },
   });
 
-  const counts = await prisma.sequenceState.groupBy({
+  const counts = await req.db.sequenceState.groupBy({
     by: ['status'],
     _count: { _all: true },
   });

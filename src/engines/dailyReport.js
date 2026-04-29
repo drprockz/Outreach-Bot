@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma, logCron, finishCron, logError, today } from '../core/db/index.js';
+import { prisma, runWithOrg, logCron, finishCron, logError, today } from '../core/db/index.js';
 import { sendAlert } from '../core/integrations/telegram.js';
 import nodemailer from 'nodemailer';
 
@@ -223,7 +223,8 @@ ${cronJobs.map(j => {
 </body></html>`;
 }
 
-export default async function dailyReport() {
+export default async function dailyReport(orgId) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('dailyReport');
 
   try {
@@ -292,9 +293,10 @@ export default async function dailyReport() {
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`dailyReport failed: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  dailyReport().catch(console.error);
+  dailyReport(null).catch(console.error);
 }

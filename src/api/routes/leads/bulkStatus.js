@@ -1,4 +1,4 @@
-import { prisma, getConfigMap, getConfigInt } from '../../../core/db/index.js';
+import { getConfigMap, getConfigInt } from '../../../core/db/index.js';
 import { bucket } from '../../../core/ai/icpScorer.js';
 
 const ALLOWED = new Set(['nurture', 'unsubscribed', 'reject', 'requeue']);
@@ -17,7 +17,7 @@ export async function bulkStatus(req, res) {
     threshB = getConfigInt(cfg, 'icp_threshold_b', 40);
   }
 
-  const leads = await prisma.lead.findMany({
+  const leads = await req.db.lead.findMany({
     where: { id: { in: leadIds } },
     include: { emails: { where: { sequenceStep: 0, status: 'pending' }, take: 1 } },
   });
@@ -27,26 +27,26 @@ export async function bulkStatus(req, res) {
   for (const lead of leads) {
     if (TERMINAL.has(lead.status)) { skipped.push({ id: lead.id, reason: `terminal_${lead.status}` }); continue; }
     if (action === 'nurture') {
-      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'nurture' } });
+      await req.db.lead.update({ where: { id: lead.id }, data: { status: 'nurture' } });
       updated.push(lead.id);
     } else if (action === 'unsubscribed') {
-      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed' } });
+      await req.db.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed' } });
       updated.push(lead.id);
     } else if (action === 'reject') {
       if (!lead.contactEmail) { skipped.push({ id: lead.id, reason: 'no_email' }); continue; }
       const domain = lead.contactEmail.split('@')[1] || null;
-      await prisma.rejectList.upsert({
+      await req.db.rejectList.upsert({
         where: { email: lead.contactEmail },
         update: {},
         create: { email: lead.contactEmail, domain, reason: 'manual_bulk_reject' },
       });
-      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed', inRejectList: true } });
+      await req.db.lead.update({ where: { id: lead.id }, data: { status: 'unsubscribed', inRejectList: true } });
       updated.push(lead.id);
     } else if (action === 'requeue') {
       if (!lead.emails.length) { skipped.push({ id: lead.id, reason: 'no_pending_email' }); continue; }
       const b = lead.icpScore != null ? bucket(lead.icpScore, threshA, threshB) : null;
       if (b === 'low') { skipped.push({ id: lead.id, reason: 'icp_c_cannot_queue' }); continue; }
-      await prisma.lead.update({ where: { id: lead.id }, data: { status: 'ready' } });
+      await req.db.lead.update({ where: { id: lead.id }, data: { status: 'ready' } });
       updated.push(lead.id);
     }
   }

@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { prisma } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -40,7 +39,7 @@ function serialize(row) {
 }
 
 router.get('/', async (req, res) => {
-  const row = await prisma.icpProfile.findUnique({ where: { id: 1 } });
+  const row = await req.db.icpProfile.findFirst({});
   res.json(serialize(row) || {});
 });
 
@@ -78,11 +77,12 @@ router.put('/', async (req, res) => {
     updatedAt: new Date(),
   };
 
-  const saved = await prisma.icpProfile.upsert({
-    where: { id: 1 },
-    create: { id: 1, ...data },
-    update: data,
-  });
+  // The schema doesn't enforce one-profile-per-org with @@unique, so we look up
+  // the org's existing row first (scoped client) and create-or-update.
+  const existing = await req.db.icpProfile.findFirst({ select: { id: true } });
+  const saved = existing
+    ? await req.db.icpProfile.update({ where: { id: existing.id }, data })
+    : await req.db.icpProfile.create({ data });
 
   res.json({ ok: true, data: serialize(saved) });
 });

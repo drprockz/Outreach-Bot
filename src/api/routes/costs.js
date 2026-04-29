@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { prisma, today } from '../../core/db/index.js';
+import { today } from '../../core/db/index.js';
 
 const router = Router();
 
@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
   const dates = last30Dates();
   const windowStart = dates[0];
 
-  const rows = await prisma.dailyMetrics.findMany({
+  const rows = await req.db.dailyMetrics.findMany({
     where: { date: { gte: windowStart } },
     orderBy: { date: 'asc' },
     select: {

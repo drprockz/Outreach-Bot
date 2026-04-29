@@ -1,4 +1,4 @@
-import { prisma, getConfigMap, getConfigStr, getConfigInt } from '../../../core/db/index.js';
+import { getConfigMap, getConfigStr, getConfigInt } from '../../../core/db/index.js';
 import { regenerateHook } from '../../../core/pipeline/regenerateHook.js';
 import { regenerateBody } from '../../../core/pipeline/regenerateBody.js';
 import { reextract } from '../../../core/pipeline/reextract.js';
@@ -13,14 +13,14 @@ function avg(rows, key) {
   return xs.length ? { mean: xs.reduce((a, b) => a + b, 0) / xs.length, count: xs.length } : { mean: 0, count: 0 };
 }
 
-async function estimateCost(stage) {
+async function estimateCost(db, stage) {
   if (stage === 'verify_email') return { mean: MEV_FALLBACK, count: 999 };
   if (stage === 'regen_hook' || stage === 'regen_body') {
-    const rows = await prisma.email.findMany({ orderBy: { id: 'desc' }, take: 200, select: { hookCostUsd: true, bodyCostUsd: true } });
+    const rows = await db.email.findMany({ orderBy: { id: 'desc' }, take: 200, select: { hookCostUsd: true, bodyCostUsd: true } });
     return avg(rows, stage === 'regen_hook' ? 'hookCostUsd' : 'bodyCostUsd');
   }
   // rescore_icp / reextract / rejudge — proxy via Lead.geminiCostUsd
-  const rows = await prisma.lead.findMany({ where: { geminiCostUsd: { gt: 0 } }, orderBy: { id: 'desc' }, take: 200, select: { geminiCostUsd: true } });
+  const rows = await db.lead.findMany({ where: { geminiCostUsd: { gt: 0 } }, orderBy: { id: 'desc' }, take: 200, select: { geminiCostUsd: true } });
   return avg(rows, 'geminiCostUsd');
 }
 
@@ -45,7 +45,7 @@ function toLegacyShape(lead) {
   };
 }
 
-async function loadCtx(stage) {
+async function loadCtx(db, stage) {
   const cfg = await getConfigMap();
   const persona = {
     name:     getConfigStr(cfg, 'persona_name',     'Darshan Parmar'),
@@ -56,7 +56,7 @@ async function loadCtx(stage) {
   };
   const ctx = { persona };
   if (stage === 'rescore_icp') {
-    const scoringCtx = await loadScoringContext(prisma);
+    const scoringCtx = await loadScoringContext(db);
     const weights = {
       firmographic: getConfigInt(cfg, 'icp_weight_firmographic', 20),
       problem:      getConfigInt(cfg, 'icp_weight_problem',      20),
@@ -70,7 +70,7 @@ async function loadCtx(stage) {
   return ctx;
 }
 
-async function runStage(stage, lead, ctx) {
+async function runStage(db, stage, lead, ctx) {
   const legacy = toLegacyShape(lead);
   if (stage === 'verify_email') {
     if (!lead.contactEmail) throw new Error('no_contact_email');
@@ -78,33 +78,33 @@ async function runStage(stage, lead, ctx) {
     if (!r || !r.status || r.status === 'skipped' || r.status === 'error') {
       throw new Error(`verify_email_failed: ${r?.status || 'no_response'}`);
     }
-    await prisma.lead.update({ where: { id: lead.id }, data: { emailStatus: r.status, emailVerifiedAt: new Date() } });
+    await db.lead.update({ where: { id: lead.id }, data: { emailStatus: r.status, emailVerifiedAt: new Date() } });
     return { costUsd: r.costUsd || 0 };
   }
   if (stage === 'rescore_icp') {
     const r = await scoreLead(legacy, ctx.scoringCtx);
-    await prisma.lead.update({ where: { id: lead.id }, data: {
+    await db.lead.update({ where: { id: lead.id }, data: {
       icpScore: r.icp_score, icpReason: r.icp_reason, icpBreakdown: r.icp_breakdown,
       icpKeyMatches: r.icp_key_matches, icpKeyGaps: r.icp_key_gaps, icpDisqualifiers: r.icp_disqualifiers,
     }});
     return { costUsd: r.costUsd || 0 };
   }
   if (stage === 'regen_hook') {
-    const email = await prisma.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
+    const email = await db.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
     if (!email) throw new Error('no_pending_email');
-    const signals = await prisma.leadSignal.findMany({ where: { leadId: lead.id }, orderBy: { confidence: 'desc' }, take: 3 });
+    const signals = await db.leadSignal.findMany({ where: { leadId: lead.id }, orderBy: { confidence: 'desc' }, take: 3 });
     const r = await regenerateHook(legacy, ctx.persona, signals);
-    await prisma.email.update({ where: { id: email.id }, data: {
+    await db.email.update({ where: { id: email.id }, data: {
       hook: r.hook, hookCostUsd: r.costUsd, hookModel: r.model, hookVariantId: r.hookVariantId,
     }});
     return { costUsd: r.costUsd, hook: r.hook };
   }
   if (stage === 'regen_body') {
-    const email = await prisma.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
+    const email = await db.email.findFirst({ where: { leadId: lead.id, sequenceStep: 0, status: 'pending' } });
     if (!email) throw new Error('no_pending_email');
     if (!email.hook) throw new Error('no_hook_run_regen_hook_first');
     const r = await regenerateBody(legacy, email.hook, ctx.persona);
-    await prisma.email.update({ where: { id: email.id }, data: {
+    await db.email.update({ where: { id: email.id }, data: {
       body: r.body, bodyCostUsd: r.costUsd, bodyModel: r.model,
     }});
     return { costUsd: r.costUsd };
@@ -112,7 +112,7 @@ async function runStage(stage, lead, ctx) {
   if (stage === 'reextract') {
     const r = await reextract(legacy);
     if (!r.data) throw new Error('reextract_failed');
-    await prisma.lead.update({ where: { id: lead.id }, data: {
+    await db.lead.update({ where: { id: lead.id }, data: {
       ownerName: r.data.owner_name, ownerRole: r.data.owner_role,
       contactEmail: r.data.contact_email, contactConfidence: r.data.contact_confidence, contactSource: r.data.contact_source,
       techStack: r.data.tech_stack, websiteProblems: r.data.website_problems,
@@ -126,7 +126,7 @@ async function runStage(stage, lead, ctx) {
   if (stage === 'rejudge') {
     const r = await reextract(legacy);
     if (!r.data) throw new Error('rejudge_failed');
-    await prisma.lead.update({ where: { id: lead.id }, data: {
+    await db.lead.update({ where: { id: lead.id }, data: {
       judgeReason: r.data.judge_reason,
       websiteQualityScore: r.data.website_quality_score,
     }});
@@ -142,7 +142,7 @@ export async function bulkRetry(req, res) {
   if (leadIds.length > 25) return res.status(400).json({ error: 'batch_too_large', max: 25 });
 
   if (req.query.dry_run === '1' || req.query.dry_run === 'true') {
-    const est = await estimateCost(stage);
+    const est = await estimateCost(req.db, stage);
     const total = est.mean * leadIds.length;
     return res.json({
       count: leadIds.length,
@@ -163,16 +163,16 @@ export async function bulkRetry(req, res) {
   let aborted = false;
   res.on('close', () => { if (!res.writableEnded) aborted = true; });
 
-  const ctx = await loadCtx(stage);
-  const leads = await prisma.lead.findMany({ where: { id: { in: leadIds } } });
+  const ctx = await loadCtx(req.db, stage);
+  const leads = await req.db.lead.findMany({ where: { id: { in: leadIds } } });
   for (const lead of leads) {
     if (aborted) break;
     try {
-      const r = await runStage(stage, lead, ctx);
+      const r = await runStage(req.db, stage, lead, ctx);
       res.write(`data: ${JSON.stringify({ leadId: lead.id, status: 'ok', costUsd: r.costUsd })}\n\n`);
     } catch (err) {
       try {
-        await prisma.errorLog.create({ data: {
+        await req.db.errorLog.create({ data: {
           source: 'bulk_retry', errorType: stage, errorMessage: err.message, leadId: lead.id, occurredAt: new Date(),
         }});
       } catch { /* don't let logging failure break the loop */ }

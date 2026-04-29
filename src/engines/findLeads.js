@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { prisma, getPrisma, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from '../core/db/index.js';
+import { prisma, getPrisma, runWithOrg, logCron, finishCron, logError, bumpMetric, getConfigMap, getConfigInt, getConfigStr } from '../core/db/index.js';
 import { callGemini } from '../core/ai/gemini.js';
 import { callClaude } from '../core/ai/claude.js';
 import { verifyEmail } from '../core/integrations/mev.js';
@@ -157,7 +157,8 @@ const ANTHROPIC_DISABLED = process.env.ANTHROPIC_DISABLED === 'true';
  *   these override the config-based count + batch size and bypass the
  *   Math.max(50, ...) floor that applies to the scheduled cron run.
  */
-export default async function findLeads(override = {}) {
+export default async function findLeads(orgId, override = {}) {
+  return runWithOrg(orgId, async () => {
   const cronId = await logCron('findLeads');
 
   const cfg = await getConfigMap();
@@ -516,9 +517,10 @@ export default async function findLeads(override = {}) {
     await finishCron(cronId, { status: 'failed', error: err.message });
     await sendAlert(`findLeads failed: ${err.message}`);
   }
+  });
 }
 
-// Run directly if executed as script
+// Run directly if executed as script (single-tenant, falls back to raw client)
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/^.*[/\\]/, ''))) {
-  findLeads().catch(console.error);
+  findLeads(null).catch(console.error);
 }

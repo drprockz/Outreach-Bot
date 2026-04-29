@@ -29,8 +29,6 @@ export async function verifyOtp(email: string, code: string): Promise<{ token: s
 
 export async function logout(): Promise<void> {
   await fetch(`${API_URL}/api/auth/logout`, { method: 'POST', credentials: 'include' }).catch(() => {})
-  // TODO: remove once legacy bcrypt password login is fully retired
-  localStorage.removeItem('radar_token')
   window.location.href = '/login'
 }
 
