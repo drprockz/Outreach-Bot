@@ -10,5 +10,11 @@ import './resolvers/icpProfile.js'
 import './resolvers/sequences.js'
 import './resolvers/savedViews.js'
 import './resolvers/engineGuardrails.js'
+import './resolvers/overview.js'
+import './resolvers/funnel.js'
+import './resolvers/sendLog.js'
+import './resolvers/costs.js'
+import './resolvers/errors.js'
+import './resolvers/cronStatus.js'
 
 export const schema = builder.toSchema()
