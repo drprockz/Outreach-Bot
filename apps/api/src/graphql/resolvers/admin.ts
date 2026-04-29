@@ -1,13 +1,9 @@
 import { prisma } from 'shared'
 import { builder } from '../builder.js'
+import { requireSuperadmin } from '../guards.js'
 import { signToken } from '../../lib/jwt.js'
 import { redis } from '../../lib/redis.js'
 import { revokeOrgTokens } from '../../lib/tokenRevocation.js'
-import type { Context } from '../builder.js'
-
-function assertSuperadmin(ctx: Context): void {
-  if (!ctx.user?.isSuperadmin) throw new Error('Superadmin required')
-}
 
 async function writeAuditLog(
   actorId: number,
@@ -109,7 +105,7 @@ builder.queryField('adminOrgs', (t) =>
       filter: t.arg.string({ required: false }),
     },
     resolve: async (_root, { page, filter }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const take = 50
       const skip = ((page ?? 1) - 1) * take
       const where = filter ? { OR: [{ name: { contains: filter } }, { slug: { contains: filter } }] } : {}
@@ -131,7 +127,7 @@ builder.queryField('adminOrg', (t) =>
     nullable: true,
     args: { id: t.arg.int({ required: true }) },
     resolve: async (_root, { id }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const org = await prisma.org.findUnique({
         where: { id },
         include: { subscription: { include: { plan: true } } },
@@ -146,7 +142,7 @@ builder.queryField('adminUsers', (t) =>
     type: [AdminUser],
     args: { filter: t.arg.string({ required: false }) },
     resolve: async (_root, { filter }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const where = filter ? { email: { contains: filter } } : {}
       const users = await prisma.user.findMany({
         where,
@@ -170,7 +166,7 @@ builder.queryField('adminMetrics', (t) =>
   t.field({
     type: AdminMetrics,
     resolve: async (_root, _args, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const [activeOrgs, trialOrgs, subs] = await Promise.all([
         prisma.org.count({ where: { status: 'active' } }),
         prisma.org.count({ where: { status: 'trial' } }),
@@ -197,7 +193,7 @@ builder.mutationField('adminCreateOrg', (t) =>
       planId: t.arg.int({ required: true }),
     },
     resolve: async (_root, { name, slug, ownerEmail, planId }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const org = await prisma.$transaction(async (tx) => {
         const newOrg = await tx.org.create({ data: { name, slug, status: 'active' } })
         const owner = await tx.user.upsert({
@@ -229,7 +225,7 @@ builder.mutationField('adminSuspendOrg', (t) =>
     type: 'Boolean',
     args: { orgId: t.arg.int({ required: true }) },
     resolve: async (_root, { orgId }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       await prisma.org.update({ where: { id: orgId }, data: { status: 'suspended' } })
       await prisma.orgSubscription.updateMany({ where: { orgId }, data: { status: 'locked' } })
       await revokeOrgTokens(orgId)
@@ -247,7 +243,7 @@ builder.mutationField('adminOverridePlan', (t) =>
       planId: t.arg.int({ required: true }),
     },
     resolve: async (_root, { orgId, planId }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       await prisma.orgSubscription.upsert({
         where: { orgId },
         update: { planId, status: 'active' },
@@ -271,7 +267,7 @@ builder.mutationField('adminResetTrial', (t) =>
       days: t.arg.int({ defaultValue: 14 }),
     },
     resolve: async (_root, { orgId, days }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const trialEndsAt = new Date(Date.now() + (days ?? 14) * 86400_000)
       await prisma.orgSubscription.update({
         where: { orgId },
@@ -296,7 +292,7 @@ builder.mutationField('adminDeleteOrg', (t) =>
       confirmationToken: t.arg.string({ required: true }),
     },
     resolve: async (_root, { orgId, confirmationToken }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       // Confirmation token must be the string "DELETE-{orgId}"
       if (confirmationToken !== `DELETE-${orgId}`) throw new Error('Invalid confirmation token')
       await revokeOrgTokens(orgId)
@@ -315,7 +311,7 @@ builder.mutationField('adminImpersonate', (t) =>
     type: ImpersonateResult,
     args: { orgId: t.arg.int({ required: true }) },
     resolve: async (_root, { orgId }, ctx) => {
-      assertSuperadmin(ctx)
+      requireSuperadmin(ctx)
       const membership = await prisma.orgMembership.findFirst({
         where: { orgId },
         include: { user: true },

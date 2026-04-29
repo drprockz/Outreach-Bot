@@ -1,5 +1,6 @@
 import { prisma } from 'shared'
 import { builder } from '../builder.js'
+import { requireAuth } from '../guards.js'
 
 type DB = typeof prisma
 
@@ -29,7 +30,7 @@ builder.queryField('leads', (t) =>
       status: t.arg.string({ required: false }),
     },
     resolve: async (query, _root, args, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
+      requireAuth(ctx)
       // ctx.db is scoped to ctx.user.orgId for non-superadmin users.
       // For superadmin (ctx.db === prisma), no orgId filter is auto-applied —
       // resolver must handle if needed.
