@@ -1,8 +1,13 @@
 import { createClient, fetchExchange, subscriptionExchange, type Client } from '@urql/core'
 import { createClient as createWSClient, type Client as WSClient } from 'graphql-ws'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
-const WS_URL = API_URL.replace(/^http/, 'ws')
+// Same-origin by default so the vite dev proxy can route /graphql to the new
+// API on :3002. WS needs an absolute host, so derive it from window.location
+// when API_URL is relative.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
+const WS_URL = API_URL
+  ? API_URL.replace(/^http/, 'ws')
+  : `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss' : 'ws'}://${typeof window !== 'undefined' ? window.location.host : 'localhost'}`
 
 let wsClient: WSClient | null = null
 

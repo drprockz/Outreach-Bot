@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+// Empty default keeps requests same-origin so the vite dev proxy can split
+// /api/* between legacy :3001 and new :3002. Set VITE_API_URL only to point
+// at a remote backend.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export async function sendOtp(email: string): Promise<void> {
   const res = await fetch(`${API_URL}/api/otp/send`, {

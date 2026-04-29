@@ -2,7 +2,10 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { Navigate, useLocation } from 'react-router-dom'
 import { PaywallPage } from '@/components/billing/PaywallPage'
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+// Default to empty so requests stay same-origin and go through the vite dev
+// proxy, which splits /api/* across legacy :3001 and new :3002. Override
+// with VITE_API_URL only when pointing the SPA at a remote backend.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export type OrgStatus = 'trial' | 'active' | 'locked' | 'suspended'
 export type SubscriptionStatus = 'trial' | 'active' | 'grace' | 'locked' | 'cancelled'

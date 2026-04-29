@@ -14,7 +14,7 @@ interface BillingPortal {
   usage: { leadsToday: number; claudeSpendUsd: number; geminiQueriesUsed: number }
 }
 
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:3001'
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export default function Billing() {
   const [data, setData] = useState<BillingPortal | null>(null)
