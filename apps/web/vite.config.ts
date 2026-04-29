@@ -3,25 +3,30 @@ import react from '@vitejs/plugin-react'
 import path from 'node:path'
 
 // During the apps/api ↔ src/api transition, the dashboard talks to two
-// backends. Most REST data routes (/api/overview, /api/leads, /api/errors,
-// /api/replies, /api/run-engine, /api/saved-views, ...) live on the legacy
-// Express server. Auth/billing/GraphQL live on the new TypeScript server.
+// backends. Auth, billing, and GraphQL live on the new TypeScript server
+// (apps/api). Most REST data routes (/api/overview, /api/leads, /api/errors,
+// /api/replies, /api/run-engine, /api/saved-views, ...) still live on the
+// legacy Express server (src/api).
 //
-// Override ports with VITE_LEGACY_API_PORT / VITE_NEW_API_PORT if needed.
+// New API runs on :3001 in dev so Google's existing OAuth redirect URI
+// (http://localhost:3001/auth/google/callback) keeps working without a
+// Google Cloud Console edit. Legacy is moved to :3002.
+//
+// Override with VITE_NEW_API_PORT / VITE_LEGACY_API_PORT if needed.
 export default defineConfig(({ mode }) => {
   const fileEnv = loadEnv(mode, process.cwd(), '')
-  const legacyPort =
-    process.env.VITE_LEGACY_API_PORT ||
-    fileEnv.VITE_LEGACY_API_PORT ||
+  const newPort =
+    process.env.VITE_NEW_API_PORT ||
+    fileEnv.VITE_NEW_API_PORT ||
     process.env.VITE_API_PORT ||
     fileEnv.VITE_API_PORT ||
     3001
-  const newPort =
-    process.env.VITE_NEW_API_PORT || fileEnv.VITE_NEW_API_PORT || 3002
-  const legacy = `http://localhost:${legacyPort}`
+  const legacyPort =
+    process.env.VITE_LEGACY_API_PORT || fileEnv.VITE_LEGACY_API_PORT || 3002
   const next = `http://localhost:${newPort}`
+  const legacy = `http://localhost:${legacyPort}`
   // eslint-disable-next-line no-console
-  console.log(`[vite] legacy /api → ${legacy} · new /graphql,/auth,/api/{me,otp,billing,auth/{logout,token}} → ${next}`)
+  console.log(`[vite] new /graphql,/auth,/api/{me,otp,billing,auth/{logout,token}} → ${next} · legacy /api → ${legacy}`)
   return {
     plugins: [react()],
     resolve: {
