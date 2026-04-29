@@ -7,6 +7,8 @@ import FilterBar from './leads/FilterBar';
 import LeadsTable from './leads/LeadsTable';
 import BulkActionBar from './leads/BulkActionBar';
 import LeadDetailPanel from './leads/LeadDetailPanel';
+import PageHeader from '../components/radar/PageHeader';
+import { Button } from '../components/radar/RadarUI';
 
 const PAGE_SIZE = 25;
 
@@ -95,7 +97,15 @@ export default function Leads() {
 
   return (
     <div>
-      <h1 className="page-title">Lead Pipeline</h1>
+      <PageHeader
+        title="Lead Pipeline"
+        subtitle={`${total.toLocaleString('en-IN')} leads · ${selectedIds.length} selected`}
+        action={
+          <>
+            <Button kind="ghost" size="sm" icon="download" onClick={() => api.exportLeadsCsv(queryString, 'visible')}>Export</Button>
+          </>
+        }
+      />
 
       <KpiStrip filterParams={queryString} />
       <SavedViews currentFilters={filters} currentSort={filters.sort} onApply={applyView} />

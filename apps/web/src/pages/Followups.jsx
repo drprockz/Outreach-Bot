@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import StatCard from '../components/StatCard';
+import PageHeader from '../components/radar/PageHeader';
 
 const seqBadge = {
   active: 'badge-green', paused: 'badge-amber', completed: 'badge-blue',
@@ -24,7 +25,7 @@ export default function Followups() {
 
   return (
     <div>
-      <h1 className="page-title">Sequence Tracker</h1>
+      <PageHeader title="Follow-ups" subtitle="Cold + D+3 / D+7 / D+14 / D+90 sequences" />
 
       <div className="stat-grid">
         <StatCard label="Active" value={agg.active || 0} color="var(--green)" className="fade-in stagger-1" />

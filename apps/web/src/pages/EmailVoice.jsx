@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import SettingsPage from '../components/SettingsPage';
 import { useSettingsField } from '../components/useSettingsField';
+import PageHeader from '../components/radar/PageHeader';
 
 const TONE_OPTIONS = [
   { value: 'professional but direct', label: 'Professional but direct' },
@@ -88,9 +89,11 @@ export default function EmailVoice() {
     });
   }, []);
 
-  if (!initial) return <div><h1 className="page-title">Email Voice</h1><div className="td-muted">Loading…</div></div>;
+  if (!initial) return <div><PageHeader title="Email Voice" subtitle="Tone, attributes, sample" /><div className="td-muted">Loading…</div></div>;
 
   return (
+    <>
+    <PageHeader title="Email Voice" subtitle="Tone, attributes, sample" />
     <div style={{ maxWidth: 540 }}>
       <SettingsPage
         title="Email Voice"
@@ -120,5 +123,6 @@ export default function EmailVoice() {
         </div>
       </SettingsPage>
     </div>
+    </>
   );
 }

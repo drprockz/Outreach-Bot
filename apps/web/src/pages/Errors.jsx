@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const sourceBadge = {
   findLeads: 'badge-blue', sendEmails: 'badge-green', sendFollowups: 'badge-amber',
@@ -43,7 +44,7 @@ export default function Errors() {
 
   return (
     <div>
-      <h1 className="page-title">Error Log</h1>
+      <PageHeader title="Errors" subtitle="System errors across all engines · last 24h" />
 
       {data.unresolvedCount > 0 && (
         <div className="alert alert-red mb-md">

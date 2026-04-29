@@ -8,6 +8,8 @@ import RequireSuperadmin from './components/RequireSuperadmin';
 
 import Login from './pages/auth/Login';
 import Otp from './pages/auth/Otp';
+import Welcome from './pages/auth/Welcome';
+import Onboarding from './pages/auth/Onboarding';
 
 import Today from './pages/Today';
 import Engines from './pages/Engines';
@@ -54,6 +56,8 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/otp" element={<Otp />} />
+        <Route path="/welcome" element={<Welcome />} />
+        <Route path="/onboarding" element={<Onboarding />} />
 
         <Route element={<GatedShell />}>
           <Route index               element={<Today />} />

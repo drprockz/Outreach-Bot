@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '../api';
 import EngineStatusPill from '../components/EngineStatusPill';
 import StatCard from '../components/StatCard';
+import PageHeader from '../components/radar/PageHeader';
 
 const GUARDRAIL_ENGINES = new Set(['findLeads', 'sendEmails']);
 const CONFIG_ENGINES    = new Set(['findLeads', 'sendEmails', 'checkReplies', 'sendFollowups']);
@@ -78,9 +79,9 @@ export default function Engines() {
     navigate({ hash: tab }, { replace: true });
   }
 
-  if (error)   return <div className="page"><h1 className="page-title">Engines</h1><div className="msg error">{error}</div></div>;
-  if (!engines) return <div className="page"><h1 className="page-title">Engines</h1><div className="td-muted">Loading…</div></div>;
-  if (!engine)  return <div className="page"><h1 className="page-title">Engines</h1><div className="td-muted">No engine selected.</div></div>;
+  if (error)   return <div className="page"><PageHeader title="Engines" subtitle="Real-time cron status" /><div className="msg error">{error}</div></div>;
+  if (!engines) return <div className="page"><PageHeader title="Engines" subtitle="Real-time cron status" /><div className="td-muted">Loading…</div></div>;
+  if (!engine)  return <div className="page"><PageHeader title="Engines" subtitle="Real-time cron status" /><div className="td-muted">No engine selected.</div></div>;
 
   const availableTabs = TAB_ORDER.filter(t =>
     t === 'status' || t === 'history'
@@ -89,6 +90,8 @@ export default function Engines() {
   );
 
   return (
+    <>
+    <PageHeader title="Engines" subtitle="Real-time cron status" />
     <div className="engines-page">
       <aside className="engines-master">
         <div className="sidebar-section-label">Engines</div>
@@ -123,6 +126,7 @@ export default function Engines() {
         </div>
       </section>
     </div>
+    </>
   );
 }
 

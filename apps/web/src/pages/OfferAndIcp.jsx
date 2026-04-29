@@ -4,6 +4,7 @@ import SettingsPage from '../components/SettingsPage';
 import OfferForm from './OfferForm';
 import IcpProfileForm from './IcpProfileForm';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const TABS = ['offer', 'icp'];
 
@@ -38,11 +39,12 @@ export default function OfferAndIcp() {
       .catch(e => setLoadError(e.message));
   }, []);
 
-  if (loadError) return <div className="page"><h1 className="page-title">Offer & ICP</h1><div className="msg error">{loadError}</div></div>;
-  if (!offer || !icp) return <div className="page"><h1 className="page-title">Offer & ICP</h1><div className="td-muted">Loading…</div></div>;
+  if (loadError) return <div><PageHeader title="Offer & ICP" subtitle="Define your ideal customer profile" /><div className="msg error">{loadError}</div></div>;
+  if (!offer || !icp) return <div><PageHeader title="Offer & ICP" subtitle="Define your ideal customer profile" /><div className="td-muted">Loading…</div></div>;
 
   return (
     <div className="offer-and-icp">
+      <PageHeader title="Offer & ICP" subtitle="What you sell · who you target" />
       <nav className="subtabs">
         <button
           type="button"

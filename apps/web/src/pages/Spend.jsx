@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { api } from '../api';
 import StatCard from '../components/StatCard';
+import PageHeader from '../components/radar/PageHeader';
 
 const USD_TO_INR = 85;
 
@@ -37,8 +38,8 @@ export default function Spend() {
     return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <div><h1 className="page-title">Cost Tracker</h1><div className="loading">Loading cost data...</div></div>;
-  if (!data) return <div><h1 className="page-title">Cost Tracker</h1><div className="error-state">Failed to load cost data.</div></div>;
+  if (loading) return <div><PageHeader title="API Spend" subtitle="Last 30 days · Claude + Gemini" /><div className="loading">Loading cost data...</div></div>;
+  if (!data) return <div><PageHeader title="API Spend" subtitle="Last 30 days · Claude + Gemini" /><div className="error-state">Failed to load cost data.</div></div>;
 
   const monthly = data.monthly || {};
   const totalCost = monthly.total_api_cost_usd || 0;
@@ -62,7 +63,7 @@ export default function Spend() {
 
   return (
     <div>
-      <h1 className="page-title">Cost Tracker</h1>
+      <PageHeader title="API Spend" subtitle="Last 30 days · Claude + Gemini" />
 
       <div className="stat-grid">
         <StatCard label="Monthly Total" value={`$${totalCost.toFixed(2)}`} sub={`~INR ${(totalCost * USD_TO_INR).toFixed(0)}`} color="var(--amber)" className="fade-in stagger-1" />

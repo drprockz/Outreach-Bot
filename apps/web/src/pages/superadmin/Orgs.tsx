@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, gql } from 'urql'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import PageHeader from '@/components/radar/PageHeader'
+import { Badge } from '@/components/radar/RadarUI'
 
 interface OrgRow {
   id: number
@@ -43,8 +45,8 @@ export default function Orgs() {
   const [opError, setOpError] = useState('')
   const [creating, setCreating] = useState(false)
 
-  if (fetching && !data) return <div style={{ padding: 32 }}>Loading...</div>
-  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
+  if (fetching && !data) return <><PageHeader title="All organizations" subtitle="Superadmin" /><div style={{ color: 'var(--text-3)' }}>Loading…</div></>
+  if (error) return <><PageHeader title="All organizations" subtitle="Superadmin" /><div style={{ color: 'var(--red)' }}>Error: {error.message}</div></>
 
   const orgs = (data?.adminOrgs ?? []).filter((o) => filter === 'all' || o.status === filter)
 
@@ -67,14 +69,20 @@ export default function Orgs() {
   }
 
   return (
-    <div style={{ maxWidth: 1200, margin: '40px auto', padding: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700 }}>All Organizations</h1>
-        <Button onClick={() => setShowCreate(!showCreate)}>{showCreate ? 'Cancel' : '+ New org'}</Button>
+    <>
+    <PageHeader
+      title="All organizations"
+      subtitle={`${data?.adminOrgs?.length ?? 0} orgs`}
+      breadcrumb={['Superadmin', 'Orgs']}
+      action={<Button onClick={() => setShowCreate(!showCreate)}>{showCreate ? 'Cancel' : '+ New org'}</Button>}
+    />
+    <div style={{ maxWidth: 1280 }}>
+      <div style={{ marginBottom: 8 }}>
+        <Badge tone="purple" icon="shield" size="md">SUPERADMIN</Badge>
       </div>
 
       {showCreate && (
-        <div style={{ background: 'white', padding: 16, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: 16, display: 'flex', gap: 8 }}>
+        <div style={{ background: 'var(--bg-surface)', padding: 16, borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', marginBottom: 16, display: 'flex', gap: 8 }}>
           <Input placeholder="Org name" value={newName} onChange={(e) => setNewName(e.target.value)} style={{ flex: 1 }} />
           <Input type="email" placeholder="owner@example.com" value={newEmail} onChange={(e) => setNewEmail(e.target.value)} style={{ flex: 1 }} />
           <Button onClick={() => void handleCreate()} disabled={creating}>{creating ? 'Creating...' : 'Create'}</Button>
@@ -92,7 +100,7 @@ export default function Orgs() {
         ))}
       </div>
 
-      <div style={{ background: 'white', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ background: '#f8fafc' }}>
             <tr>{['Name', 'Plan', 'Status', 'Price', 'Sub status', 'Created'].map((h) => (
@@ -113,10 +121,11 @@ export default function Orgs() {
                 <td style={{ padding: 12, fontSize: 13, color: '#64748b' }}>{new Date(o.createdAt).toLocaleDateString()}</td>
               </tr>
             ))}
-            {orgs.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: '#94a3b8' }}>No orgs match filter</td></tr>}
+            {orgs.length === 0 && <tr><td colSpan={6} style={{ padding: 24, textAlign: 'center', color: 'var(--text-3)' }}>No orgs match filter</td></tr>}
           </tbody>
         </table>
       </div>
     </div>
+    </>
   )
 }

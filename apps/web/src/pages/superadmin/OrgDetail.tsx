@@ -4,6 +4,8 @@ import { useQuery, useMutation, gql } from 'urql'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import PageHeader from '@/components/radar/PageHeader'
+import { Status, PlanBadge } from '@/components/radar/RadarUI'
 
 interface AdminOrg {
   id: number; name: string; slug: string
@@ -57,19 +59,26 @@ export default function OrgDetail() {
     }
   }
 
-  if (fetching && !data) return <div style={{ padding: 32 }}>Loading...</div>
-  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
-  if (!data?.adminOrg) return <div style={{ padding: 32, color: '#dc2626' }}>Org not found</div>
+  if (fetching && !data) return <><PageHeader title="Loading…" subtitle="Superadmin" breadcrumb={['Superadmin', 'Orgs']} /><div style={{ color: 'var(--text-3)' }}>Loading…</div></>
+  if (error) return <><PageHeader title="Error" subtitle="Superadmin" breadcrumb={['Superadmin', 'Orgs']} /><div style={{ color: 'var(--red)' }}>Error: {error.message}</div></>
+  if (!data?.adminOrg) return <><PageHeader title="Not found" subtitle="Superadmin" breadcrumb={['Superadmin', 'Orgs']} /><div style={{ color: 'var(--red)' }}>Org not found</div></>
 
   const org = data.adminOrg
 
   return (
-    <div style={{ maxWidth: 1000, margin: '40px auto', padding: 24 }}>
-      <a href="/superadmin/orgs" style={{ color: '#64748b', fontSize: 14, textDecoration: 'none' }}>← All organizations</a>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginTop: 8 }}>{org.name}</h1>
-      <p style={{ color: '#64748b', marginBottom: 24 }}>
-        #{org.id} · {org.slug} · {org.planName ?? 'no plan'} · status: <strong>{org.status}</strong>
-      </p>
+    <>
+    <PageHeader
+      title={org.name}
+      subtitle={`#${org.id} · ${org.slug} · created ${new Date(org.createdAt).toLocaleDateString()}`}
+      breadcrumb={['Superadmin', 'Orgs', org.name]}
+      action={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {org.planName && <PlanBadge plan={org.planName} />}
+          <Status status={org.status} />
+        </div>
+      }
+    />
+    <div style={{ maxWidth: 1100 }}>
 
       {opError && <div style={{ background: '#fee2e2', color: '#991b1b', padding: 12, borderRadius: 6, fontSize: 14, marginBottom: 16 }}>{opError}</div>}
       {opSuccess && <div style={{ background: '#dcfce7', color: '#166534', padding: 12, borderRadius: 6, fontSize: 14, marginBottom: 16 }}>{opSuccess}</div>}
@@ -120,13 +129,14 @@ export default function OrgDetail() {
         </Card>
       </div>
     </div>
+    </>
   )
 }
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div style={{ background: 'white', padding: 20, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-      <h2 style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.5 }}>{title}</h2>
+    <div style={{ background: 'var(--bg-surface)', padding: 20, borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
+      <h2 style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-3)', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 0.6, fontFamily: 'var(--font-mono)' }}>{title}</h2>
       {children}
     </div>
   )

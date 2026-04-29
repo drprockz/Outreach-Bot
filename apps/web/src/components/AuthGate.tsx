@@ -67,7 +67,44 @@ async function fetchMe(): Promise<MeResponse | { unauthorized: true } | { notImp
   if (res.status === 401) return { unauthorized: true }
   if (res.status === 404) return { notImplemented: true }
   if (!res.ok) throw new Error(`/api/me failed (${res.status})`)
-  return (await res.json()) as MeResponse
+  const raw = (await res.json()) as Record<string, unknown>
+  return normaliseMeResponse(raw)
+}
+
+// /api/me has historically shipped two slightly different shapes (the early
+// version returned subscription fields nested under `plan`; the current one
+// returns a separate top-level `subscription` object). Normalise both so the
+// rest of the component can rely on AuthContextValue's shape unconditionally.
+function normaliseMeResponse(raw: Record<string, unknown>): MeResponse {
+  const hasNewShape = raw.user !== undefined && raw.subscription !== undefined
+  if (hasNewShape) return raw as unknown as MeResponse
+
+  const plan = (raw.plan ?? null) as null | {
+    id?: number
+    name: string
+    priceInr?: number
+    status?: SubscriptionStatus
+    trialEndsAt?: string | null
+    currentPeriodEnd?: string | null
+    graceEndsAt?: string | null
+  }
+  const org = (raw.org ?? null) as null | { id: number; name: string; slug: string; status: OrgStatus }
+
+  return {
+    user: {
+      id: raw.id as number,
+      email: (raw.email as string) ?? '',
+      isSuperadmin: !!raw.isSuperadmin,
+    },
+    org: org ?? { id: 0, name: '', slug: '', status: 'active' },
+    plan: { id: plan?.id ?? 0, name: plan?.name ?? 'Trial' },
+    subscription: {
+      status: (plan?.status as SubscriptionStatus | undefined) ?? 'active',
+      trialEndsAt: plan?.trialEndsAt ?? null,
+      currentPeriodEnd: plan?.currentPeriodEnd ?? null,
+      graceEndsAt: plan?.graceEndsAt ?? null,
+    },
+  }
 }
 
 // TODO: remove once backend ships GET /api/me; this synthesises the same shape

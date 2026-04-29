@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, gql } from 'urql'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import PageHeader from '@/components/radar/PageHeader'
 
 interface Member { userId: number; email: string; role: 'owner' | 'admin' }
 
@@ -75,18 +76,18 @@ export default function Team() {
     }
   }
 
-  if (fetching && !data) return <div style={{ padding: 32 }}>Loading team...</div>
-  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
+  if (fetching && !data) return <><PageHeader title="Team" subtitle="Members and roles" /><div style={{ color: 'var(--text-3)' }}>Loading team…</div></>
+  if (error) return <><PageHeader title="Team" subtitle="Members and roles" /><div style={{ color: 'var(--red)' }}>Error: {error.message}</div></>
 
   const members = data?.members ?? []
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Team</h1>
-      <p style={{ color: '#64748b', marginBottom: 24 }}>Manage who has access to your workspace</p>
+    <>
+    <PageHeader title="Team" subtitle="Manage who has access to your workspace" />
+    <div style={{ maxWidth: 880 }}>
 
       {isOwner && (
-        <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: 24 }}>
+        <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', marginBottom: 24 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Invite a member</h2>
           <div style={{ display: 'flex', gap: 8 }}>
             <Input
@@ -106,7 +107,7 @@ export default function Team() {
         </div>
       )}
 
-      <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+      <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)' }}>
         <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>Current members ({members.length})</h2>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
@@ -134,5 +135,6 @@ export default function Team() {
         </table>
       </div>
     </div>
+    </>
   )
 }

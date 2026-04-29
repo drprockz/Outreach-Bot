@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const catBadge = {
   hot: 'badge-red', schedule: 'badge-blue', soft_no: 'badge-amber',
@@ -41,7 +42,7 @@ export default function Replies() {
   if (loading) {
     return (
       <div>
-        <h1 className="page-title">Reply Feed</h1>
+        <PageHeader title="Replies" subtitle="Hot · schedule · OOO · unsubscribe — triage queue" />
         <div className="loading">Loading replies...</div>
       </div>
     );
@@ -60,7 +61,7 @@ export default function Replies() {
 
   return (
     <div>
-      <h1 className="page-title">Reply Feed</h1>
+      <PageHeader title="Replies" subtitle="Hot · schedule · OOO · unsubscribe — triage queue" />
       <div className="page-subtitle">{replies.length} replies total — auto-refreshes every 60s</div>
 
       {replies.length === 0 ? (

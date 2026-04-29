@@ -21,17 +21,19 @@ export default function AppShell() {
   const goToBilling = () => navigate('/settings/billing')
 
   return (
-    <div className="app-shell">
+    <div className="rdr-app-shell">
       <Sidebar />
-      <main className="main-content">
+      <div className="rdr-main">
         {showTrial && daysLeft !== null && (
           <TrialBanner daysLeft={daysLeft} onUpgrade={goToBilling} />
         )}
         {showGrace && subscription.graceEndsAt && (
           <GraceBanner graceEndsAt={subscription.graceEndsAt} onUpdate={goToBilling} />
         )}
-        <Outlet />
-      </main>
+        <div className="rdr-page-body rdr-scroll">
+          <Outlet />
+        </div>
+      </div>
     </div>
   )
 }

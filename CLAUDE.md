@@ -10,103 +10,252 @@ Complete project context for Claude Code working in this repo.
 |---|---|
 | **System name** | Radar |
 | **Owner** | Darshan Parmar — Simple Inc (simpleinc.in) |
-| **Purpose** | Automated cold email client acquisition engine for a solo full-stack dev agency |
-| **Goal** | ₹1 lakh/month recurring revenue from cold outreach to Indian SMBs and US clients |
+| **Purpose** | Automated cold email client acquisition engine, productizing into a multi-tenant SaaS for B2B agencies |
+| **Goal** | ₹1 lakh/month recurring revenue from cold outreach + agency subscriptions |
 | **Monthly expense floor** | ₹50,000 |
 | **Dashboard URL** | radar.simpleinc.cloud |
-| **Host** | Ubuntu 24 VPS, PM2-managed (being migrated to personal server) |
+| **Host** | Ubuntu 24 VPS, PM2-managed (migration to personal server in progress) |
 | **Primary domain** | simpleinc.in (NEVER used for outreach) |
 | **Outreach domain** | trysimpleinc.com (separate GWS account) |
 | **Inboxes** | darshan@trysimpleinc.com, hello@trysimpleinc.com |
-| **DB (today)** | SQLite via better-sqlite3 WAL mode at `db/radar.sqlite` |
-| **DB (next)** | PostgreSQL — migration planned for multi-tenant productization |
+| **Database** | PostgreSQL via Prisma 6 (migrated from SQLite during the multi-tenant rebuild) |
+| **Queue / cache** | Redis + BullMQ (replaces legacy node-cron for engines) |
 
 ---
 
 ## 2. Repository Layout
 
+This is an **npm workspace monorepo**. Two coexisting code paths during the multi-tenant migration:
+
+- **`apps/`** — the new TypeScript stack being productized (the future).
+- **`src/`** — the original single-tenant JS engines + Express dashboard (still operational, being phased out as workers migrate to BullMQ).
+
 ```
 /
-├── src/
-│   ├── engines/              # cron jobs (one per engine)
-│   │   ├── findLeads.js      # Engine 1 — Lead Intelligence
-│   │   ├── sendEmails.js     # Engine 3 — Email Sending
-│   │   ├── sendFollowups.js  # Engine 3b — Follow-up Sequences
-│   │   ├── checkReplies.js   # Engine 4 — Reply Intelligence
-│   │   ├── dailyReport.js    # Engine 5 — Reporting + Alerting
-│   │   └── healthCheck.js    # Anti-Spam Layer 4 — blacklist + metrics
-│   ├── api/                  # Express API
-│   │   ├── server.js         # bootstrap, mounts /api/* routers
-│   │   ├── middleware/
-│   │   │   └── auth.js       # JWT verify + password hash
-│   │   └── routes/           # one file per resource
-│   │       ├── auth.js          POST /api/auth/login
-│   │       ├── overview.js      GET  /api/overview
-│   │       ├── leads.js         CRUD /api/leads
-│   │       ├── funnel.js        GET  /api/funnel
-│   │       ├── sendLog.js       GET  /api/send-log
-│   │       ├── replies.js       GET/PATCH/POST /api/replies
-│   │       ├── sequences.js     GET  /api/sequences
-│   │       ├── cronStatus.js    GET  /api/cron-status
-│   │       ├── health.js        GET/PATCH /api/health
-│   │       ├── costs.js         GET  /api/costs
-│   │       ├── errors.js        GET/PATCH /api/errors
-│   │       ├── config.js        GET/PUT   /api/config
-│   │       ├── niches.js        CRUD /api/niches
-│   │       └── icpRules.js      GET/PUT   /api/icp-rules
-│   ├── core/                 # shared libs (used by engines + api)
-│   │   ├── db/
-│   │   │   └── index.js      # better-sqlite3 singleton + helpers
-│   │   ├── ai/
-│   │   │   ├── claude.js     # Anthropic SDK wrapper
-│   │   │   └── gemini.js     # Gemini 2.5 Flash wrapper
-│   │   ├── email/
-│   │   │   ├── mailer.js     # SMTP send via nodemailer
-│   │   │   ├── imap.js       # IMAP reads via imapflow
-│   │   │   └── contentValidator.js
-│   │   ├── integrations/
-│   │   │   ├── telegram.js   # Bot alerts
-│   │   │   ├── mev.js        # MyEmailVerifier
-│   │   │   └── blacklistCheck.js  # DNS-based RBL checks
-│   │   └── lib/
-│   │       ├── sleep.js
-│   │       └── concurrency.js
-│   └── scheduler/
-│       └── cron.js           # node-cron wiring for all engines
-├── web/                      # React 18 + Vite SPA (radar.simpleinc.cloud)
-│   ├── src/
-│   │   ├── App.jsx, main.jsx, api.js, index.css
-│   │   ├── pages/            # one page per dashboard view
-│   │   └── components/
-│   ├── index.html
-│   ├── vite.config.js
-│   └── package.json          # React deps isolated from backend
-├── db/
-│   ├── schema.sql            # SQLite DDL (loaded by initSchema())
-│   └── radar.sqlite          # runtime DB (gitignored)
+├── apps/
+│   ├── api/                          # NEW — TypeScript API + workers
+│   │   ├── src/
+│   │   │   ├── server.ts             # Express + GraphQL Yoga + WS subscriptions + Bull Board
+│   │   │   ├── graphql/
+│   │   │   │   ├── builder.ts        # Pothos builder + pubsub
+│   │   │   │   ├── schema.ts         # SDL composition
+│   │   │   │   ├── context.ts        # auth + scoped Prisma per-request
+│   │   │   │   └── resolvers/        # me · leads · orgs · admin (superadmin)
+│   │   │   ├── routes/               # auth · otp · billing (REST)
+│   │   │   ├── webhooks/             # google (oauth callback) · razorpay (idempotent + signed)
+│   │   │   ├── workers/              # BullMQ workers — replace legacy cron engines
+│   │   │   │   ├── findLeads.worker.ts
+│   │   │   │   ├── sendEmails.worker.ts
+│   │   │   │   ├── sendFollowups.worker.ts
+│   │   │   │   ├── checkReplies.worker.ts
+│   │   │   │   ├── dailyReport.worker.ts
+│   │   │   │   ├── healthCheck.worker.ts
+│   │   │   │   ├── trialExpiry.worker.ts
+│   │   │   │   ├── scheduler.ts      # node-cron → BullMQ producer
+│   │   │   │   └── index.ts          # process entrypoint (PM2: radar-workers)
+│   │   │   ├── middleware/           # requireAuth · requireSuperadmin · requireRole · enforcePlan · rateLimits
+│   │   │   └── lib/                  # jwt · redis · mailer · telegram · multiTenantGuard · tokenRevocation
+│   │   └── package.json
+│   │
+│   └── web/                          # NEW — React 18 + Vite + Tailwind + urql GraphQL client
+│       ├── src/
+│       │   ├── App.jsx, main.jsx, api.js, index.css
+│       │   ├── components/
+│       │   │   ├── AppShell.tsx, Sidebar.jsx, AuthGate.tsx
+│       │   │   ├── billing/{TrialBanner, GraceBanner, PaywallPage}.tsx
+│       │   │   ├── radar/                  # RADAR design system
+│       │   │   │   ├── Icon.jsx            # custom thin-stroke icon set
+│       │   │   │   ├── RadarUI.jsx         # Button · Badge · StatCard · UsageBar · Status
+│       │   │   │   │                       # · Card · Modal · Sparkline · LineChart · Donut
+│       │   │   │   │                       # · Input · Select · Checkbox · RadarLogo · Kbd
+│       │   │   │   ├── PageHeader.jsx      # sectioned topbar (breadcrumb · title · subtitle · action · bell · ⌘K)
+│       │   │   │   └── AuthShell.jsx       # emerald-gradient brand panel + form-card split layout
+│       │   │   └── ui/{button,input}.tsx   # shadcn primitives (legacy)
+│       │   ├── pages/
+│       │   │   ├── Today.jsx, Engines.jsx, Leads.jsx, SentEmails.jsx,
+│       │   │   ├── Followups.jsx, Replies.jsx, Funnel.jsx,
+│       │   │   ├── Niches.jsx, OfferAndIcp.jsx, EmailVoice.jsx,
+│       │   │   ├── Spend.jsx, EmailHealth.jsx, Errors.jsx, ScheduleLogs.jsx,
+│       │   │   ├── auth/{Login, Otp, Welcome, Onboarding}.tsx
+│       │   │   ├── settings/{Billing, Team, Org, Profile}.tsx
+│       │   │   ├── superadmin/{Orgs, OrgDetail, Users, Metrics}.tsx
+│       │   │   └── leads/                  # decision-cockpit sub-components
+│       │   │       └── KpiStrip · FilterBar · LeadsTable · BulkActionBar · LeadDetailPanel · SavedViews
+│       │   └── lib/                        # urqlClient, auth helpers, redirects
+│       ├── tailwind.config.ts              # slate-base shadcn config
+│       └── package.json
+│
+├── packages/
+│   └── shared/
+│       └── src/
+│           ├── prismaClient.ts             # singleton Prisma client
+│           └── scopedPrisma.ts             # tenant-scoping wrapper (orgId injected on every query)
+│
+├── prisma/
+│   ├── schema.prisma                       # PostgreSQL schema — 23 models
+│   └── migrations/                         # Prisma migration history
+│
+├── src/                                    # LEGACY — original single-tenant codebase
+│   ├── engines/                            # node-cron engines (still used until BullMQ migration completes)
+│   │   ├── findLeads.js, sendEmails.js, sendFollowups.js,
+│   │   ├── checkReplies.js, dailyReport.js, healthCheck.js
+│   ├── api/                                # original Express server (port 3001)
+│   │   ├── server.js                       # mounts /api/* routers
+│   │   ├── middleware/{auth,perOrg}.js
+│   │   └── routes/                         # 20+ resource routers (overview, leads, replies, etc.)
+│   ├── core/                               # shared libs used by BOTH legacy + apps/api
+│   │   ├── db/             # Prisma client wrappers + helpers
+│   │   ├── ai/             # claude.js (Anthropic SDK), gemini.js (Google SDK)
+│   │   ├── email/          # mailer, imap, contentValidator
+│   │   ├── pipeline/       # 11-stage findLeads pipeline (regenerateHook, rescoreIcp, verifyEmail, …)
+│   │   ├── signals/        # signal aggregator (LinkedIn, Crunchbase, etc.)
+│   │   ├── integrations/   # telegram · mev · blacklistCheck
+│   │   ├── lib/            # sleep, concurrency, utils
+│   │   └── config/         # env loader
+│   └── scheduler/cron.js                   # legacy node-cron wiring
+│
 ├── infra/
-│   ├── ecosystem.config.js   # PM2 — scripts resolved relative to repo root
-│   └── backup.sh             # SQLite → Backblaze B2, runs 2 AM daily
-├── tests/                    # vitest, mirrors src/
-│   ├── engines/
-│   ├── api/
-│   └── core/{db,ai,email,integrations,lib}/
-├── scripts/                  # manual dev/smoke scripts (not cron-run)
-│   ├── testFindLeads.js
-│   └── testFullPipeline.js
+│   ├── docker-compose.yml                  # local Postgres 16 + Redis 7
+│   ├── ecosystem.config.cjs                # PM2 — runs radar-cron · radar-dashboard · radar-workers
+│   ├── nginx-radar.conf                    # reverse proxy → :3001
+│   └── backup.sh                           # Postgres → Backblaze B2, daily 02:00
+│
+├── tests/                                  # vitest, mirrors src/
+│   ├── engines/, api/, core/{db,ai,email,integrations,lib,pipeline,signals}/
+├── scripts/
+│   ├── db-tunnel.sh                        # SSH tunnel to prod Postgres
+│   └── seedStarterSettings.js
 ├── docs/
-├── .env                      # gitignored
+│   ├── runbooks/                           # incident playbooks
+│   └── superpowers/{plans,specs,research,status}
 ├── .env.example
-├── package.json              # backend deps + vitest
-├── CLAUDE.md                 # this file
+├── package.json                            # workspace root — npm scripts orchestrate apps/*
+├── CLAUDE.md
 └── README.md
 ```
 
-**Rule:** engines import from `../core/...`, API routes from `../../core/...`, tests from `../../src/...` or `../../../src/...` depending on depth. Never reintroduce `utils/` or `dashboard/`.
+**Workspace rules:**
+- `apps/api` and `apps/web` import from `packages/shared` via the `shared` package name (never relative).
+- `apps/api` workers import legacy pipeline helpers from `../../../src/core/pipeline/` during the transition.
+- New code goes in `apps/`. Don't add to `src/` unless patching a legacy engine still in production.
+- Never reintroduce `web/`, `dashboard/`, or top-level `utils/` — those were removed during the apps/ migration.
 
 ---
 
-## 3. Environment Variables (.env)
+## 3. Multi-Tenancy Model
+
+The Postgres schema enforces tenancy at the data layer:
+
+- **`Org`** — workspace (owner: Darshan for Simple Inc; new orgs onboard via signup).
+- **`User`** — authenticated identity, can belong to multiple orgs via `OrgMembership { role: owner | admin }`.
+- **`OrgSubscription`** — Razorpay-managed plan + status (`trial` | `active` | `grace` | `locked` | `cancelled`).
+- **`Plan`** — Trial / Starter / Growth / Agency pricing rows.
+- Every business table (`Lead`, `Email`, `Reply`, `Niche`, `Offer`, `IcpProfile`, `CronLog`, `ErrorLog`, `Config`, …) has an `orgId` column. The legacy single-tenant rows are seeded under `orgId = 1` (Simple Inc).
+- **`packages/shared/scopedPrisma.ts`** wraps Prisma with `orgId` auto-injection on every query — request handlers must use `ctx.scopedPrisma`, never raw `prisma`.
+- Superadmin (Darshan only, `User.isSuperadmin = true`) bypasses scoping for the `/superadmin/*` GraphQL resolvers and the impersonation flow.
+
+---
+
+## 4. Engines
+
+The 6 engines run on a daily IST schedule. Both the legacy node-cron path (`src/scheduler/cron.js` + `src/engines/*.js`) and the new BullMQ workers (`apps/api/src/workers/*.worker.ts`) are wired up; the cutover is staged per engine.
+
+| Engine | Schedule (IST) | Legacy file | New worker | Purpose |
+|---|---|---|---|---|
+| Lead Intelligence | 09:00 Mon–Sat | `src/engines/findLeads.js` | `apps/api/src/workers/findLeads.worker.ts` | 11-stage pipeline → ~34 ready leads/day |
+| Email Sending | 09:30 Mon–Sat | `src/engines/sendEmails.js` | `sendEmails.worker.ts` | Round-robin inboxes, plain text only |
+| Follow-ups | 18:00 daily | `src/engines/sendFollowups.js` | `sendFollowups.worker.ts` | 5-step threaded sequence |
+| Reply Intelligence | 14:00, 16:00, 20:00 | `src/engines/checkReplies.js` | `checkReplies.worker.ts` | IMAP fetch + Haiku classify |
+| Reporting | 20:30 daily | `src/engines/dailyReport.js` | `dailyReport.worker.ts` | Telegram digest + email digest |
+| Health Check | 02:00 Sun | `src/engines/healthCheck.js` | `healthCheck.worker.ts` | DNS blacklist zones |
+| Trial Expiry | 02:30 daily | — (new) | `trialExpiry.worker.ts` | Locks orgs whose grace period ended |
+| Backup | 02:00 daily | `infra/backup.sh` | (shell) | Postgres → Backblaze B2 |
+
+`apps/api/src/workers/scheduler.ts` produces BullMQ jobs from cron triggers; failed jobs alert via Telegram after 3 attempts.
+
+### findLeads 11-Stage Pipeline (150 raw → ~34 ready)
+
+| # | Stage | Model | Drop rate |
+|---|---|---|---|
+| 1 | Discovery | Gemini Flash (grounded) | — |
+| 2 | Extraction | Gemini Flash | ~10% |
+| 3 | Tech fingerprinting | Gemini Flash | — |
+| 4 | Business signals | Gemini Flash + signal adapters | — |
+| G1 | Gate 1 | — | ~30% (drop modern stacks) |
+| 5 | Quality judge | Gemini Flash | inline |
+| 6 | DM finder | Gemini Flash | ~15% |
+| 7 | Email verify | MyEmailVerifier | ~20% |
+| G2 | Gate 2 | — | ~20% |
+| 8 | Dedup + cooldown + reject_list | Postgres | variable |
+| G3 | Gate 3 | — | ~15% (ICP C → nurture) |
+| 9 | ICP scorer | Gemini Flash | — |
+| 10 | Hook generation | Claude Sonnet 4.6 | — |
+| 11 | Email body | Claude Haiku 4.5 | — |
+
+Each stage is exposed as a reusable helper from `src/core/pipeline/` so the bulk-retry endpoint can re-run a single stage on demand.
+
+### Daily Category Rotation
+Mon D2C · Tue Real estate · Wed Funded startups · Thu Food · Fri Agencies · Sat Healthcare
+
+---
+
+## 5. Anti-Spam (Four Layers)
+
+1. **DNS auth** — SPF, DKIM (`google._domainkey` CNAME), DMARC `p=none`
+2. **Sending behavior** — `DAILY_SEND_LIMIT` cap, 3–7 min random delays, 9:30–17:30 IST, Mon–Sat, holidays blocked
+3. **Content validator** — plain text only, 40–90 words, no URLs in step 0–1, `SPAM_WORDS` blocklist, regenerate once on fail
+4. **Health monitoring** — bounce >2% → `DAILY_SEND_LIMIT=0`; unsub >1% 7d rolling → Telegram; weekly DNS blacklist check; manual mail-tester.com entry
+
+---
+
+## 6. API Layer
+
+### `apps/api` — the new TypeScript service
+
+- **Express + GraphQL Yoga + Pothos** — `/graphql` (queries, mutations, subscriptions over WS).
+- **REST endpoints** kept for: `/auth/*` (OAuth + OTP), `/api/billing/*` (Razorpay portal + cancel), `/api/me`, `/webhooks/google`, `/webhooks/razorpay` (signed + idempotent via `RazorpayWebhookEvent` table).
+- **Bull Board** at `/admin/queues` (gated by `requireSuperadmin`).
+- **Auth** — Google OAuth (passport) + OTP fallback → JWT cookie; `/api/me` returns `{ user, org, plan, subscription }`.
+- **Plan enforcement** — `enforcePlan` middleware blocks `locked` orgs from anything except `/settings/billing` (which the web's `<AuthGate>` handles by rendering the Paywall instead).
+- **Rate limits** — per-org rate limit on lead operations; per-IP on OTP send and Google OAuth start.
+- **Logs** — Pino structured JSON; `pino-http` per request.
+
+### `src/api` — the legacy Express dashboard
+
+Still serves the production dashboard at `:3001` with password+JWT auth. Eventually the React SPA will move to talking to `apps/api/graphql` exclusively, and this server will be retired. Until then, **both APIs share `prisma/schema.prisma`** — schema migrations affect both.
+
+---
+
+## 7. Dashboard (`apps/web`)
+
+React 18 + Vite SPA served by the legacy Express server from `apps/web/dist` (built via `npm run build:web`). Nginx reverse-proxies `radar.simpleinc.cloud` → `localhost:3001`.
+
+**Design system — RADAR (light SaaS, emerald accent).** Tokens in [apps/web/src/index.css](apps/web/src/index.css), primitives in [apps/web/src/components/radar/](apps/web/src/components/radar/). Linear/Stripe energy: white cards, slate text, soft shadows, emerald-only accent. Sora display + JetBrains Mono.
+
+**Pages:** Today · Engines · Leads (decision cockpit) · Sent Emails · Follow-ups · Replies · Funnel · Niches & Schedule · Offer & ICP · Email Voice · Spend · Email Health · Errors · Schedule & Logs · Settings (Billing, Team, Org, Profile) · Superadmin (Orgs, Org Detail, Users, Metrics).
+
+**Auth screens:** Login (email + OTP, Google OAuth) · OTP verification · Welcome (3-card overview) · Onboarding (3-step wizard) · Paywall (when `subscription.status === 'locked'`).
+
+**Auth flow:** `<AuthGate>` calls `GET /api/me` → on `401` redirects to `/login` → on `locked` org renders `<PaywallPage>` → otherwise renders the `<AppShell>` with sidebar + banners + outlet.
+
+### Leads Decision Cockpit
+
+The Lead Pipeline page is an operator console. URL state drives all filters so views are shareable.
+
+- **KPI strip** — total / A·B·C distribution / ready-to-send / signals 7d / replies awaiting triage. Each tile shows `global · in-filter` when a filter is active.
+- **Saved views** — chip row backed by the `saved_views` table.
+- **Filters** — search, multi-status, ICP priority A·B·C, email status, category, city, country, signal type, business stage, employees, ICP score range, has-signals + min count, date ranges, in-reject-list toggle. Tech-stack and business-signals filtered via JSONB `?|` with `jsonb_typeof` guard.
+- **Sort** — ICP score / quality / discovered / domain_last_contacted.
+- **Bulk actions** (per-row checkbox + sticky bar):
+  - `nurture` / `unsubscribed` / `reject` (writes to `reject_list`, absolute) / `requeue` (sets `status='ready'`; precondition: pending step-0 email row exists; ICP-C blocked).
+  - `Retry ▾` runs one of six pipeline stages (`verify_email`, `regen_hook`, `regen_body`, `rescore_icp`, `reextract`, `rejudge`) with a dry-run cost preview. Capped at 25 leads/batch. Streamed via SSE. Gated by `BULK_RETRY_ENABLED=true`.
+- **CSV export** — visible columns or all DB fields, streamed, escapes commas/quotes; auth via fetch+blob (not query-string token).
+
+Backend: `src/api/routes/leads.js` + `src/api/routes/leads/{filterParser,bulkStatus,bulkRetry,csvExport}.js` and `src/api/routes/savedViews.js`. The bulk-retry handler imports stage helpers from `src/core/pipeline/` — also reused by the new `apps/api` BullMQ workers.
+
+---
+
+## 8. Environment Variables (.env)
 
 ```env
 # ── OUTREACH IDENTITY ──────────────────────────────────────
@@ -125,7 +274,7 @@ IMAP_HOST=imap.gmail.com
 IMAP_PORT=993
 
 # ── SEND LIMITS ────────────────────────────────────────────
-DAILY_SEND_LIMIT=0           # Set to 34 after 4-week warmup
+DAILY_SEND_LIMIT=0           # 34 after 4-week warmup
 MAX_PER_INBOX=17
 SEND_DELAY_MIN_MS=180000     # 3 minutes
 SEND_DELAY_MAX_MS=420000     # 7 minutes
@@ -142,6 +291,7 @@ MODEL_CLASSIFY=claude-haiku-4-5-20251001
 
 # ── EMAIL VERIFICATION ─────────────────────────────────────
 MEV_API_KEY=                 # MyEmailVerifier
+MEV_COST_PER_CALL=0.0006     # fallback for bulk-retry cost preview
 
 # ── ALERTS ─────────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN=
@@ -157,100 +307,43 @@ DISABLE_OPEN_TRACKING=true
 DISABLE_CLICK_TRACKING=true
 HTML_EMAIL=false
 
-# ── DATABASE ───────────────────────────────────────────────
-DB_PATH=./db/radar.sqlite    # absolute path on VPS: /home/radar/db/radar.sqlite
+SPAM_WORDS=free,guarantee,winner,prize,limited time,act now,click here,…
 
-# ── DASHBOARD ──────────────────────────────────────────────
+# ── DATABASE / QUEUE ───────────────────────────────────────
+DATABASE_URL="postgresql://radar:CHANGE_ME@127.0.0.1:5432/radar?schema=public"
+DATABASE_URL_TEST="postgresql://radar:CHANGE_ME@127.0.0.1:5432/radar_test?schema=public"
+REDIS_URL=redis://localhost:6379
+
+# ── DASHBOARD / API ────────────────────────────────────────
 DASHBOARD_PORT=3001
 DASHBOARD_URL=https://radar.simpleinc.cloud
-DASHBOARD_PASSWORD=strong_password_here
+DASHBOARD_PASSWORD=strong_password_here    # legacy single-tenant login
 JWT_SECRET=64char_random_here
 JWT_EXPIRES_IN=7d
+VITE_API_URL=http://localhost:3001         # web → api in dev
 
-# ── LEADS COCKPIT ──────────────────────────────────────────
+# ── GOOGLE OAUTH (apps/api) ────────────────────────────────
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_CALLBACK_URL=https://radar.simpleinc.cloud/auth/google/callback
+
+# ── RAZORPAY ───────────────────────────────────────────────
+RAZORPAY_KEY_ID=
+RAZORPAY_KEY_SECRET=
+RAZORPAY_WEBHOOK_SECRET=
+
+# ── FEATURES ───────────────────────────────────────────────
 BULK_RETRY_ENABLED=false     # Gates POST /api/leads/bulk/retry execution
-MEV_COST_PER_CALL=0.0006     # Fallback cost-per-call for verify_email retries
+SIGNALS_ENABLED=false        # Signal aggregator (Move #1)
+SIGNALS_GLOBAL_TIMEOUT_MS=20000
+SIGNALS_ADAPTERS_ENABLED=google_news,company_blog,indian_press,tech_stack,cert_transparency,pagespeed,careers_page,product_hunt,github,corp_filings
 ```
 
-The `SPAM_WORDS` blocklist lives in `.env` and is read by `src/core/email/contentValidator.js`.
-
-`BULK_RETRY_ENABLED` controls the bulk-retry execution endpoint. Dry-run cost previews always work; flip to `true` only after smoke-testing estimates, since each retry stage (regen_hook, regen_body, etc.) can spend real money on Claude/Gemini per call.
+`BULK_RETRY_ENABLED` controls the bulk-retry execution endpoint. Dry-run cost previews always work; flip to `true` only after smoke-testing estimates, since each retry stage (`regen_hook`, `regen_body`, etc.) can spend real money on Claude/Gemini per call.
 
 ---
 
-## 4. Engines
-
-| Engine | File | Schedule (IST) | Purpose |
-|---|---|---|---|
-| Lead Intelligence | `src/engines/findLeads.js` | 09:00 Mon–Sat | 11-stage pipeline → ~34 ready leads/day |
-| Email Sending | `src/engines/sendEmails.js` | 09:30 Mon–Sat | Round-robin both inboxes, plain text only |
-| Follow-ups | `src/engines/sendFollowups.js` | 18:00 daily | 5-step threaded sequence |
-| Reply Intelligence | `src/engines/checkReplies.js` | 14:00, 16:00, 20:00 | IMAP fetch + Haiku classify |
-| Reporting | `src/engines/dailyReport.js` | 20:30 daily | Telegram digest + email digest |
-| Health Check | `src/engines/healthCheck.js` | 02:00 Sun | DNS blacklist zones |
-| Backup | `infra/backup.sh` | 02:00 daily | SQLite → Backblaze B2 |
-
-All engines export `default async function` and are invoked by `src/scheduler/cron.js` (node-cron, IST timezone).
-
-### findLeads 11-Stage Pipeline (150 raw → ~34 ready)
-
-| # | Stage | Model | Drop rate |
-|---|---|---|---|
-| 1 | Discovery | Gemini Flash (grounded) | — |
-| 2 | Extraction | Gemini Flash | ~10% |
-| 3 | Tech fingerprinting | Gemini Flash | — |
-| 4 | Business signals | Gemini Flash | — |
-| G1 | Gate 1 | — | ~30% (drop modern stacks) |
-| 5 | Quality judge | Gemini Flash | inline |
-| 6 | DM finder | Gemini Flash | ~15% |
-| 7 | Email verify | MEV | ~20% |
-| G2 | Gate 2 | — | ~20% |
-| 8 | Dedup + cooldown | SQLite | variable |
-| G3 | Gate 3 | — | ~15% (C → nurture) |
-| 9 | ICP scorer | Gemini Flash | — |
-| 10 | Hook generation | Claude Sonnet 4.6 | — |
-| 11 | Email body | Claude Haiku 4.5 | — |
-
-### Daily Category Rotation
-Mon D2C · Tue Real estate · Wed Funded startups · Thu Food · Fri Agencies · Sat Healthcare
-
----
-
-## 5. Anti-Spam (Four Layers)
-
-1. **DNS auth** — SPF, DKIM (google._domainkey CNAME), DMARC p=none
-2. **Sending behavior** — 34/day cap, 3–7 min random delays, 9:30–17:30 IST, Mon–Sat, holidays blocked
-3. **Content validator** — plain text only, 40–90 words, no URLs in step 0–1, SPAM_WORDS blocklist, regenerate once on fail
-4. **Health monitoring** — bounce >2% → DAILY_SEND_LIMIT=0; unsub >1% 7d rolling → Telegram; weekly DNS blacklist check; manual mail-tester.com entry
-
----
-
-## 6. Dashboard (web/)
-
-React 18 + Vite SPA served by the same Express server from `web/dist`. Nginx reverse-proxies `radar.simpleinc.cloud` → `localhost:3001`.
-
-Pages: Overview · Lead Pipeline · Send Log · Reply Feed · Sequence Tracker · Cron Job Status · Health Monitor · Cost Tracker · Error Log · Engine Config · ICP Rules · Email Persona · Funnel Analytics.
-
-Auth: password → bcrypt → JWT (7-day). `requireAuth` middleware guards everything except `POST /api/auth/login`.
-
-### Leads Decision Cockpit
-
-The Lead Pipeline page is an operator console, not a flat list. URL state drives all filters so views are shareable. Surfaces:
-
-- **KPI strip** — total / A·B·C distribution / ready-to-send / signals 7d / replies awaiting triage. Each tile shows `global · in-filter` when a filter is active.
-- **Saved views** — chip row with create/rename/delete (table `saved_views`). Click applies the view's filters + sort.
-- **Filters** — search, multi-value status / ICP priority A·B·C / email status / category / city / country / signal type / business stage / employees, ICP score range, quality score range, has-LinkedIn-DM, has-signals + min count, signal date range, discovered date range, in-reject-list toggle. Tech-stack and business-signals filtered via JSONB `?|` with `jsonb_typeof` guard.
-- **Sort** — ICP score / quality / discovered / domain_last_contacted (signal_count sort deferred).
-- **Bulk actions** (per-row checkbox + sticky bar):
-  - `nurture` / `unsubscribed` / `reject` (writes to `reject_list`, absolute) / `requeue` (sets status='ready'; precondition: pending step-0 email row exists; ICP-C blocked).
-  - `Retry ▾` runs one of six pipeline stages (`verify_email`, `regen_hook`, `regen_body`, `rescore_icp`, `reextract`, `rejudge`) with a dry-run cost preview before execution. Capped at 25 leads/batch. Streamed via SSE. Gated by `BULK_RETRY_ENABLED=true`.
-- **CSV export** — visible columns or all DB fields, streamed, escapes commas/quotes; auth via fetch+blob (not query-string token).
-
-Backend: `src/api/routes/leads.js` + `src/api/routes/leads/{filterParser,bulkStatus,bulkRetry,csvExport}.js` and `src/api/routes/savedViews.js`. The bulk-retry handler imports from `src/core/pipeline/` — non-engine consumers reuse the same stage helpers (`regenerateHook`, `regenerateBody`, `regenerateSubject`, `reextract`, `rescoreIcp`, `verifyEmail`).
-
----
-
-## 7. Non-Negotiable Rules
+## 9. Non-Negotiable Rules
 
 1. **Plain text only.** Never `html:` in nodemailer.
 2. **No tracking pixels, opens, or clicks.**
@@ -258,9 +351,9 @@ Backend: `src/api/routes/leads.js` + `src/api/routes/leads/{filterParser,bulkSta
 4. **`contentValidator` runs before every send.**
 5. **Bounce rate checked before each send.** >2% = immediate stop.
 6. **Send window enforced** (9:30–17:30 IST, Mon–Sat).
-7. **`cron_log` written at start AND end.** status transitions running → success/failed.
+7. **`cron_log` written at start AND end.** Status transitions running → success/failed.
 8. **All errors → `error_log`.** Never swallow.
-9. **Follow-ups use inReplyTo + references headers.**
+9. **Follow-ups use `inReplyTo` + `references` headers.**
 10. **`reject_list` is absolute.** No code bypasses it.
 11. **`DAILY_SEND_LIMIT=0` = hard stop.**
 12. **All AI calls log model + cost** to `emails` and `daily_metrics`.
@@ -268,86 +361,112 @@ Backend: `src/api/routes/leads.js` + `src/api/routes/leads/{filterParser,bulkSta
 14. **simpleinc.in is never used for outreach.**
 15. **ICP C → `status='nurture'`**, not discarded.
 16. **Gemini grounding stays on free tier.** 150 queries/day << 1,500/day.
+17. **Always use scoped Prisma in `apps/api` request handlers.** Never raw `prisma` — multi-tenant data leak risk.
+18. **Razorpay webhooks are idempotent.** Insert into `razorpay_webhook_events` first, then process; on conflict skip.
 
 ---
 
-## 8. Roadmap
+## 10. Roadmap
 
 ### Phase 1 — Warmup + Pilot (Weeks 1–8, current)
-1 domain, 2 inboxes, India targets (Mumbai, Bangalore, Delhi NCR, Pune). Ramp: 0 → 20 → 28 → 34/day.
+1 domain, 2 inboxes, India targets. Ramp: 0 → 20 → 28 → 34/day.
 
-### Phase 1.5 — Productization prep (next ~1 month)
-- Move to personal server
-- **SQLite → PostgreSQL** (load-bearing for multi-tenancy)
-- Add `tenant_id` to every table (nullable, default=1)
-- PWA polish on `web/` for phone-first ops monitoring
-- No signup/billing UI yet — manually provisioned tenants
+### Phase 1.5 — Productization prep (in progress)
+- ✅ SQLite → PostgreSQL via Prisma
+- ✅ Multi-tenant schema (`Org` + `OrgMembership` + scoped Prisma)
+- ✅ Razorpay subscriptions + webhook
+- ✅ BullMQ worker scaffolding for engine cutover
+- ✅ Trial / grace / locked / paywall flow
+- ✅ RADAR design system pivot to light SaaS aesthetic
+- 🔜 Move from VPS to personal server
+- 🔜 Finish BullMQ migration for all engines (deprecate `src/scheduler`)
+- 🔜 Retire legacy `src/api` once `apps/api/graphql` + REST cover all dashboard reads
+- 🔜 Sign-up flow + onboarding wizard wired into auth
 
 ### Phase 2 — Scale (Months 2–3)
 2nd domain + 4 more inboxes → 68/day. Postmaster API once volume allows. US East Coast window 19:30–21:30 IST.
 
 ### Phase 3 — Multi-tenant SaaS (Months 4–6)
-3 domains, 9 inboxes, 150/day. Redis + BullMQ. Productized as "done-for-you outbound setup" retainer.
+3 domains, 9 inboxes, 150/day. Productized as "done-for-you outbound setup" retainer. Plans: Trial / Starter ₹2,999 / Growth ₹6,999 / Agency ₹14,999.
 
 ---
 
-## 9. Tech Stack
+## 11. Tech Stack
 
 | Layer | Tool |
 |---|---|
 | Runtime | Node.js 20+ LTS, ES modules |
-| Process | PM2 (`infra/ecosystem.config.js`) |
-| Scheduler | node-cron (`src/scheduler/cron.js`) |
-| DB | better-sqlite3 (Postgres planned) |
+| Process manager | PM2 (`infra/ecosystem.config.cjs`) |
+| Legacy scheduler | node-cron (`src/scheduler/cron.js`) |
+| New queue | BullMQ + Redis 7 |
+| ORM | Prisma 6 (Postgres 16) |
+| GraphQL | Yoga + Pothos (code-first) |
+| API | Express 4 (apps/api + legacy src/api) |
 | SMTP | nodemailer |
 | IMAP | imapflow |
 | AI search/extract | @google/generative-ai (Gemini 2.5 Flash) |
 | AI writing | @anthropic-ai/sdk (Sonnet 4.6 + Haiku 4.5) |
-| Email verify | axios + MEV REST |
+| Email verify | axios + MyEmailVerifier REST |
 | Alerts | node-telegram-bot-api |
-| Dashboard FE | React 18 + Vite + recharts |
-| Dashboard API | Express 4 |
-| Auth | bcrypt + jsonwebtoken |
+| Billing | Razorpay subscriptions + webhooks |
+| Dashboard FE | React 18 + Vite + Tailwind + shadcn-ui + urql |
+| Design system | RADAR — light SaaS, emerald accent (`apps/web/src/components/radar/`) |
+| Auth | passport-google-oauth20 + OTP + bcrypt + jsonwebtoken |
+| Logs | pino + pino-http |
 | Tests | vitest |
 | Web server | Nginx reverse-proxy |
 | Backup | rclone → Backblaze B2 |
 
 ---
 
-## 10. Local Dev Commands
+## 12. Local Dev Commands
 
 ```bash
-# Backend (tests + one-off engine runs)
+# Install everything (workspace install)
 npm install
-npm test                     # all 109 tests
-npm test -- engines          # just engine tests
 
-# Run a single engine manually
-node src/engines/findLeads.js
+# Start Postgres + Redis
+docker compose -f infra/docker-compose.yml up -d
 
-# Dashboard (web frontend)
-cd web && npm install && npm run dev   # vite dev server, proxies /api to :3001
+# Apply migrations
+npx prisma migrate deploy
+npx prisma generate
 
-# API server (serves dashboard in prod from web/dist)
-node src/api/server.js
+# Tests
+npm test                                  # all workspaces
+npm run test:api                          # apps/api
+npm test --workspace=apps/web             # apps/web
+npm test -- tests/engines                 # legacy engines
+
+# Dev — new stack (apps/*)
+npm run dev:api                           # apps/api  → :3001 (Yoga at /graphql)
+npm run dev:web                           # apps/web  → :5173 (Vite, proxies /api → :3001)
+
+# Dev — legacy single-tenant
+node src/api/server.js                    # legacy Express dashboard on :3001
+node src/engines/findLeads.js             # one-off engine run
+
+# Build
+npm run build                             # builds shared → api → web
 
 # Production (VPS)
-pm2 start infra/ecosystem.config.js
+pm2 start infra/ecosystem.config.cjs      # radar-cron · radar-dashboard · radar-workers
 pm2 logs radar-cron
+pm2 logs radar-workers
 pm2 logs radar-dashboard
 ```
 
 ---
 
-## 11. Monthly Cost Reference
+## 13. Monthly Cost Reference
 
 | Item | ₹/mo |
 |---|---|
-| AI/API | ~1,875 |
+| AI/API (Claude + Gemini + MEV) | ~1,875 |
 | Instantly Growth warmup | 3,100 |
 | GWS 2 inboxes | 420 |
 | trysimpleinc.com | 70 |
-| VPS | existing |
-| **Total** | **~5,465** |
+| VPS + Postgres | existing |
+| **Total (single-tenant)** | **~5,465** |
 
-ROI: 1 client @ ₹40,000 = 7.3× monthly system cost.
+ROI: 1 client @ ₹40,000 = 7.3× monthly system cost. Target SaaS unit economics: 80% gross margin per agency seat.

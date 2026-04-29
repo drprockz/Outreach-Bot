@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import TechTerm from '../components/TechTerm';
+import PageHeader from '../components/radar/PageHeader';
 
 function gaugeColor(value, warn, critical) {
   if (value >= critical) return 'var(--red)';
@@ -32,8 +33,8 @@ export default function EmailHealth() {
     setSaving(false);
   }
 
-  if (loading) return <div><h1 className="page-title">Health Monitor</h1><div className="loading">Loading health data...</div></div>;
-  if (!data) return <div><h1 className="page-title">Health Monitor</h1><div className="error-state">Failed to load health data.</div></div>;
+  if (loading) return <div><PageHeader title="Email Health" subtitle="Inbox warming, bounce rate, and deliverability" /><div className="loading">Loading health data...</div></div>;
+  if (!data) return <div><PageHeader title="Email Health" subtitle="Inbox warming, bounce rate, and deliverability" /><div className="error-state">Failed to load health data.</div></div>;
 
   const bounceColor = gaugeColor(data.bounceRate, 1.0, 2.0);
   const unsubColor = gaugeColor(data.unsubscribeRate, 0.5, 1.0);
@@ -45,7 +46,7 @@ export default function EmailHealth() {
 
   return (
     <div>
-      <h1 className="page-title">Health Monitor</h1>
+      <PageHeader title="Email Health" subtitle="Inbox warming, bounce rate, and deliverability" />
 
       {/* Gauges */}
       <div className="gauge-grid">

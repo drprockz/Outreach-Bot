@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const DAYS = ['', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -61,7 +62,7 @@ export default function Niches() {
 
   return (
     <div>
-      <h1 className="page-title">Niche Manager</h1>
+      <PageHeader title="Niches & Schedule" subtitle="Active niches and their daily run windows" />
 
       {/* Weekly schedule grid */}
       <div className="section-label" style={{ marginBottom: '12px' }}>Weekly Schedule</div>

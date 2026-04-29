@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const statusConfig = {
   success:       { badge: 'badge-green', label: 'SUCCESS' },
@@ -54,7 +55,7 @@ export default function ScheduleLogs() {
   if (loading) {
     return (
       <div>
-        <h1 className="page-title">Cron Job Status</h1>
+        <PageHeader title="Schedule & Logs" subtitle="Cron jobs, run history, next-run windows" />
         <div className="loading">Loading...</div>
       </div>
     );
@@ -65,7 +66,7 @@ export default function ScheduleLogs() {
 
   return (
     <div>
-      <h1 className="page-title">Cron Job Status</h1>
+      <PageHeader title="Schedule & Logs" subtitle="Cron jobs, run history, next-run windows" />
       <div className="page-subtitle">Date: {data.date || 'Today'}</div>
 
       {notTriggered.length > 0 && (

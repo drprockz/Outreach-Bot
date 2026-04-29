@@ -49,24 +49,35 @@ export async function getMeHandler(req: Request, res: Response): Promise<void> {
   }
   const membership = user.memberships[0] ?? null
   const sub = membership?.org.subscription ?? null
+  // Response shape matches what apps/web/src/components/AuthGate.tsx expects:
+  // { user, org, plan, subscription } — keep these nested objects in sync with
+  // its MeResponse / AuthContextValue interfaces.
   res.json({
-    id: user.id,
-    email: user.email,
-    isSuperadmin: user.isSuperadmin,
-    lastLoginAt: user.lastLoginAt,
+    user: {
+      id: user.id,
+      email: user.email,
+      isSuperadmin: user.isSuperadmin,
+    },
     org: membership
-      ? { id: membership.org.id, name: membership.org.name, slug: membership.org.slug, status: membership.org.status }
-      : null,
-    role: membership?.role ?? null,
-    plan: sub
       ? {
-          name: sub.plan.name,
-          priceInr: sub.plan.priceInr,
-          limitsJson: sub.plan.limitsJson,
+          id: membership.org.id,
+          name: membership.org.name,
+          slug: membership.org.slug,
+          status: membership.org.status,
+        }
+      : null,
+    plan: sub
+      ? { id: sub.plan.id, name: sub.plan.name }
+      : null,
+    subscription: sub
+      ? {
           status: sub.status,
           trialEndsAt: sub.trialEndsAt,
           currentPeriodEnd: sub.currentPeriodEnd,
+          graceEndsAt: sub.graceEndsAt,
         }
       : null,
+    role: membership?.role ?? null,
+    lastLoginAt: user.lastLoginAt,
   })
 }

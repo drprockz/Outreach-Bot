@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import AuthShell from '@/components/radar/AuthShell'
+import Icon from '@/components/radar/Icon'
+import { Button, Input } from '@/components/radar/RadarUI'
 import { sendOtp, googleLoginUrl } from '@/lib/auth'
 
 export default function Login() {
@@ -11,6 +12,7 @@ export default function Login() {
   const navigate = useNavigate()
 
   const handleOtp = async () => {
+    if (!email || loading) return
     setLoading(true)
     setError('')
     try {
@@ -24,44 +26,83 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f7fa' }}>
-      <div style={{ width: '100%', maxWidth: 380, padding: 32, background: 'white', borderRadius: 12, boxShadow: '0 10px 25px rgba(0,0,0,0.08)' }}>
-        <div style={{ marginBottom: 24 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', margin: 0 }}>Sign in to Radar</h1>
-          <p style={{ fontSize: 14, color: '#64748b', marginTop: 4 }}>Your outreach intelligence engine</p>
-        </div>
+    <AuthShell>
+      <div style={{ padding: '40px 40px 28px' }}>
+        <h1 style={{ fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', margin: 0, marginBottom: 8 }}>
+          Welcome back
+        </h1>
+        <p style={{ fontSize: 13, color: 'var(--text-2)', margin: 0, marginBottom: 28 }}>
+          Sign in to your workspace. First-time? We'll create one for you.
+        </p>
 
         <Button
-          className="w-full"
-          variant="outline"
+          kind="secondary"
+          full
+          size="lg"
+          icon="google"
           onClick={() => { window.location.href = googleLoginUrl() }}
-          style={{ marginBottom: 20 }}
         >
           Continue with Google
         </Button>
 
-        <div style={{ position: 'relative', textAlign: 'center', margin: '20px 0', color: '#94a3b8', fontSize: 12, textTransform: 'uppercase' }}>
-          <span style={{ background: 'white', padding: '0 12px', position: 'relative', zIndex: 1 }}>Or</span>
-          <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: 1, background: '#e2e8f0', zIndex: 0 }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0', color: 'var(--text-3)', fontSize: 11 }}>
+          <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+          <span style={{ fontFamily: 'var(--font-mono)', letterSpacing: '0.1em' }}>OR</span>
+          <span style={{ flex: 1, height: 1, background: 'var(--border)' }} />
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Input
-            type="email"
-            placeholder="your@email.com"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-          />
-          {error && <p style={{ color: '#dc2626', fontSize: 14, margin: 0 }}>{error}</p>}
+        <Input
+          label="Work email"
+          full
+          icon="mail"
+          placeholder="darshan@simpleinc.in"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          error={error || undefined}
+        />
+
+        <div style={{ marginTop: 14 }}>
           <Button
-            className="w-full"
+            kind="primary"
+            full
+            size="lg"
+            iconRight="arrowRight"
             onClick={handleOtp}
             disabled={!email || loading}
           >
-            {loading ? 'Sending...' : 'Send OTP'}
+            {loading ? 'Sending…' : 'Send me a code'}
           </Button>
         </div>
+
+        <div style={{
+          marginTop: 16,
+          padding: '10px 12px',
+          background: 'var(--green-dim)',
+          border: '1px solid var(--green-line)',
+          borderRadius: 8,
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 8,
+        }}>
+          <Icon name="info" size={13} color="var(--green-bright)" style={{ marginTop: 2, flexShrink: 0 }} />
+          <div style={{ fontSize: 11.5, color: 'var(--text-2)', lineHeight: 1.5 }}>
+            <strong style={{ color: 'var(--text-1)' }}>No account needed.</strong> Your first login creates a workspace with a 14-day free trial.
+          </div>
+        </div>
       </div>
-    </div>
+      <div style={{
+        padding: '14px 40px',
+        borderTop: '1px solid var(--border)',
+        background: 'var(--bg-subtle)',
+        textAlign: 'center',
+        fontSize: 10.5,
+        color: 'var(--text-3)',
+      }}>
+        By signing in you agree to our{' '}
+        <span style={{ color: 'var(--text-2)', textDecoration: 'underline' }}>Terms</span>
+        {' '}&{' '}
+        <span style={{ color: 'var(--text-2)', textDecoration: 'underline' }}>Privacy</span>
+      </div>
+    </AuthShell>
   )
 }

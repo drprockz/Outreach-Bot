@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../api';
 import StatCard from '../components/StatCard';
+import PageHeader from '../components/radar/PageHeader';
 
 const deliveryBadge = {
   sent: 'badge-green', pending: 'badge-amber', hard_bounce: 'badge-red',
@@ -48,7 +49,7 @@ export default function SentEmails() {
 
   return (
     <div>
-      <h1 className="page-title">Send Log</h1>
+      <PageHeader title="Sent Emails" subtitle="Outbound delivery feed across all inboxes" />
 
       <div className="stat-grid">
         <StatCard label="Total Sent" value={agg.total_sent || 0} color="var(--green)" className="fade-in stagger-1" />

@@ -1,4 +1,6 @@
 import { useQuery, gql } from 'urql'
+import PageHeader from '@/components/radar/PageHeader'
+import { Badge } from '@/components/radar/RadarUI'
 
 interface AdminUser {
   id: number
@@ -18,17 +20,23 @@ const ADMIN_USERS_QUERY = gql`
 export default function Users() {
   const [{ data, fetching, error }] = useQuery<{ adminUsers: AdminUser[] }>({ query: ADMIN_USERS_QUERY })
 
-  if (fetching && !data) return <div style={{ padding: 32 }}>Loading...</div>
-  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error.message}</div>
+  if (fetching && !data) return <><PageHeader title="All users" subtitle="Superadmin" breadcrumb={['Superadmin', 'Users']} /><div style={{ color: 'var(--text-3)' }}>Loading…</div></>
+  if (error) return <><PageHeader title="All users" subtitle="Superadmin" breadcrumb={['Superadmin', 'Users']} /><div style={{ color: 'var(--red)' }}>Error: {error.message}</div></>
 
   const users = data?.adminUsers ?? []
 
   return (
-    <div style={{ maxWidth: 1100, margin: '40px auto', padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>All Users</h1>
-      <p style={{ color: '#64748b', marginBottom: 24 }}>{users.length} total · superadmin badge marks platform staff</p>
-
-      <div style={{ background: 'white', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', overflow: 'hidden' }}>
+    <>
+    <PageHeader
+      title="All users"
+      subtitle={`${users.length} total · superadmin badge marks platform staff`}
+      breadcrumb={['Superadmin', 'Users']}
+    />
+    <div style={{ maxWidth: 1280 }}>
+      <div style={{ marginBottom: 16 }}>
+        <Badge tone="purple" icon="shield" size="md">SUPERADMIN</Badge>
+      </div>
+      <div style={{ background: 'var(--bg-surface)', borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', overflow: 'hidden' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ background: '#f8fafc' }}>
             <tr>
@@ -59,5 +67,6 @@ export default function Users() {
         </table>
       </div>
     </div>
+    </>
   )
 }

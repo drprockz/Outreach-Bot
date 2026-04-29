@@ -21,3 +21,4 @@ logs/
 # Stale legacy web/ build artifacts (real build is at apps/web/dist/)
 web/dist/
 web/node_modules/
+.playwright-mcp/

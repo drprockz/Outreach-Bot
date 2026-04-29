@@ -1,38 +1,58 @@
-interface Props { daysLeft: number; onUpgrade: () => void }
+import Icon from '../radar/Icon'
 
-export function TrialBanner({ daysLeft, onUpgrade }: Props) {
+interface Props { daysLeft: number; onUpgrade: () => void; onDismiss?: () => void }
+
+export function TrialBanner({ daysLeft, onUpgrade, onDismiss }: Props) {
   if (daysLeft > 8) return null
-  const urgent = daysLeft <= 3
   return (
     <div
       role="status"
       style={{
-        background: urgent ? '#fef2f2' : '#fffbeb',
-        borderBottom: `1px solid ${urgent ? '#fecaca' : '#fde68a'}`,
-        padding: '8px 16px',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        fontSize: 14,
+        gap: 12,
+        padding: '10px 18px',
+        background: 'var(--amber-dim)',
+        borderBottom: '1px solid #fde68a',
+        fontSize: 12.5,
       }}
     >
-      <span style={{ color: urgent ? '#991b1b' : '#92400e' }}>
-        ⚡ {daysLeft} day{daysLeft !== 1 ? 's' : ''} left on your trial — upgrade to keep your leads flowing
+      <Icon name="bolt" size={14} color="var(--amber)" />
+      <span style={{ color: '#78350f' }}>
+        <strong style={{ color: '#92400e' }}>
+          {daysLeft} day{daysLeft !== 1 ? 's' : ''} left
+        </strong>{' '}
+        on your Trial — upgrade to keep your leads flowing.
       </span>
       <button
         onClick={onUpgrade}
         style={{
-          background: 'none',
-          border: 'none',
-          color: urgent ? '#7f1d1d' : '#78350f',
-          fontWeight: 500,
-          textDecoration: 'underline',
+          background: 'var(--amber)',
+          color: '#fff',
+          border: 0,
+          padding: '4px 12px',
+          borderRadius: 5,
+          fontSize: 11.5,
+          fontWeight: 600,
           cursor: 'pointer',
-          marginLeft: 16,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 6,
+          boxShadow: '0 1px 0 rgba(0,0,0,0.04)',
         }}
       >
-        Upgrade now →
+        Upgrade now <Icon name="arrowRight" size={11} color="#fff" />
       </button>
+      <span style={{ flex: 1 }} />
+      {onDismiss && (
+        <button
+          onClick={onDismiss}
+          aria-label="Dismiss banner"
+          style={{ background: 'transparent', border: 0, color: '#92400e', cursor: 'pointer', padding: 4 }}
+        >
+          <Icon name="x" size={13} color="#92400e" />
+        </button>
+      )}
     </div>
   )
 }

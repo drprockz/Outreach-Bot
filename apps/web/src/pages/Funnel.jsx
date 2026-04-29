@@ -4,6 +4,7 @@ import {
   ResponsiveContainer, Legend, LineChart, Line, Cell
 } from 'recharts';
 import { api } from '../api';
+import PageHeader from '../components/radar/PageHeader';
 
 const STAGE_COLOR = {
   discovered:  '#3b82f6',
@@ -88,7 +89,7 @@ export default function Funnel() {
 
   return (
     <div>
-      <h1 className="page-title">Pipeline Funnel</h1>
+      <PageHeader title="Funnel" subtitle="Discovery → reply · last 30 days" />
       <p style={{ color: 'var(--text-muted)', marginBottom: 24, marginTop: -8, fontSize: 13 }}>
         End-to-end view of how leads flow through all 11 pipeline stages and where they drop off.
       </p>

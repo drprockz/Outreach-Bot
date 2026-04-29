@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
+import PageHeader from '@/components/radar/PageHeader'
 
 interface BillingPortal {
   plan: string
@@ -44,17 +45,17 @@ export default function Billing() {
     refresh()
   }
 
-  if (loading) return <div style={{ padding: 32 }}>Loading billing info...</div>
-  if (error) return <div style={{ padding: 32, color: '#dc2626' }}>Error: {error}</div>
+  if (loading) return <><PageHeader title="Billing" subtitle="Plan, usage, and history" /><div style={{ color: 'var(--text-3)' }}>Loading billing info…</div></>
+  if (error) return <><PageHeader title="Billing" subtitle="Plan, usage, and history" /><div style={{ color: 'var(--red)' }}>Error: {error}</div></>
   if (!data) return null
 
   const limits = data.limitsJson as { leadsPerDay: number; seats: number; claudeDailySpendCapUsd: number; geminiQueriesPerDay: number }
 
   return (
-    <div style={{ maxWidth: 800, margin: '40px auto', padding: 24 }}>
-      <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 24 }}>Billing</h1>
-
-      <div style={{ background: 'white', padding: 24, borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.05)', marginBottom: 24 }}>
+    <>
+    <PageHeader title="Billing" subtitle="Plan, usage, and history" />
+    <div style={{ maxWidth: 880 }}>
+      <div style={{ background: 'var(--bg-surface)', padding: 24, borderRadius: 10, border: '1px solid var(--border)', boxShadow: 'var(--shadow-sm)', marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
           <div>
             <div style={{ fontSize: 12, color: '#64748b', textTransform: 'uppercase' }}>Current plan</div>
@@ -81,11 +82,12 @@ export default function Billing() {
       </div>
 
       {data.status === 'trial' && data.trialEndsAt && (
-        <div style={{ background: '#fffbeb', padding: 16, borderRadius: 8, fontSize: 14, color: '#92400e' }}>
+        <div style={{ background: 'var(--amber-dim)', border: '1px solid #fde68a', padding: 16, borderRadius: 8, fontSize: 14, color: '#92400e' }}>
           Trial ends {new Date(data.trialEndsAt).toLocaleDateString()}
         </div>
       )}
     </div>
+    </>
   )
 }
 
