@@ -220,9 +220,13 @@ Mon D2C · Tue Real estate · Wed Funded startups · Thu Food · Fri Agencies ·
 - **Rate limits** — per-org rate limit on lead operations; per-IP on OTP send and Google OAuth start.
 - **Logs** — Pino structured JSON; `pino-http` per request.
 
-### `src/api` — the legacy Express dashboard
+**GraphQL coverage** — every dashboard read/write that maps cleanly onto a typed query is now served from `/graphql`. 22 resolver modules under `apps/api/src/graphql/resolvers/` cover: `me`, `orgs`, `admin` (superadmin), `config`, `niches`, `offer`, `icpProfile`, `sequences`, `savedViews`, `engineGuardrails`, `overview`, `funnel`, `sendLog`, `costs`, `errors`, `cronStatus`, `replies`, `engines`, `runEngine`, `health`, `bulkRetry` (estimate query + subscription), and the `leads` lookup queries (`leadFacets` etc.). 86 vitest cases under `apps/api/src/graphql/resolvers/__tests__/` exercise auth gates, tenant isolation, and the error-prone branches.
 
-Still serves the production dashboard at `:3001` with password+JWT auth. Eventually the React SPA will move to talking to `apps/api/graphql` exclusively, and this server will be retired. Until then, **both APIs share `prisma/schema.prisma`** — schema migrations affect both.
+`apps/web/src/api.js` is the GraphQL adapter the legacy `.jsx` pages use — every method in there reshapes the camelCase GraphQL payload into the snake_case shape the legacy REST routes used to return, so the pages don't change.
+
+### `src/api` — the legacy Express dashboard (REST holdouts only)
+
+Still mounted at `:3001` (production) / `:3002` (dev), but only the REST holdouts the GraphQL adapter doesn't yet cover are reachable: lead list/detail/patch/status/signals (query-string parser still pending), `sendLog` (same), `runEngine` / `unlockEngine` / `engineStatus` (BullMQ enqueue semantics differ from the old polling contract), `exportLeadsCsv` (binary stream — stays REST permanently), and the bulk action endpoints (`bulkLeadStatus`, `bulkLeadRetryDryRun`). Removal of the now-unused routers (`config`, `niches`, `overview`, `funnel`, `sequences`, `cronStatus`, `health`, `costs`, `errors`, `offer`, `icpProfile`, `engines`, `engineGuardrails`, `savedViews`, `replies`) is the Phase 10 cleanup PR. `prisma/schema.prisma` is shared — schema migrations affect both servers.
 
 ---
 
@@ -378,9 +382,10 @@ SIGNALS_ADAPTERS_ENABLED=google_news,company_blog,indian_press,tech_stack,cert_t
 - ✅ BullMQ worker scaffolding for engine cutover
 - ✅ Trial / grace / locked / paywall flow
 - ✅ RADAR design system pivot to light SaaS aesthetic
+- ✅ Legacy REST → GraphQL migration (PR #16, Phases 1–9): 22 resolvers in `apps/api/src/graphql/resolvers/`, dashboard cutover via `apps/web/src/api.js` adapter, 86 vitest cases for the resolver suite
+- 🔜 Phase 10 cleanup PR — delete the now-unused legacy routers in `src/api/routes/` plus their tests; trim `runEngine.js` and `leads.js` to just the holdouts
 - 🔜 Move from VPS to personal server
 - 🔜 Finish BullMQ migration for all engines (deprecate `src/scheduler`)
-- 🔜 Retire legacy `src/api` once `apps/api/graphql` + REST cover all dashboard reads
 - 🔜 Sign-up flow + onboarding wizard wired into auth
 
 ### Phase 2 — Scale (Months 2–3)
