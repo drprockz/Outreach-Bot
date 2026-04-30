@@ -1,5 +1,6 @@
 import { prisma } from 'shared'
 import { builder } from '../builder.js'
+import { requireAuth, requireOwner } from '../guards.js'
 import { sendInviteEmail } from '../../lib/mailer.js'
 
 type OrgMemberShape = { userId: number; email: string; role: string }
@@ -28,7 +29,7 @@ builder.queryField('org', (t) =>
     type: 'Org',
     nullable: true,
     resolve: async (query, _root, _args, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
+      requireAuth(ctx)
       return prisma.org.findUnique({ ...query, where: { id: ctx.user.orgId } })
     },
   }),
@@ -38,7 +39,7 @@ builder.queryField('members', (t) =>
   t.field({
     type: [OrgMember],
     resolve: async (_root, _args, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
+      requireAuth(ctx)
       const memberships = await prisma.orgMembership.findMany({
         where: { orgId: ctx.user.orgId },
         include: { user: true },
@@ -53,8 +54,7 @@ builder.mutationField('inviteMember', (t) =>
     type: OrgMember,
     args: { email: t.arg.string({ required: true }) },
     resolve: async (_root, { email }, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
-      if (ctx.user.role !== 'owner') throw new Error('Owner only')
+      requireOwner(ctx)
       const invitee = await prisma.user.upsert({
         where: { email },
         update: {},
@@ -88,8 +88,7 @@ builder.mutationField('removeMember', (t) =>
     type: 'Boolean',
     args: { userId: t.arg.int({ required: true }) },
     resolve: async (_root, { userId }, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
-      if (ctx.user.role !== 'owner') throw new Error('Owner only')
+      requireOwner(ctx)
       if (userId === ctx.user.userId) throw new Error('Cannot remove yourself')
       const membership = await prisma.orgMembership.findUnique({
         where: { orgId_userId: { orgId: ctx.user.orgId, userId } },
@@ -110,8 +109,7 @@ builder.mutationField('changeRole', (t) =>
       role: t.arg.string({ required: true }),
     },
     resolve: async (_root, { userId, role }, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
-      if (ctx.user.role !== 'owner') throw new Error('Owner only')
+      requireOwner(ctx)
       if (!['owner', 'admin'].includes(role)) throw new Error('Invalid role: must be owner or admin')
       const membership = await prisma.orgMembership.update({
         where: { orgId_userId: { orgId: ctx.user.orgId, userId } },
@@ -131,8 +129,7 @@ builder.mutationField('updateOrg', (t) =>
       slug: t.arg.string({ required: false }),
     },
     resolve: async (query, _root, { name, slug }, ctx) => {
-      if (!ctx.user) throw new Error('Unauthenticated')
-      if (ctx.user.role !== 'owner') throw new Error('Owner only')
+      requireOwner(ctx)
       const data: { name?: string; slug?: string } = {}
       if (name !== null && name !== undefined) {
         const trimmed = name.trim()
