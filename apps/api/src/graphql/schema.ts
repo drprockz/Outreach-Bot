@@ -17,5 +17,8 @@ import './resolvers/costs.js'
 import './resolvers/errors.js'
 import './resolvers/cronStatus.js'
 import './resolvers/replies.js'
+import './resolvers/engines.js'
+import './resolvers/runEngine.js'
+import './resolvers/health.js'
 
 export const schema = builder.toSchema()
