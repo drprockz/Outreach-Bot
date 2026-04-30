@@ -20,5 +20,6 @@ import './resolvers/replies.js'
 import './resolvers/engines.js'
 import './resolvers/runEngine.js'
 import './resolvers/health.js'
+import './resolvers/bulkRetry.js'
 
 export const schema = builder.toSchema()
