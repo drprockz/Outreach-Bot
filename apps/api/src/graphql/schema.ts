@@ -16,5 +16,6 @@ import './resolvers/sendLog.js'
 import './resolvers/costs.js'
 import './resolvers/errors.js'
 import './resolvers/cronStatus.js'
+import './resolvers/replies.js'
 
 export const schema = builder.toSchema()
