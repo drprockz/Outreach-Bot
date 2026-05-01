@@ -1,0 +1,8 @@
+[
+  { "name_value": "acme.com" },
+  { "name_value": "www.acme.com" },
+  { "name_value": "app.acme.com" },
+  { "name_value": "api.acme.com" },
+  { "name_value": "staging.acme.com" },
+  { "name_value": "marketing-page.acme.com" }
+]
