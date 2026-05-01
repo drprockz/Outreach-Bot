@@ -112,7 +112,7 @@ describe('mapContext', () => {
     expect(types).toContain('positioning_change');
   });
 
-  it('flattens operational payload into signals (tech_added, subdomain_notable)', () => {
+  it('flattens operational payload into signals (tech_present, subdomain_notable)', () => {
     const op: OperationalPayload = {
       techStack: [{ name: 'Sentry', category: 'monitoring', confidence: 1 }],
       emailProvider: 'Google',
@@ -126,7 +126,7 @@ describe('mapContext', () => {
       operational: ok(op) as unknown as AdapterResult<unknown>,
     });
     const types = ctx.signals.map((s) => s.signalType);
-    expect(types).toContain('tech_added');
+    expect(types).toContain('tech_present');
     expect(types).toContain('subdomain_notable');
   });
 
@@ -138,7 +138,7 @@ describe('mapContext', () => {
       pricingChanges: [], heroChanges: [],
     };
     const op: OperationalPayload = {
-      techStack: [{ name: 'Sentry', category: 'monitoring', confidence: 1 }],   // → confidence 0.6 (tech_added)
+      techStack: [{ name: 'Sentry', category: 'monitoring', confidence: 1 }],   // → confidence 0.6 (tech_present)
       emailProvider: null, knownSaaSVerifications: [], subdomains: [], notableSubdomains: [],
     };
     const ctx = mapContext(company, {

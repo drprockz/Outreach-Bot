@@ -37,35 +37,37 @@ export function makeOperationalAdapter(dns: DnsResolver): Adapter<OperationalPay
     async run(ctx: AdapterContext): Promise<AdapterResult<OperationalPayload>> {
       const t0 = Date.now();
       const errors: string[] = [];
+      const domain = normalizeDomain(ctx.input.domain);
 
-      const homepage = await ctx.http(toHttpsUrl(ctx.input.domain, '/'), { signal: ctx.signal })
-        .then((r) => r.ok ? r.text() : null)
-        .catch((err) => { errors.push(`homepage: ${(err as Error).message}`); return null; });
+      // Run the four operations concurrently — homepage fetch, MX, TXT, and crt.sh
+      // are independent. Sequentially, crt.sh's slowness (commonly 20s+) was
+      // serializing the whole adapter; in parallel the adapter is bounded by the
+      // slowest single call, not their sum.
+      const [homepageRes, mxRes, txtRes, crtshRes] = await Promise.allSettled([
+        ctx.http(toHttpsUrl(ctx.input.domain, '/'), { signal: ctx.signal })
+          .then((r) => r.ok ? r.text() : Promise.reject(new Error(`http ${r.status}`))),
+        dns.resolveMx(domain),
+        dns.resolveTxt(domain),
+        fetchCrtSh(ctx, domain),
+      ]);
+
+      const homepage = homepageRes.status === 'fulfilled' ? homepageRes.value : null;
+      if (homepageRes.status === 'rejected') errors.push(`homepage: ${(homepageRes.reason as Error).message}`);
 
       const techStack = homepage ? detectTechStack(homepage) : [];
 
-      const domain = normalizeDomain(ctx.input.domain);
       let emailProvider: string | null = null;
+      if (mxRes.status === 'fulfilled') emailProvider = inferEmailProvider(mxRes.value);
+      else errors.push(`dns mx: ${(mxRes.reason as Error).message}`);
+
       let knownSaaSVerifications: string[] = [];
-      try {
-        const mx = await dns.resolveMx(domain);
-        emailProvider = inferEmailProvider(mx);
-      } catch (err) {
-        errors.push(`dns mx: ${(err as Error).message}`);
-      }
-      try {
-        const txt = await dns.resolveTxt(domain);
-        knownSaaSVerifications = inferSaasVerifications(txt);
-      } catch (err) {
-        errors.push(`dns txt: ${(err as Error).message}`);
-      }
+      if (txtRes.status === 'fulfilled') knownSaaSVerifications = inferSaasVerifications(txtRes.value);
+      else errors.push(`dns txt: ${(txtRes.reason as Error).message}`);
 
       let subdomains: string[] = [];
-      try {
-        subdomains = await fetchCrtSh(ctx, domain);
-      } catch (err) {
-        errors.push(`crt.sh: ${(err as Error).message}`);
-      }
+      if (crtshRes.status === 'fulfilled') subdomains = crtshRes.value;
+      else errors.push(`crt.sh: ${(crtshRes.reason as Error).message}`);
+
       const notableSubdomains = subdomains.filter((s) => NOTABLE_SUBDOMAIN_RE.test(s));
 
       const haveAnything = techStack.length > 0 || emailProvider !== null || knownSaaSVerifications.length > 0 || subdomains.length > 0;

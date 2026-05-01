@@ -138,9 +138,22 @@ function pushCustomerSignals(out: InternalSignal[], c: CustomerPayload | null): 
   }
 }
 
+// Common-on-every-site tools that swamp the signal list with noise. We still
+// detect them in operational.techStack (useful for persona inference) but don't
+// flatten them into Stage 10 signals — they crowd out higher-value hooks.
+const COMMON_TECH = new Set([
+  'Google Analytics 4', 'Google Tag Manager',
+  'Facebook Pixel', 'LinkedIn Insight', 'Twitter Pixel', 'Reddit Pixel',
+  'WordPress', 'Mailchimp',
+]);
+
 function pushOperationalSignals(out: InternalSignal[], op: OperationalPayload): void {
   for (const tool of op.techStack) {
-    out.push({ signalType: 'tech_added', headline: `Added ${tool.name} to stack`, confidence: 0.6 });
+    if (COMMON_TECH.has(tool.name)) continue;
+    // Note: we can't tell from a homepage scrape whether a tool was *recently*
+    // added vs. always present. Headline reflects the "uses" tense; if/when we
+    // add temporal detection, switch to "tech_added" with "Added X to stack".
+    out.push({ signalType: 'tech_present', headline: `Uses ${tool.name}`, confidence: 0.55 });
   }
   for (const sub of op.notableSubdomains) {
     out.push({ signalType: 'subdomain_notable', headline: `Subdomain ${sub} is live`, confidence: 0.75 });
