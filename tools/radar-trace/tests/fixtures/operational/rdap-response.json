@@ -1,0 +1,52 @@
+{
+  "objectClassName": "domain",
+  "handle": "ACME-COM",
+  "ldhName": "ACME.COM",
+  "unicodeName": "acme.com",
+  "status": ["client transfer prohibited", "server delete prohibited"],
+  "events": [
+    {
+      "eventAction": "registration",
+      "eventDate": "2018-03-15T00:00:00Z"
+    },
+    {
+      "eventAction": "last changed",
+      "eventDate": "2025-01-10T14:22:00Z"
+    },
+    {
+      "eventAction": "expiration",
+      "eventDate": "2027-03-15T00:00:00Z"
+    }
+  ],
+  "nameservers": [
+    { "objectClassName": "nameserver", "ldhName": "NS1.CLOUDFLARE.COM" },
+    { "objectClassName": "nameserver", "ldhName": "NS2.CLOUDFLARE.COM" }
+  ],
+  "entities": [
+    {
+      "objectClassName": "entity",
+      "handle": "REGISTRAR-1234",
+      "roles": ["registrar"],
+      "vcardArray": [
+        "vcard",
+        [
+          ["version", {}, "text", "4.0"],
+          ["fn", {}, "text", "Example Registrar Inc."],
+          ["org", {}, "text", "Example Registrar Inc."]
+        ]
+      ]
+    },
+    {
+      "objectClassName": "entity",
+      "handle": "REGISTRANT-5678",
+      "roles": ["registrant"],
+      "vcardArray": [
+        "vcard",
+        [
+          ["version", {}, "text", "4.0"],
+          ["fn", {}, "text", "Acme Corporation"]
+        ]
+      ]
+    }
+  ]
+}

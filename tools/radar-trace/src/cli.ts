@@ -28,6 +28,7 @@ import { operationalDnsAdapter } from './adapters/operational/dns.js';
 import { operationalPagespeedAdapter } from './adapters/operational/pagespeed.js';
 import { operationalHttpHeadersAdapter } from './adapters/operational/httpHeaders.js';
 import { operationalRobotsTxtAdapter } from './adapters/operational/robotsTxt.js';
+import { operationalWhoisAdapter } from './adapters/operational/whois.js';
 // voice / positioning / social / ads / directories added in chunks 3-5
 import type { Adapter, AdapterResult, Company, ModuleName } from './types.js';
 
@@ -48,6 +49,7 @@ const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
   operationalPagespeedAdapter as Adapter<unknown>,
   operationalHttpHeadersAdapter as Adapter<unknown>,
   operationalRobotsTxtAdapter as Adapter<unknown>,
+  operationalWhoisAdapter as Adapter<unknown>,
   // voice / positioning / social / ads / directories added in chunks 3-5
 ];
 
