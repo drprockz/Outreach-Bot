@@ -12,6 +12,7 @@ import { EnrichedDossierSchema, type EnrichedDossier } from './schemas.js';
 import { voiceStub } from './adapters/voice.stub.js';
 import { positioningStub } from './adapters/positioning.stub.js';
 import { hiringAdapter } from './adapters/hiring.js';
+import { productAdapter } from './adapters/product.js';
 import type { Adapter, CompanyInput } from './types.js';
 
 const ALL_MODULES = ['hiring', 'product', 'customer', 'voice', 'operational', 'positioning'] as const;
@@ -91,7 +92,7 @@ export function buildOptions(argv: string[]): CliOptions {
 
 const STUB_ADAPTERS: Record<ModuleName, Adapter<unknown> | null> = {
   hiring: hiringAdapter as Adapter<unknown>,
-  product: null,       // wired in Chunk 5
+  product: productAdapter as Adapter<unknown>,
   customer: null,      // wired in Chunk 5
   operational: null,   // wired in Chunk 5
   voice: voiceStub as Adapter<unknown>,
