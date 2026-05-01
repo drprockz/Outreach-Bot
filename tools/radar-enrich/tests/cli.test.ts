@@ -70,7 +70,10 @@ describe('main() integration', () => {
 
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-int-'));
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--out', join(tmp, 'out.json')]);
+      // Restrict to stub modules only — using real adapters here would make real
+      // DNS / HTTP calls (operational adapter) and stall the suite. Stubs exercise
+      // the same end-to-end shape (schema + module key set + exit code).
+      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', join(tmp, 'out.json')]);
       expect(code).toBe(0);
       const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
       expect(EnrichedDossierSchema.safeParse(written).success).toBe(true);
@@ -92,7 +95,7 @@ describe('main() integration', () => {
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-int-'));
       const out = join(tmp, 'dossier.json');
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--out', out]);
+      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out]);
       expect(code).toBe(0);
       expect(stdoutChunks.join('')).toBe('');
       const written = JSON.parse(readFileSync(out, 'utf8'));

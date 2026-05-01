@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import { z } from 'zod';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { runEnrichment } from './orchestrator.js';
@@ -13,6 +12,8 @@ import { voiceStub } from './adapters/voice.stub.js';
 import { positioningStub } from './adapters/positioning.stub.js';
 import { hiringAdapter } from './adapters/hiring.js';
 import { productAdapter } from './adapters/product.js';
+import { customerAdapter } from './adapters/customer.js';
+import { operationalAdapter } from './adapters/operational.js';
 import type { Adapter, CompanyInput } from './types.js';
 
 const ALL_MODULES = ['hiring', 'product', 'customer', 'voice', 'operational', 'positioning'] as const;
@@ -90,11 +91,11 @@ export function buildOptions(argv: string[]): CliOptions {
   };
 }
 
-const STUB_ADAPTERS: Record<ModuleName, Adapter<unknown> | null> = {
+const STUB_ADAPTERS: Record<ModuleName, Adapter<unknown>> = {
   hiring: hiringAdapter as Adapter<unknown>,
   product: productAdapter as Adapter<unknown>,
-  customer: null,      // wired in Chunk 5
-  operational: null,   // wired in Chunk 5
+  customer: customerAdapter as Adapter<unknown>,
+  operational: operationalAdapter as Adapter<unknown>,
   voice: voiceStub as Adapter<unknown>,
   positioning: positioningStub as Adapter<unknown>,
 };
@@ -103,38 +104,10 @@ function resolveAdapters(modules: ModuleName[]): Adapter<unknown>[] {
   const out: Adapter<unknown>[] = [];
   for (const m of modules) {
     const a = STUB_ADAPTERS[m];
-    if (a) {
-      out.push(a);
-    } else {
-      // Pre-Chunk-5: every real adapter is "not implemented" → emit a stub-empty adapter inline
-      out.push(notImplementedAdapter(m));
-    }
+    if (!a) throw new Error(`No adapter registered for module: ${m}`);
+    out.push(a);
   }
   return out;
-}
-
-// Pre-Chunk-5 placeholder. The four real adapter imports replace it in Chunk 5,
-// at which point this function and the `STUB_ADAPTERS[m] === null` branch above
-// are deleted (Task 5.0/6.4).
-function notImplementedAdapter(name: ModuleName): Adapter<unknown> {
-  return {
-    name,
-    version: '0.0.0',
-    estimatedCostPaise: 0,
-    requiredEnv: [],
-    schema: z.unknown(),
-    async run() {
-      return {
-        source: name,
-        fetchedAt: new Date().toISOString(),
-        status: 'empty',
-        payload: null,
-        errors: ['adapter not yet implemented'],
-        costPaise: 0,
-        durationMs: 0,
-      };
-    },
-  };
 }
 
 export async function main(argv: string[]): Promise<number> {
