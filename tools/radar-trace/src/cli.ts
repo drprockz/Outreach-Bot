@@ -29,7 +29,18 @@ import { operationalPagespeedAdapter } from './adapters/operational/pagespeed.js
 import { operationalHttpHeadersAdapter } from './adapters/operational/httpHeaders.js';
 import { operationalRobotsTxtAdapter } from './adapters/operational/robotsTxt.js';
 import { operationalWhoisAdapter } from './adapters/operational/whois.js';
-// voice / positioning / social / ads / directories added in chunks 3-5
+import { voiceFounderLinkedinUrlAdapter } from './adapters/voice/founderLinkedinUrl.js';
+import { voiceFounderGithubUrlAdapter } from './adapters/voice/founderGithubUrl.js';
+import { voiceLinkedinPulseAdapter } from './adapters/voice/linkedinPulse.js';
+import { voicePodcastAppearancesAdapter } from './adapters/voice/podcastAppearances.js';
+import { voiceYoutubeChannelAdapter } from './adapters/voice/youtubeChannel.js';
+import { positioningCrunchbaseSnippetAdapter } from './adapters/positioning/crunchbaseSnippet.js';
+import { positioningBraveNewsAdapter } from './adapters/positioning/braveNews.js';
+import { positioningSerperNewsAdapter } from './adapters/positioning/serperNews.js';
+import { adsMetaLibraryUrlAdapter } from './adapters/ads/metaLibraryUrl.js';
+import { adsGoogleTransparencyUrlAdapter } from './adapters/ads/googleTransparencyUrl.js';
+import { socialLinksAdapter } from './adapters/social/links.js';
+// directories added in chunk 5
 import type { Adapter, AdapterResult, Company, ModuleName } from './types.js';
 
 const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
@@ -50,7 +61,18 @@ const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
   operationalHttpHeadersAdapter as Adapter<unknown>,
   operationalRobotsTxtAdapter as Adapter<unknown>,
   operationalWhoisAdapter as Adapter<unknown>,
-  // voice / positioning / social / ads / directories added in chunks 3-5
+  voiceFounderLinkedinUrlAdapter as Adapter<unknown>,
+  voiceFounderGithubUrlAdapter as Adapter<unknown>,
+  voiceLinkedinPulseAdapter as Adapter<unknown>,
+  voicePodcastAppearancesAdapter as Adapter<unknown>,
+  voiceYoutubeChannelAdapter as Adapter<unknown>,
+  positioningCrunchbaseSnippetAdapter as Adapter<unknown>,
+  positioningBraveNewsAdapter as Adapter<unknown>,
+  positioningSerperNewsAdapter as Adapter<unknown>,
+  adsMetaLibraryUrlAdapter as Adapter<unknown>,
+  adsGoogleTransparencyUrlAdapter as Adapter<unknown>,
+  socialLinksAdapter as Adapter<unknown>,
+  // directories added in chunk 5
 ];
 
 export interface CliOptions {
