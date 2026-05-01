@@ -133,7 +133,6 @@ export const customerWaybackDiffAdapter: Adapter<CustomerWaybackDiffPayload> = {
   module: 'customer',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   cacheTtlMs: 7 * 24 * 60 * 60 * 1000,  // 7 days per spec
   requiredEnv: [],
   schema: CustomerWaybackDiffPayloadSchema,

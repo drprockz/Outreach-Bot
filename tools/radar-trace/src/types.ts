@@ -1,12 +1,5 @@
 import type { z } from 'zod';
 
-export interface CompanyInput {
-  name: string;
-  domain: string;
-  location?: string;
-  founder?: string;
-}
-
 export interface Logger {
   debug: (msg: string, obj?: Record<string, unknown>) => void;
   info: (msg: string, obj?: Record<string, unknown>) => void;
@@ -27,13 +20,22 @@ export interface Cache {
 export interface CacheKey {
   adapterName: string;
   adapterVersion: string;
-  inputHash: string;       // sha256 of normalized CompanyInput, truncated to 12 chars
+  inputHash: string;       // sha256 of normalized Company input, truncated to 12 chars
   date: string;            // YYYYMMDD
+}
+
+/** Company input — primary identifier for enrichment. */
+export interface Company {
+  name: string;
+  domain: string;
+  location?: string;
+  founder?: string;
+  founderLinkedinUrl?: string;
 }
 
 /** Runtime context handed to every adapter's run() — all I/O dependencies are here. */
 export interface AdapterContext {
-  input: CompanyInput;
+  input: Company;
   http: typeof fetch;       // wrapped fetch w/ timeout + retry; injectable for tests
   cache: Cache;
   logger: Logger;
@@ -77,16 +79,13 @@ export interface AdapterResult<T> {
 export interface Adapter<TPayload> {
   readonly name: string;
   readonly version: string;
-  readonly estimatedCostPaise: number;
+  /** Logical module this adapter belongs to. */
+  readonly module: ModuleName;
+  /** Estimated INR cost per run. */
+  readonly estimatedCostInr: number;
   readonly requiredEnv: readonly (keyof Env)[];
   readonly schema: z.ZodType<TPayload>;
   run(ctx: AdapterContext): Promise<AdapterResult<TPayload>>;
-
-  /** Logical module this adapter belongs to. (Optional during Chunk 1; required after Chunk 2.) */
-  readonly module?: ModuleName;
-
-  /** Estimated INR cost per run. Optional during Chunk 1; required after Chunk 2. */
-  readonly estimatedCostInr?: number;
 
   /** Optional per-adapter TTL override; default 24h. */
   readonly cacheTtlMs?: number;
@@ -102,14 +101,6 @@ export interface Adapter<TPayload> {
 export type ModuleName =
   | 'hiring' | 'product' | 'customer' | 'voice' | 'operational'
   | 'positioning' | 'social' | 'ads' | 'directories';
-
-/**
- * New input shape — adds founderLinkedinUrl. Alias of CompanyInput for backward
- * compatibility during the Chunk 1 → Chunk 2 transition. Chunk 2 removes CompanyInput.
- */
-export interface Company extends CompanyInput {
-  founderLinkedinUrl?: string;
-}
 
 /**
  * Read-only snapshot of Wave 1 results for use by Wave 2 gate predicates.

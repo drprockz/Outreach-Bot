@@ -40,7 +40,6 @@ export const productChangelogAdapter: Adapter<ProductChangelogPayload> = {
   module: 'product',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: [],
   schema: ProductChangelogPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<ProductChangelogPayload>> {

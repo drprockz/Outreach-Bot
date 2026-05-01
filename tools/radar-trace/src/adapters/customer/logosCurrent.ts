@@ -44,7 +44,6 @@ export const customerLogosCurrentAdapter: Adapter<CustomerLogosCurrentPayload> =
   module: 'customer',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: [],
   schema: CustomerLogosCurrentPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<CustomerLogosCurrentPayload>> {

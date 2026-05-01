@@ -17,7 +17,6 @@ export const hiringCareersAdapter: Adapter<HiringCareersPayload> = {
   module: 'hiring',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: [],
   schema: HiringCareersPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<HiringCareersPayload>> {

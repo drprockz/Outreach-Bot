@@ -20,7 +20,6 @@ export const operationalTechStackAdapter: Adapter<OperationalTechStackPayload> =
   module: 'operational',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: [],
   schema: OperationalTechStackPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<OperationalTechStackPayload>> {

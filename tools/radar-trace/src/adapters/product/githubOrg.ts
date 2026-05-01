@@ -13,7 +13,6 @@ export const productGithubOrgAdapter: Adapter<ProductGithubOrgPayload> = {
   module: 'product',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: ['GITHUB_TOKEN'],
   schema: ProductGithubOrgPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<ProductGithubOrgPayload>> {

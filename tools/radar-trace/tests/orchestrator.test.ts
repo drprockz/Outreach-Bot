@@ -32,7 +32,6 @@ function makeAdapter(name: string, behavior: (ctx: AdapterContext) => Promise<Ad
     version: '1.0.0',
     module: 'hiring',
     estimatedCostInr: 0,
-    estimatedCostPaise: 0,
     requiredEnv: [],
     schema: z.unknown(),
     run: behavior,
@@ -126,7 +125,7 @@ describe('runEnrichment', () => {
     const cache = memoryCache();
     const writeSpy = vi.spyOn(cache, 'write');
     const adapter: Adapter<{ jobs: number }> = {
-      name: 'hiring', version: '1.0.0', module: 'hiring', estimatedCostInr: 0, estimatedCostPaise: 0, requiredEnv: [],
+      name: 'hiring', version: '1.0.0', module: 'hiring', estimatedCostInr: 0, requiredEnv: [],
       schema: z.object({ jobs: z.number() }),
       run: async () => ({ source: 'hiring', fetchedAt: 'x', status: 'ok', payload: { jobs: 'not-a-number' as unknown as number }, costPaise: 0, durationMs: 10 }),
     };

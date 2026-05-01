@@ -14,7 +14,6 @@ export const hiringAdzunaAdapter: Adapter<HiringAdzunaPayload> = {
   module: 'hiring',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: ['ADZUNA_APP_ID', 'ADZUNA_APP_KEY'],
   schema: HiringAdzunaPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<HiringAdzunaPayload>> {

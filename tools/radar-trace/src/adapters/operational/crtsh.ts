@@ -31,7 +31,6 @@ export const operationalCrtshAdapter: Adapter<OperationalCrtshPayload> = {
   module: 'operational',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: [],
   schema: OperationalCrtshPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<OperationalCrtshPayload>> {

@@ -22,7 +22,6 @@ export const productGithubReleasesAdapter: Adapter<ProductGithubReleasesPayload>
   module: 'product',
   version: '0.1.0',
   estimatedCostInr: 0,
-  estimatedCostPaise: 0,
   requiredEnv: ['GITHUB_TOKEN'],
   schema: ProductGithubReleasesPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<ProductGithubReleasesPayload>> {

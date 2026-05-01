@@ -1,16 +1,16 @@
 import { mkdir, readFile, writeFile, readdir, unlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import type { AdapterResult, Cache, CacheKey, CompanyInput } from './types.js';
+import type { AdapterResult, Cache, CacheKey, Company } from './types.js';
 
 /**
- * Returns a stable 12-char hex hash of the normalized CompanyInput.
+ * Returns a stable 12-char hex hash of the normalized Company input.
  * Normalization: trim + lowercase name and domain. Location and founder are passed
  * through verbatim — they're free-text and small variations like "Mumbai" vs
  * "Mumbai, India" are meaningfully different inputs that should produce different
  * cache entries.
  */
-export function hashCompanyInput(input: CompanyInput): string {
+export function hashCompanyInput(input: Company): string {
   const normalized = JSON.stringify({
     name: input.name.trim().toLowerCase(),
     domain: input.domain.trim().toLowerCase(),

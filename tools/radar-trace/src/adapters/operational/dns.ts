@@ -48,7 +48,6 @@ export function makeOperationalDnsAdapter(dnsResolver: DnsResolver): Adapter<Ope
     module: 'operational',
     version: '0.1.0',
     estimatedCostInr: 0,
-    estimatedCostPaise: 0,
     requiredEnv: [],
     schema: OperationalDnsPayloadSchema,
     async run(ctx: AdapterContext): Promise<AdapterResult<OperationalDnsPayload>> {

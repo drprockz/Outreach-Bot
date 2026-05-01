@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileCache, hashCompanyInput, todayStamp } from '../src/cache.js';
-import type { AdapterResult, CompanyInput } from '../src/types.js';
+import type { AdapterResult, Company } from '../src/types.js';
 
 let dir: string;
 
@@ -111,7 +111,7 @@ describe('createFileCache', () => {
 });
 
 describe('hashCompanyInput', () => {
-  const input: CompanyInput = { name: 'Acme Corp', domain: 'acme.com' };
+  const input: Company = { name: 'Acme Corp', domain: 'acme.com' };
 
   it('returns a 12-char hex string', () => {
     const h = hashCompanyInput(input);
