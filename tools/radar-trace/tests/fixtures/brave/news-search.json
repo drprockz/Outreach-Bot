@@ -1,0 +1,21 @@
+{
+  "query": { "original": "\"Acme Corp\" acme.com" },
+  "results": [
+    {
+      "title": "Acme Corp Raises $10M in Series A Funding",
+      "url": "https://techcrunch.com/2025/acme-series-a",
+      "description": "Acme Corp, a leading B2B SaaS company, has raised $10M in a Series A funding round.",
+      "age": "2 days ago",
+      "page_age": "2025-04-29T10:00:00Z",
+      "profile": { "name": "TechCrunch" }
+    },
+    {
+      "title": "Acme Corp Expands to Europe",
+      "url": "https://businessinsider.com/acme-europe",
+      "description": "Acme Corp announced its expansion into the European market.",
+      "age": "1 week ago",
+      "page_age": "2025-04-24T14:00:00Z",
+      "profile": { "name": "Business Insider" }
+    }
+  ]
+}
