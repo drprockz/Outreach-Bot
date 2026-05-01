@@ -42,6 +42,8 @@ The phasing principle is **validate before invest**:
 - Phase 1.5 validates "is change-as-signal worth the storage/cron overhead?" before AI synthesis (2).
 - Phase 2 validates "does AI synthesis produce hook-worthy intelligence?" before scaling beyond the prototype.
 
+**Cost: ~₹500-620/lead at production scale (~₹13-17k/mo at 34 leads/day).** See §4.10 for the per-module breakdown. (Earlier draft estimates of ~₹720/lead and ~₹19k/mo were before Apify ad-creative pricing was nailed at $0.75/1000.)
+
 **Phase 1A explicit non-goals** (do not creep into the spec):
 
 - No DB writes; no Postgres schema design; no migrations
@@ -64,7 +66,7 @@ The phasing principle is **validate before invest**:
 - Replace README — drop "validation prototype" framing entirely; describe Radar Trace as the production data collection layer
 - Update `.env.example` with new env vars (Serper, Brave, Listen Notes, Apify, PageSpeed)
 - Update `docs/superpowers/specs/2026-05-01-radar-enrich-prototype-design.md` — add a note at top redirecting to this spec
-- All existing 143 tests must remain green after rename + refactor (Sub-phase 1A.1 acceptance criterion)
+- Existing test suite is **rewritten as part of the refactor** to match the new per-source adapter granularity. Test count post-1A.1 should be **≥143** (likely higher — splitting one product adapter into 4 sub-adapters yields more test cases). The principle is: equivalent or better coverage of pre-existing behavior, plus tests for the new fields/contract. "143 tests green" is a floor, not strict identity.
 
 ## 4. Module structure (9 modules, ~30 adapters)
 
@@ -241,19 +243,53 @@ export interface Adapter<TPayload> {
 
 **Unchanged:** `name`, `version`, `requiredEnv`, `schema`, `run()`.
 
+### 5.1 PartialDossier type
+
+The argument to `gate(partial)` is a **flat read-only snapshot of Wave 1 results, keyed by dotted adapter name across all modules.** It is constructed AFTER Wave 1 finishes and BEFORE any Wave 2 adapter runs (gates are evaluated against the same snapshot, regardless of Wave 2 sibling order):
+
+```ts
+export type PartialDossier = Readonly<Record<string, AdapterResult<unknown>>>;
+```
+
+Every Wave 1 adapter is present in `partial`, including ones with `status: 'error'` (where `payload` is null) and `status: 'empty'`. **Gate predicates MUST defensively handle null payloads** — accessing `partial['directories.zaubacorp']?.payload?.country` is required, not `partial['directories.zaubacorp'].payload.country`. Gates that throw are treated as `false` (adapter skipped, error recorded as `gate threw: <message>`).
+
+Recommended pattern for gates referencing other adapters:
+
+```ts
+gate(partial) {
+  const zauba = partial['directories.zaubacorp'];
+  if (!zauba || zauba.status !== 'ok' || !zauba.payload) return false;
+  return (zauba.payload as ZaubaPayload).country !== 'India';
+}
+```
+
+### 5.2 Company type
+
+```ts
+export interface Company {
+  name: string;
+  domain: string;
+  location?: string;          // "City, Country" — improves Adzuna scoping, news search
+  founder?: string;           // Founder/CEO name — improves voice.* adapter accuracy
+  founderLinkedinUrl?: string; // Bypass Serper resolution if known (passed via --linkedin)
+}
+```
+
 ## 6. Output shape
 
 ```jsonc
 {
-  "company": { "name": "Mobcast", "domain": "mobcast.in", "location": "Mumbai", "founder": null },
+  "radarTraceVersion": "1.0.0",  // bump on output-shape contract change
+  "company": { "name": "Mobcast", "domain": "mobcast.in", "location": "Mumbai, India" },
   "tracedAt": "2026-05-01T12:00:00Z",
-  "totalCostInr": 517.30,
+  "totalCostInr": 482.10,        // illustrative low-end; matches §4.10 always-on sum
   "totalCostBreakdown": {
-    "free": 0,
-    "serper": 1.20,
-    "brave": 0.50,
-    "listenNotes": 0,
-    "apifyUsd": 6.20      // raw USD; multiplied by current rate for INR display
+    "serper": 1.20,              // INR sum across Serper-using adapters
+    "brave": 0.50,               // INR sum across Brave-using adapters
+    "listenNotes": 0,            // INR sum (0 unless free-tier exhausted)
+    "pagespeed": 0,              // INR sum (0 unless paid tier)
+    "apifyUsd": 5.72,            // raw USD spent on Apify (₹480.48 at USD_INR_RATE=84)
+    "apifyInr": 480.48           // apifyUsd × USD_INR_RATE, for total reconciliation
   },
   "totalDurationMs": 45000,
 
@@ -320,32 +356,67 @@ export interface Adapter<TPayload> {
 }
 ```
 
+**Typed signature:**
+
+```ts
+export interface RadarTraceDossier {
+  radarTraceVersion: string;
+  company: Company;
+  tracedAt: string;             // ISO timestamp
+  totalCostInr: number;
+  totalCostBreakdown: {
+    serper: number;             // INR
+    brave: number;              // INR
+    listenNotes: number;        // INR (free tier → 0)
+    pagespeed: number;          // INR (free tier → 0)
+    apifyUsd: number;           // raw USD
+    apifyInr: number;           // apifyUsd × USD_INR_RATE
+  };
+  totalDurationMs: number;
+  adapters: Record<string, AdapterResult<unknown>>;
+  modules: Record<ModuleName, { adapters: string[] }>;
+  /** Phase 1A always null; Phase 2 populates. */
+  signalSummary: SignalSummary | null;
+}
+
+/** Phase 2 deliverable; Phase 1A treats as `unknown` placeholder so schema compiles. */
+export interface SignalSummary { /* defined in Phase 2 spec */ }
+```
+
 **Design decisions:**
 
+- **`radarTraceVersion`.** Top-level version field on the dossier. Bumped when the output-shape contract changes. Lets Phase 1.5 diff engine and Phase 2 synthesis detect schema breaks across runs and refuse to compare incompatible dossiers.
 - **Flat `adapters` map + `modules` pointer block.** The flat map is the source of truth; modules block is for navigation only. The dashboard renders by iterating `modules.<name>.adapters` and looking up each in `adapters`.
 - **Always emit all 30 adapters.** Even for adapters that didn't run (gate returned false → `status:'empty'`, payload null). The dossier shape is stable across runs; consumers don't need to defensively check key existence.
 - **`signalSummary: null`.** Phase 1A explicitly emits null. Phase 2 will replace.
 
 ## 7. Orchestrator: two-wave execution
 
-Adapters are partitioned into two waves based on `gate` presence:
+**Wave assignment is GLOBAL across all modules, not module-internal.** Adapters from different modules can sit in the same wave. The partition is purely on `gate` presence:
 
-- **Wave 1**: every adapter with no `gate` (the majority — 24 of 30).
-- **Wave 2**: every adapter with a `gate` predicate (currently 2: `directories.g2_capterra`, `directories.glassdoor_apify`).
+- **Wave 1**: every adapter with no `gate` predicate (currently 28 of 30 — includes ALL adapters from modules 1, 2, 3, 4, 5, 6, 7, 8, plus `zaubacorp/ambitionbox/crunchbase_url/linkedin_company_apify` from module 9).
+- **Wave 2**: every adapter with a `gate` predicate (currently 2: `directories.g2_capterra` and `directories.glassdoor_apify`).
+
+This means a Wave 2 gate can reference any Wave 1 adapter regardless of module — e.g., `glassdoor_apify` (Module 9) gates on `zaubacorp` (also Module 9, but in Wave 1) or could equivalently gate on `operational.tech_stack` (Module 5, also Wave 1).
 
 **Execution flow:**
 
-1. Wave 1 runs in parallel via `p-limit(concurrency)`. Each adapter:
+1. Build the adapter list from `--modules` + `--adapters` flags.
+2. Partition into Wave 1 (no gate) and Wave 2 (has gate).
+3. **Wave 1** runs in parallel via `p-limit(concurrency)`. Each adapter:
    - Cache read (if `--use-cache`): skip if hit
    - Required env check: status:'error' on missing
    - Run with timeout + try/catch
    - Schema validation: status:'partial' on zod failure (payload preserved)
    - Cache write (if status !== 'error')
-2. After Wave 1 completes, build `partialDossier` from results.
-3. Wave 2 runs in parallel. Each Wave 2 adapter's `gate(partialDossier)` is evaluated first; if false, adapter records `status:'empty'` with no run. If true, adapter executes through the same flow as Wave 1.
-4. Final dossier emitted.
+4. **Build `partialDossier`** — a flat `Record<string, AdapterResult<unknown>>` of all Wave 1 results, including errored and empty ones (per §5.1). Frozen / read-only.
+5. **Wave 2** runs in parallel. Each Wave 2 adapter:
+   - Evaluate `gate(partialDossier)`. Throws caught and treated as `false` (adapter records `status:'empty'` with `errors: ['gate threw: <message>']`).
+   - If gate returns false → status:'empty', no run, cost:0.
+   - If gate returns true → execute through the same flow as Wave 1.
+6. Final dossier emitted with all 30 adapter slots populated.
 
-**Wall time:** roughly `wave1_max + wave2_max` (slowest in each wave). For Mobcast: Wave 1 ~30s (bounded by Wayback or Apify), Wave 2 ~10s (just G2 or Glassdoor). Total ~40s per lead.
+**Wall time:** roughly `wave1_max + wave2_max` (slowest in each wave). For Mobcast: Wave 1 ~30s (bounded by Wayback or slowest Apify), Wave 2 ~10s (just G2 or Glassdoor). Total ~40s per lead.
 
 **Concurrency:** default `--concurrency 6` (up from 4 in radar-enrich since adapter count tripled). Apify scrapers self-rate-limit; concurrency cap is for HTTP-based adapters.
 
@@ -364,7 +435,7 @@ Adapters are partitioned into two waves based on `gate` presence:
 
 **Errored results NOT cached** (unchanged from radar-enrich) — flaky API calls auto-retry next run.
 
-**Partial results ARE cached** (unchanged) — schema-validation failures don't burn re-run budget.
+**Partial results ARE cached** (unchanged) — schema-validation failures don't burn re-run budget. **For paid Apify adapters, the partial result preserves the recorded `costInr` along with the payload**; subsequent reads from cache do NOT re-bill. This means a same-day re-run of a partial Apify result is free, even though the original cost was real.
 
 **`--clear-cache`:** wipes `./cache/` and exits 0.
 
@@ -425,9 +496,10 @@ Optional:
 
 **Pre-flight cost check (new):**
 
-1. After arg parsing, sum `estimatedCostInr` across enabled adapters
-2. If `--max-cost-inr` set and sum exceeds threshold → exit 1 with error listing offenders
-3. Otherwise, log `pre-flight estimated cost: ₹X.YZ` and proceed
+1. After arg parsing, sum `estimatedCostInr` across enabled adapters. **This is a worst-case estimate** — it assumes every Wave 2 gated adapter fires (gates evaluate to true). Actual cost is typically lower because some gates won't fire (e.g., `glassdoor_apify` skipped for Indian targets).
+2. If `--max-cost-inr` set and sum exceeds threshold → exit 1 with error listing offenders.
+3. Otherwise, log `pre-flight estimated cost (worst case): ₹X.YZ` and proceed.
+4. `totalCostInr` in the final dossier reflects **actual** cost, which may be lower than the pre-flight estimate.
 
 ## 11. Error handling
 
@@ -458,7 +530,7 @@ Six sub-phases, ~1 week each. Each ends with green tests + at least one runnable
 - Cost tracking: INR-primary, USD breakdown
 - All existing 143 tests still green
 
-**Acceptance:** `radar-trace --company "Acme" --domain acme.com` produces new output shape with same data as today, just decomposed.
+**Acceptance:** `radar-trace --company "Acme" --domain acme.com` produces new output shape with same data as today, just decomposed. Test count ≥143 (per §3 floor), all green, typecheck clean.
 
 ### 13.2 Sub-phase 1A.2 — Operational + product free expansion (Week 2)
 6 new free adapters: `product.rss`, `product.sitemap`, `operational.pagespeed`, `operational.http_headers`, `operational.robots_txt`, `operational.whois`.
@@ -508,7 +580,7 @@ Six sub-phases, ~1 week each. Each ends with green tests + at least one runnable
 - **5 real validation runs** against your actual ready leads
 - Bug fixes from real-data findings
 
-**Acceptance:** Phase 1A complete. Ready for Phase 1.5 / Phase 2 decision.
+**Acceptance:** Phase 1A complete. Specifically: (1) all 30 adapters runnable on real leads without crashing, (2) total cost per lead within ±20% of §4.10 estimate, (3) **≥3 of 5 validation dossiers surface a signal an operator wouldn't have written manually** (qualitative gate, but operator-judged before Phase 1.5/Phase 2 promotion). Ready for Phase 1.5 / Phase 2 decision.
 
 ## 14. Testing approach
 
@@ -541,9 +613,11 @@ APIFY_TOKEN=                   # Modules 4, 7, 8, 9 (paid scrapers)
 # Cost-conversion
 USD_INR_RATE=84.0              # Override if INR rate moves materially
 
-# Reuse from radar-enrich (Stage 10 Phase 2 — currently unused but kept)
+# UNUSED IN PHASE 1A — kept in .env.example for Phase 2 forward-compatibility.
+# Operators can leave these blank during Phase 1A; nothing reads them.
 ANTHROPIC_API_KEY=             # Phase 2 only
 ANTHROPIC_DISABLED=            # Phase 2 only — falls back to Gemini if true
+GEMINI_API_KEY=                # Phase 2 only — used by regenerateHook fallback
 ```
 
 `--skip-paid` still requires the free-tier keys (Adzuna, GitHub, Serper, Brave, Listen Notes, optional PageSpeed). Validation runs without Apify cost: ~₹2/lead.
@@ -569,13 +643,18 @@ ANTHROPIC_DISABLED=            # Phase 2 only — falls back to Gemini if true
 ## 17. Open questions / deferred decisions
 
 - **Apify rate-limit / failure handling** — what's the right retry / backoff policy for Apify? Decide during Sub-phase 1A.4 when first integration lands.
-- **Twitter / X actor selection** — multiple Apify actors exist; pick the one with best uptime/cost ratio during Sub-phase 1A.5.
-- **Facebook / Instagram actor selection** — same.
-- **`directories.g2_capterra` HTML structure stability** — G2 occasionally restructures their pages; if anti-bot becomes hostile, fall back to Apify.
+- **Twitter / X actor selection** — multiple Apify actors exist (`apify/twitter-scraper`, `quacker/twitter-scraper`, etc.); pick the one with best uptime/cost ratio during Sub-phase 1A.5.
+- **Instagram actor selection** — Apify offers `apify/instagram-scraper` and several alternatives; select during Sub-phase 1A.5 based on field coverage + cost.
+- **Facebook page actor selection** — same.
+- **`google_creatives_apify` precise pricing** — Apify page didn't publicly list pricing for `silva95gustavo/google-ads-scraper`; verify during Sub-phase 1A.5 (estimate ₹15-50 in §4.8 reflects this uncertainty).
+- **`directories.g2_capterra` HTML structure stability** — G2 occasionally restructures their pages; if anti-bot becomes hostile, fall back to Apify (would add ~₹50/lead for SaaS-target leads).
 - **`directories.glassdoor_apify` actor selection** — Apify has multiple Glassdoor scrapers; pick during Sub-phase 1A.4 based on field coverage + cost.
 - **Adapter version-bump cache invalidation** — if an adapter's version is bumped on a subsequent commit (e.g. `0.1.0` → `0.2.0`), all cached entries become invalid by design. Document this in the adapter README so changes don't surprise operators.
-- **Apify SDK vs. raw fetch** — Apify offers a JS SDK. For Phase 1A use raw `fetch` against their REST API (`https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items`) for consistency with the existing `http.ts` wrapper. Revisit if Apify-specific features (e.g., webhook callbacks) become useful.
 - **Pre-flight cost rate updates** — `USD_INR_RATE` is a static env var. If forex moves materially over the validation period, costs may diverge from estimates. Acceptable for prototype; revisit at Phase 1.5.
+
+**Decided (not open):**
+
+- **Apify SDK vs. raw fetch** — Phase 1A uses raw `fetch` against the Apify REST API (`https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items`) for consistency with the existing `http.ts` wrapper. The Apify JS SDK adds dependency weight and Apify-specific abstractions that aren't needed for the run-actor-and-get-results use case. Revisit only if Apify-specific features (e.g., webhook callbacks, dataset-streaming) become useful in a later phase.
 
 ## 18. Promotion path
 
