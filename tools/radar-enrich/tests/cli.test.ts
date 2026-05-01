@@ -60,6 +60,10 @@ describe('buildOptions (arg parser)', () => {
 });
 
 describe('main() integration', () => {
+  const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
+    hook: 'fake-hook', costUsd: 0, model: 'fake', hookVariantId: 'A' as const,
+  });
+
   it('emits a complete dossier that validates against EnrichedDossierSchema', async () => {
     let tmp: string | null = null;
     let stdoutChunks: string[] = [];
@@ -73,7 +77,7 @@ describe('main() integration', () => {
       // Restrict to stub modules only — using real adapters here would make real
       // DNS / HTTP calls (operational adapter) and stall the suite. Stubs exercise
       // the same end-to-end shape (schema + module key set + exit code).
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', join(tmp, 'out.json')]);
+      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', join(tmp, 'out.json')], { loadRegenerateHook: fakeLoad });
       expect(code).toBe(0);
       const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
       expect(EnrichedDossierSchema.safeParse(written).success).toBe(true);
@@ -95,7 +99,7 @@ describe('main() integration', () => {
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-int-'));
       const out = join(tmp, 'dossier.json');
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out]);
+      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
       expect(code).toBe(0);
       expect(stdoutChunks.join('')).toBe('');
       const written = JSON.parse(readFileSync(out, 'utf8'));
@@ -104,5 +108,63 @@ describe('main() integration', () => {
       stdoutSpy.mockRestore();
       if (tmp) rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+describe('main() synthesis', () => {
+  let tmp: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let stdoutSpy: any;
+  let stdoutChunks: string[];
+
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-syn-'));
+    stdoutChunks = [];
+    stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
+      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+      return true;
+    });
+  });
+  afterEach(() => {
+    stdoutSpy.mockRestore();
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it('populates signalSummary when synthesis succeeds', async () => {
+    const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
+      hook: 'fake-hook', costUsd: 0.002, model: 'fake', hookVariantId: 'A' as const,
+    });
+    const out = join(tmp, 'd.json');
+    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(readFileSync(out, 'utf8'));
+    expect(parsed.signalSummary.suggestedHooks.length).toBe(3);
+    expect(parsed.signalSummary.suggestedHooks[0]).toBe('fake-hook');
+    expect(parsed.signalSummary.totalCostUsd).toBeCloseTo(0.006, 5);
+  });
+
+  it('falls back to empty signalSummary when loadRegenerateHook throws', async () => {
+    const fakeLoad = async () => { throw new Error('SDK not installed'); };
+    const out = join(tmp, 'd.json');
+    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(readFileSync(out, 'utf8'));
+    expect(parsed.signalSummary.topSignals).toEqual([]);
+    expect(parsed.signalSummary.suggestedHooks).toEqual([]);
+    expect(parsed.signalSummary.totalCostUsd).toBe(0);
+  });
+
+  it('--debug-context includes synthesizedContext + stage10 metadata', async () => {
+    const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
+      hook: 'fake-hook', costUsd: 0, model: 'fake', hookVariantId: 'A' as const,
+    });
+    const out = join(tmp, 'd.json');
+    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--debug-context', '--out', out], { loadRegenerateHook: fakeLoad });
+    expect(code).toBe(0);
+    const parsed = JSON.parse(readFileSync(out, 'utf8'));
+    expect(parsed.signalSummary._debug).toBeDefined();
+    expect(parsed.signalSummary._debug.synthesizedContext.lead.business_name).toBe('Acme');
+    expect(parsed.signalSummary._debug.stage10.path).toBe('src/core/pipeline/regenerateHook.js');
+    expect(parsed.signalSummary._debug.stage10.gitSha).toMatch(/^[0-9a-f]{7,40}$|^unknown$/);
   });
 });

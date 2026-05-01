@@ -2,6 +2,7 @@
 import { Command } from 'commander';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { runEnrichment } from './orchestrator.js';
 import { createFileCache } from './cache.js';
 import { createHttp } from './http.js';
@@ -14,7 +15,10 @@ import { hiringAdapter } from './adapters/hiring.js';
 import { productAdapter } from './adapters/product.js';
 import { customerAdapter } from './adapters/customer.js';
 import { operationalAdapter } from './adapters/operational.js';
+import { mapContext, toStage10Signals } from './synthesis/contextMapper.js';
+import { generateHooks, loadRealRegenerateHook } from './synthesis/hookGenerator.js';
 import type { Adapter, CompanyInput } from './types.js';
+import type { RegenerateHookFn } from './synthesis/hookGenerator.js';
 
 const ALL_MODULES = ['hiring', 'product', 'customer', 'voice', 'operational', 'positioning'] as const;
 type ModuleName = typeof ALL_MODULES[number];
@@ -29,6 +33,11 @@ export interface CliOptions {
   timeoutMs: number;
   verbose: boolean;
   debugContext: boolean;
+}
+
+export interface MainDeps {
+  /** Override for tests; defaults to loadRealRegenerateHook() (lazy). */
+  loadRegenerateHook?: () => Promise<RegenerateHookFn>;
 }
 
 export function buildOptions(argv: string[]): CliOptions {
@@ -110,7 +119,7 @@ function resolveAdapters(modules: ModuleName[]): Adapter<unknown>[] {
   return out;
 }
 
-export async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[], deps: MainDeps = {}): Promise<number> {
   const opts = buildOptions(argv);
   const logger = createLogger({ level: opts.verbose ? 'debug' : 'info', pretty: process.stdout.isTTY ?? false });
   const env = loadEnv(process.env);
@@ -130,7 +139,34 @@ export async function main(argv: string[]): Promise<number> {
     concurrency: opts.concurrency, timeoutMs: opts.timeoutMs, useCache: opts.useCache,
   });
 
-  // Synthesis is wired in Chunk 7. For now emit an empty signalSummary.
+  const ctx = mapContext(opts.input, {
+    hiring:      results.hiring      ?? emptyResult('hiring'),
+    product:     results.product     ?? emptyResult('product'),
+    customer:    results.customer    ?? emptyResult('customer'),
+    operational: results.operational ?? emptyResult('operational'),
+  });
+
+  let signalSummary;
+  try {
+    const loader = deps.loadRegenerateHook ?? loadRealRegenerateHook;
+    const regenerate = await loader();
+    const hooks = await generateHooks(ctx, { regenerateHook: regenerate });
+    signalSummary = {
+      topSignals: hooks.topSignals,
+      suggestedHooks: hooks.suggestedHooks,
+      totalCostUsd: hooks.totalCostUsd,
+      ...(opts.debugContext ? {
+        _debug: {
+          synthesizedContext: { lead: ctx.lead, persona: ctx.persona, signals: toStage10Signals(ctx.signals) },
+          stage10: { path: 'src/core/pipeline/regenerateHook.js', gitSha: gitShaSafe() },
+        },
+      } : {}),
+    };
+  } catch (err) {
+    logger.warn('synthesis failed', { error: (err as Error).message });
+    signalSummary = { topSignals: [], suggestedHooks: [], totalCostUsd: 0 };
+  }
+
   const dossier: EnrichedDossier = {
     company: opts.input,
     enrichedAt: new Date().toISOString(),
@@ -144,7 +180,7 @@ export async function main(argv: string[]): Promise<number> {
       operational: results.operational ?? emptyResult('operational'),
       positioning: results.positioning ?? emptyResult('positioning'),
     },
-    signalSummary: { topSignals: [], suggestedHooks: [], totalCostUsd: 0 },
+    signalSummary,
   };
 
   const validated = EnrichedDossierSchema.parse(dossier);
@@ -172,6 +208,14 @@ function emptyResult(name: string) {
     source: name, fetchedAt: new Date().toISOString(), status: 'empty' as const,
     payload: null, costPaise: 0, durationMs: 0,
   };
+}
+
+function gitShaSafe(): string {
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    return 'unknown';
+  }
 }
 
 // Entrypoint guard: only run when invoked directly (not when imported by tests)
