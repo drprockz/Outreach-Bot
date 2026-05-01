@@ -1,0 +1,4 @@
+[
+  { "name": "core", "description": "Main library", "language": "TypeScript", "stargazers_count": 120, "pushed_at": "2026-04-25T00:00:00Z", "created_at": "2024-01-01T00:00:00Z", "html_url": "https://github.com/acme/core" },
+  { "name": "demo-app", "description": "New demo", "language": "Python", "stargazers_count": 5, "pushed_at": "2026-04-20T00:00:00Z", "created_at": "2026-04-15T00:00:00Z", "html_url": "https://github.com/acme/demo-app" }
+]

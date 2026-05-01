@@ -1,0 +1,10 @@
+{
+  "archived_snapshots": {
+    "closest": {
+      "available": true,
+      "url": "http://web.archive.org/web/20260201000000/https://acme.com/customers",
+      "timestamp": "20260201000000",
+      "status": "200"
+    }
+  }
+}

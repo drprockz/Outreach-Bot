@@ -1,0 +1,59 @@
+{
+  "captchaResult": "CAPTCHA_NOT_NEEDED",
+  "kind": "pagespeedonline#result",
+  "id": "https://acme.com/",
+  "loadingExperience": {
+    "id": "https://acme.com/",
+    "metrics": {},
+    "overall_category": "FAST",
+    "initial_url": "https://acme.com/"
+  },
+  "lighthouseResult": {
+    "requestedUrl": "https://acme.com/",
+    "finalUrl": "https://acme.com/",
+    "categories": {
+      "performance": {
+        "id": "performance",
+        "title": "Performance",
+        "score": 0.87
+      }
+    },
+    "audits": {
+      "largest-contentful-paint": {
+        "id": "largest-contentful-paint",
+        "title": "Largest Contentful Paint",
+        "score": 0.9,
+        "numericValue": 1823.4,
+        "numericUnit": "millisecond"
+      },
+      "first-contentful-paint": {
+        "id": "first-contentful-paint",
+        "title": "First Contentful Paint",
+        "score": 0.95,
+        "numericValue": 987.6,
+        "numericUnit": "millisecond"
+      },
+      "cumulative-layout-shift": {
+        "id": "cumulative-layout-shift",
+        "title": "Cumulative Layout Shift",
+        "score": 0.99,
+        "numericValue": 0.012,
+        "numericUnit": "unitless"
+      },
+      "server-response-time": {
+        "id": "server-response-time",
+        "title": "Initial server response time was short",
+        "score": 1,
+        "numericValue": 148.2,
+        "numericUnit": "millisecond"
+      },
+      "interaction-to-next-paint": {
+        "id": "interaction-to-next-paint",
+        "title": "Interaction to Next Paint",
+        "score": 1,
+        "numericValue": 96.0,
+        "numericUnit": "millisecond"
+      }
+    }
+  }
+}

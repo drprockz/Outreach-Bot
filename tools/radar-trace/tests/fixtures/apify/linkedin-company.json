@@ -1,0 +1,21 @@
+[
+  {
+    "name": "Acme Corp",
+    "universalName": "acme-corp",
+    "url": "https://www.linkedin.com/company/acme-corp/",
+    "industry": "Software Development",
+    "description": "Building the future of B2B software. We help teams work smarter.",
+    "staffCount": 312,
+    "staffCountRange": "201-500",
+    "headquarter": {
+      "city": "San Francisco",
+      "geographicArea": "California",
+      "country": "US"
+    },
+    "foundedOn": {
+      "year": 2018
+    },
+    "specialities": ["SaaS", "B2B", "Enterprise Software", "AI"],
+    "followersCount": 8432
+  }
+]

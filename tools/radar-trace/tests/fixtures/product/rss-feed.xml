@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Acme Blog</title>
+    <link>https://acme.com/blog</link>
+    <item>
+      <title>Shipped: Multi-tenant subdomain support</title>
+      <link>https://acme.com/blog/multitenant</link>
+      <pubDate>Tue, 28 Apr 2026 00:00:00 GMT</pubDate>
+      <description>Now each customer gets their own subdomain.</description>
+    </item>
+    <item>
+      <title>Hiring: Senior Backend Engineer</title>
+      <link>https://acme.com/blog/hiring-senior-be</link>
+      <pubDate>Mon, 20 Apr 2026 00:00:00 GMT</pubDate>
+      <description>We're hiring.</description>
+    </item>
+  </channel>
+</rss>

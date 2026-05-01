@@ -1,0 +1,21 @@
+{
+  "searchParameters": { "q": "Acme funding", "type": "news", "engine": "google" },
+  "news": [
+    {
+      "title": "Acme Corp Raises $10M Series A",
+      "link": "https://techcrunch.com/acme-series-a",
+      "snippet": "Acme Corp announced a $10M Series A funding round led by...",
+      "date": "2 days ago",
+      "source": "TechCrunch",
+      "position": 1
+    },
+    {
+      "title": "Acme Launches New Platform",
+      "link": "https://businesswire.com/acme-platform",
+      "snippet": "Acme Corp today announced the launch of its new platform...",
+      "date": "1 week ago",
+      "source": "Business Wire",
+      "position": 2
+    }
+  ]
+}

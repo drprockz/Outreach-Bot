@@ -1,0 +1,34 @@
+[
+  {
+    "id": "1040382736251948",
+    "page_name": "Acme Corp",
+    "ad_creative_body": "Stop losing deals to slow follow-ups. Acme automates your B2B outreach so you close more — faster. Try free for 14 days.",
+    "ad_creative_link_title": "Automate Your B2B Outreach",
+    "ad_creative_link_description": null,
+    "call_to_action_type": "LEARN_MORE",
+    "ad_creative_link_url": "https://acme.com/outreach?utm_source=fb&utm_medium=paid",
+    "ad_snapshot_url": "https://www.facebook.com/ads/archive/render_ad/?id=1040382736251948",
+    "ad_delivery_start_time": "2024-02-01",
+    "ad_delivery_stop_time": null,
+    "target_ages": "25-55",
+    "target_gender": "All",
+    "target_locations": [{"name": "India"}, {"name": "United States"}],
+    "images": ["https://www.facebook.com/ads/image/?d=AQHK8L2Z3mXqSw"]
+  },
+  {
+    "id": "1040382736251949",
+    "page_name": "Acme Corp",
+    "ad_creative_body": "Your sales team deserves better tools. Join 5,000+ B2B companies using Acme to find, qualify, and convert leads automatically.",
+    "ad_creative_link_title": "See How It Works",
+    "ad_creative_link_description": "Free demo, no credit card required.",
+    "call_to_action_type": "SIGN_UP",
+    "ad_creative_link_url": "https://acme.com/demo?utm_source=fb",
+    "ad_snapshot_url": "https://www.facebook.com/ads/archive/render_ad/?id=1040382736251949",
+    "ad_delivery_start_time": "2024-01-15",
+    "ad_delivery_stop_time": null,
+    "target_ages": "30-60",
+    "target_gender": "All",
+    "target_locations": [{"name": "India"}],
+    "videos": ["https://video.fbom.fna.fbcdn.net/v/fake_ad_video.mp4"]
+  }
+]
