@@ -160,32 +160,88 @@ export interface AdapterResult<T> {
 
 ## 6. Validation step (the actual point of the prototype)
 
-**Approach: reuse Radar's existing Stage 10 hook prompt** (`src/core/pipeline/`) unchanged. Apples-to-apples comparison — same model, same prompt, same temperature; only the signal payload differs.
+**Approach: reuse Radar's existing Stage 10 hook generator** (`src/core/pipeline/regenerateHook.js`) unchanged. Apples-to-apples comparison — same callable, same model (Sonnet via `callClaude('sonnet', …, { maxTokens: 60 })`), same A/B variant framework; only the signal payload differs.
 
-### 6.1 Synthesis pipeline
+### 6.1 Stage 10 actual contract (verified at spec-write time)
 
-1. **`contextMapper.ts`** — pure function that takes the 4 real `AdapterResult<T>` payloads and produces a synthetic `LeadContext` shaped to match Stage 10's existing input contract:
+`regenerateHook.js` exports:
+
+```js
+// Generates two hook variants in parallel, picks one at random.
+// Returns ONE hook + chosen variant id + total cost.
+export async function regenerateHook(lead, persona, signals = [], competitorAnalysis = null)
+  → { hook: string, costUsd: number, model: string, hookVariantId: 'A' | 'B' }
+```
+
+Input shapes consumed by `regenerateHook` and its internal `buildHookPrompt`:
+
+```ts
+// 'lead' fields actually read:
+{ business_name: string, website_url: string, manual_hook_note?: string }
+
+// 'persona' fields actually read:
+{ role: string }   // e.g. "B2B SaaS founder", "ecommerce operator"
+
+// 'signals' element shape actually read (only top 3 used):
+{ signalType: string, headline: string, url?: string }
+
+// 'competitorAnalysis' — leave null for prototype runs
+```
+
+The synthetic LeadContext zod schema in `schemas.ts` is **derived from these field lists**. Implementation step zero is opening `regenerateHook.js`, confirming the field names haven't changed since spec-write, and writing the zod schema to match. Drift in either direction (Stage 10 adds a required field; prototype mis-spells one) is caught at the schema boundary.
+
+### 6.2 Synthesis pipeline
+
+1. **`contextMapper.ts`** — pure function that takes the 4 real `AdapterResult<T>` payloads and produces:
+
+   ```ts
+   { lead: { business_name, website_url, manual_hook_note: null },
+     persona: { role: string },
+     signals: Array<{ signalType, headline, url? }> }
+   ```
+
+   Mapping rules:
 
    | Stage 10 input field | Synthesized from |
    |---|---|
-   | `signals[]` (each: `{signalType, headline, url, payload, confidence, signalDate}`) | Flatten module outputs into individual Signal records — each new GitHub repo, each added customer logo, each new senior hire, each notable subdomain becomes one Signal |
-   | `businessName`, `websiteUrl`, `city`, `country`, `category` | From `--company`, `--domain`, `--location` |
-   | `ownerName` | From `--founder` if provided, else null |
-   | `niche` | Best-effort from operational module's tech stack (e.g. "B2B SaaS" if Stripe + Segment + dashboard subdomain present), else null |
+   | `lead.business_name`, `lead.website_url` | From `--company`, `--domain` |
+   | `lead.manual_hook_note` | Always null (operator-only field) |
+   | `persona.role` | Inferred from operational module's tech stack: "B2B SaaS founder" if Stripe+Segment+dashboard-subdomain present; "ecommerce operator" if Shopify/WooCommerce; "agency owner" if portfolio page detected; default "founder" |
+   | `signals[]` | Flatten module outputs into individual Signal records, each becoming one `{signalType, headline, url}` — see §6.3 below |
 
-   Example flattened Signal: `{signalType: 'customer_added', headline: 'Added logo: Acme Inc', signalDate: '2026-04-12', confidence: 0.8, payload: {logoFilename: 'acme.svg', detectedAt: '...'}}` — exactly the shape Stage 10 already consumes.
+2. **`hookGenerator.ts`** — imports `regenerateHook` from `../../src/core/pipeline/regenerateHook.js` (relative path; reachable on disk even though `tools/` is outside the workspace). Calls it 3 times in parallel to produce 3 hook candidates (each call internally generates A+B variants and picks one — so 3 calls give 3 production-equivalent hooks for review). Returns `{ topSignals: string[], suggestedHooks: string[], totalCostUsd: number }`.
 
-2. **`hookGenerator.ts`** — imports the Stage 10 prompt from `../../src/core/pipeline/` (relative path; `tools/` is outside the workspace but the file is reachable on disk). Calls it via `@anthropic-ai/sdk` with the synthetic LeadContext. Returns `{ topSignals: string[], suggestedHooks: string[] }`.
+   - `suggestedHooks` = the 3 returned hook strings.
+   - `topSignals` = derived **without** an extra Claude call — sort the synthesized `signals[]` array by `confidence` (set during Module → Signal flattening), take top 5, format as `"[signalType] headline"`. Cheap, deterministic, lets the user see exactly which signals fed each hook.
 
-3. **`--debug-context` flag** — when set, output JSON includes `signalSummary._debug.synthesizedContext` (the mapped LeadContext) and `signalSummary._debug.promptUsed` (resolved prompt template path + git SHA). This is the iteration surface: when a hook comes out flat you can see whether the signals failed to fire, the mapping dropped them, or the prompt didn't pick them up.
+3. **`--debug-context` flag** — when set, output JSON includes `signalSummary._debug.synthesizedContext` (the mapped lead+persona+signals object actually passed to `regenerateHook`) and `signalSummary._debug.stage10` (`{ path: 'src/core/pipeline/regenerateHook.js', gitSha: '...' }`). When a hook comes out flat you can see whether the signals failed to fire, the mapping dropped them, or `buildHookPrompt`'s top-3-signals truncation dropped the interesting one.
 
-### 6.2 Live-import vs snapshot decision
+### 6.3 Module → Signal flattening rules
 
-**Decision: live import** from `src/core/pipeline/`.
+Each module's payload becomes 0–N Signal records during the contextMapper step. `confidence` is set per-source; higher = more likely to surface in `signals[]` top 3 inside Stage 10.
 
-- The validation question is "does this work *with our actual prompt*". Snapshotting the prompt freezes that and undermines the comparison.
-- If Stage 10 evolves during the validation window, the prototype evolves with it — that's a feature, not a bug, for the question being asked.
-- Trade-off accepted: results across runs may drift if Stage 10 changes mid-validation. Mitigated by `_debug.promptUsed` capturing the git SHA.
+| Source | signalType | headline template | confidence |
+|---|---|---|---|
+| Hiring — new senior role last 30d | `hiring_senior` | `"Opened {role} role in {city} ({date})"` | 0.85 |
+| Hiring — net new function | `hiring_new_function` | `"First {function} hire in 90d"` | 0.9 |
+| Product — new public repo last 30d | `product_repo_new` | `"New public repo: {name} ({date})"` | 0.7 |
+| Product — release tagged last 14d | `product_release` | `"Released {tag}: {title}"` | 0.85 |
+| Product — changelog entry last 14d | `product_changelog` | `"Shipped: {title}"` | 0.8 |
+| Customer — added logo | `customer_added` | `"Added logo: {logoName}"` | 0.9 |
+| Customer — pricing change | `pricing_change` | `"Pricing changed on {date}"` | 0.75 |
+| Customer — hero rewrite | `positioning_change` | `"Homepage hero changed on {date}"` | 0.7 |
+| Operational — new tech detected | `tech_added` | `"Added {toolName} to stack"` | 0.6 |
+| Operational — notable subdomain | `subdomain_notable` | `"Subdomain {sub}.{domain} is live"` | 0.75 |
+
+Confidences are best-effort starting values; tunable in code as the prototype runs against real leads.
+
+### 6.4 Live-import vs snapshot decision
+
+**Decision: live import** from `src/core/pipeline/regenerateHook.js`.
+
+- The validation question is "does this work *with our actual production hook generator*". Snapshotting freezes it and undermines the comparison.
+- If `regenerateHook` evolves during the validation window, the prototype evolves with it — feature, not bug.
+- Trade-off accepted: results may drift if Stage 10 changes mid-validation. Mitigated by `_debug.stage10.gitSha` capturing the SHA at run time.
 
 ## 7. CLI surface
 
@@ -267,11 +323,12 @@ Optional:
     "positioning": { /* AdapterResult<null> — status:'empty' */ }
   },
   "signalSummary": {
-    "topSignals":     ["...", "...", "..."],
+    "topSignals":     ["[customer_added] Added logo: Acme Inc", "..."],
     "suggestedHooks": ["...", "...", "..."],
+    "totalCostUsd":   0.012,
     "_debug": {
       "synthesizedContext": { /* present only with --debug-context */ },
-      "promptUsed":         { "path": "src/core/pipeline/...", "gitSha": "..." }
+      "stage10":            { "path": "src/core/pipeline/regenerateHook.js", "gitSha": "..." }
     }
   }
 }
@@ -299,8 +356,30 @@ Optional:
 
 - **Sources:** Wayback Machine (`http://archive.org/wayback/available?url=...&timestamp=...`)
 - **Required env:** none
-- **Payload:** `{ customersPageUrl: string|null, currentLogos: string[]|null, snapshotsAnalyzed: Snapshot[], addedLogosLast90d: string[], removedLogosLast90d: string[], pricingChanges: PricingChange[], heroChanges: HeroChange[] }`
-- **Logic:** fetch current `/customers` (try `/clients`, `/case-studies`, `/our-customers` as fallbacks) → extract logo `alt` attributes and image filenames → fetch Wayback snapshots from 30, 60, 90 days ago → diff. Same diff for `/pricing` (text snapshot) and homepage (h1 + first `<p>`).
+- **Payload:**
+  ```ts
+  {
+    customersPageUrl: string | null;
+    currentLogos: string[] | null;            // logo names extracted from alt + img src
+    snapshotsAnalyzed: { url: string; timestamp: string; waybackUrl: string }[];
+    addedLogosLast90d: string[];
+    removedLogosLast90d: string[];
+    pricingChanges: {
+      detectedAt: string;                     // ISO of the snapshot where change appeared
+      previousSnapshotUrl: string;            // wayback URL of "before"
+      currentSnapshotUrl: string;             // wayback URL of "after"
+      changeSummary: string;                  // e.g. "Starter price changed: $29 → $39"
+    }[];
+    heroChanges: {
+      detectedAt: string;
+      previousH1: string | null;
+      currentH1: string | null;
+      previousFirstParagraph: string | null;
+      currentFirstParagraph: string | null;
+    }[];
+  }
+  ```
+- **Logic:** fetch current `/customers` (try `/clients`, `/case-studies`, `/our-customers` as fallbacks) → extract logo `alt` attributes and image filenames → fetch Wayback snapshots from 30, 60, 90 days ago → diff. Same diff for `/pricing` (text snapshot, naive line-level diff with regex extraction of price tokens) and homepage (h1 + first `<p>`, exact-string equality).
 - **Estimated cost:** 0 paise
 
 ### 13.4 Module 4 — Strategic Voice (`adapters/voice.stub.ts`)
