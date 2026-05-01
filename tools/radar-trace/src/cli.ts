@@ -2,42 +2,54 @@
 import { Command } from 'commander';
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { runEnrichment } from './orchestrator.js';
 import { createFileCache } from './cache.js';
 import { createHttp } from './http.js';
 import { createLogger } from './logger.js';
 import { loadEnv } from './env.js';
-import { EnrichedDossierSchema, type EnrichedDossier } from './schemas.js';
-import { voiceStub } from './adapters/voice.stub.js';
-import { positioningStub } from './adapters/positioning.stub.js';
-import { hiringAdapter } from './adapters/hiring.js';
-import { productAdapter } from './adapters/product.js';
-import { customerAdapter } from './adapters/customer.js';
-import { operationalAdapter } from './adapters/operational.js';
-import { mapContext, toStage10Signals } from './synthesis/contextMapper.js';
-import { generateHooks, loadRealRegenerateHook } from './synthesis/hookGenerator.js';
-import type { Adapter, CompanyInput } from './types.js';
-import type { RegenerateHookFn } from './synthesis/hookGenerator.js';
+import {
+  RadarTraceDossierSchema,
+  ALL_MODULE_NAMES,
+  type RadarTraceDossier,
+} from './schemas.js';
+import { hiringAdzunaAdapter } from './adapters/hiring/adzuna.js';
+import { hiringCareersAdapter } from './adapters/hiring/careers.js';
+import { productGithubOrgAdapter } from './adapters/product/githubOrg.js';
+import { productGithubEventsAdapter } from './adapters/product/githubEvents.js';
+import { productGithubReleasesAdapter } from './adapters/product/githubReleases.js';
+import { productChangelogAdapter } from './adapters/product/changelog.js';
+import { customerLogosCurrentAdapter } from './adapters/customer/logosCurrent.js';
+import { customerWaybackDiffAdapter } from './adapters/customer/waybackDiff.js';
+import { operationalTechStackAdapter } from './adapters/operational/techStack.js';
+import { operationalCrtshAdapter } from './adapters/operational/crtsh.js';
+import { operationalDnsAdapter } from './adapters/operational/dns.js';
+// voice / positioning / social / ads / directories added in chunks 3-5
+import type { Adapter, AdapterResult, Company, ModuleName } from './types.js';
 
-const ALL_MODULES = ['hiring', 'product', 'customer', 'voice', 'operational', 'positioning'] as const;
-type ModuleName = typeof ALL_MODULES[number];
+const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
+  hiringAdzunaAdapter as Adapter<unknown>,
+  hiringCareersAdapter as Adapter<unknown>,
+  productGithubOrgAdapter as Adapter<unknown>,
+  productGithubEventsAdapter as Adapter<unknown>,
+  productGithubReleasesAdapter as Adapter<unknown>,
+  productChangelogAdapter as Adapter<unknown>,
+  customerLogosCurrentAdapter as Adapter<unknown>,
+  customerWaybackDiffAdapter as Adapter<unknown>,
+  operationalTechStackAdapter as Adapter<unknown>,
+  operationalCrtshAdapter as Adapter<unknown>,
+  operationalDnsAdapter as Adapter<unknown>,
+  // voice / positioning / social / ads / directories added in chunks 3-5
+];
 
 export interface CliOptions {
   action: 'enrich' | 'clear-cache';
-  input: CompanyInput;
+  input: Company;
   modules: ModuleName[];
   outPath?: string;
   useCache: boolean;
   concurrency: number;
   timeoutMs: number;
   verbose: boolean;
-  debugContext: boolean;
-}
-
-export interface MainDeps {
-  /** Override for tests; defaults to loadRealRegenerateHook() (lazy). */
-  loadRegenerateHook?: () => Promise<RegenerateHookFn>;
 }
 
 export function buildOptions(argv: string[]): CliOptions {
@@ -48,11 +60,11 @@ export function buildOptions(argv: string[]): CliOptions {
     .option('-d, --domain <domain>', 'Primary domain (e.g. acme.com)')
     .option('-l, --location <location>', '"City, Country"')
     .option('-f, --founder <name>', 'Founder/CEO name')
-    .option('-m, --modules <list>', 'Comma-separated module list', ALL_MODULES.join(','))
+    .option('--linkedin <url>', 'Founder LinkedIn URL')
+    .option('-m, --modules <list>', 'Comma-separated module list', ALL_MODULE_NAMES.join(','))
     .option('-o, --out <path>', 'Write JSON to file (default: stdout)')
     .option('--no-cache', 'Skip cache reads (writes still happen)')
     .option('--clear-cache', 'Wipe ./cache/ then exit')
-    .option('--debug-context', 'Include synthetic LeadContext in output')
     .option('--concurrency <n>', 'Adapter parallelism', (v) => parseInt(v, 10), 4)
     .option('--timeout <ms>', 'Per-adapter timeout in ms', (v) => parseInt(v, 10), 30000)
     .option('-v, --verbose', 'Per-adapter progress, timing, cost', false);
@@ -60,20 +72,19 @@ export function buildOptions(argv: string[]): CliOptions {
   program.parse(argv, { from: 'user' });
   const o = program.opts<{
     company?: string; domain?: string; location?: string; founder?: string;
-    modules: string; out?: string; cache: boolean; clearCache?: boolean;
-    debugContext?: boolean; concurrency: number; timeout: number; verbose: boolean;
+    linkedin?: string; modules: string; out?: string; cache: boolean;
+    clearCache?: boolean; concurrency: number; timeout: number; verbose: boolean;
   }>();
 
   if (o.clearCache) {
     return {
       action: 'clear-cache',
       input: { name: '', domain: '' },
-      modules: [...ALL_MODULES],
+      modules: [...ALL_MODULE_NAMES],
       useCache: o.cache,
       concurrency: o.concurrency,
       timeoutMs: o.timeout,
       verbose: o.verbose,
-      debugContext: false,
     };
   }
 
@@ -82,44 +93,72 @@ export function buildOptions(argv: string[]): CliOptions {
 
   const requested = o.modules.split(',').map((s) => s.trim()).filter(Boolean);
   for (const m of requested) {
-    if (!(ALL_MODULES as readonly string[]).includes(m)) {
-      throw new Error(`Unknown module: ${m} (valid: ${ALL_MODULES.join(',')})`);
+    if (!(ALL_MODULE_NAMES as readonly string[]).includes(m)) {
+      throw new Error(`Unknown module: ${m} (valid: ${ALL_MODULE_NAMES.join(',')})`);
     }
   }
 
   return {
     action: 'enrich',
-    input: { name: o.company, domain: o.domain, location: o.location, founder: o.founder },
+    input: {
+      name: o.company,
+      domain: o.domain,
+      location: o.location,
+      founder: o.founder,
+      founderLinkedinUrl: o.linkedin,
+    },
     modules: requested as ModuleName[],
     outPath: o.out,
     useCache: o.cache,
     concurrency: o.concurrency,
     timeoutMs: o.timeout,
     verbose: o.verbose,
-    debugContext: !!o.debugContext,
   };
 }
 
-const STUB_ADAPTERS: Record<ModuleName, Adapter<unknown>> = {
-  hiring: hiringAdapter as Adapter<unknown>,
-  product: productAdapter as Adapter<unknown>,
-  customer: customerAdapter as Adapter<unknown>,
-  operational: operationalAdapter as Adapter<unknown>,
-  voice: voiceStub as Adapter<unknown>,
-  positioning: positioningStub as Adapter<unknown>,
-};
-
 function resolveAdapters(modules: ModuleName[]): Adapter<unknown>[] {
-  const out: Adapter<unknown>[] = [];
-  for (const m of modules) {
-    const a = STUB_ADAPTERS[m];
-    if (!a) throw new Error(`No adapter registered for module: ${m}`);
-    out.push(a);
+  const moduleSet = new Set<string>(modules);
+  return ALL_ADAPTERS.filter((a) => a.module && moduleSet.has(a.module));
+}
+
+function buildModulesBlock(
+  enabled: ReadonlyArray<Adapter<unknown>>,
+): RadarTraceDossier['modules'] {
+  const out = Object.fromEntries(
+    ALL_MODULE_NAMES.map((m) => [m, { adapters: [] as string[] }]),
+  ) as RadarTraceDossier['modules'];
+  for (const a of enabled) {
+    if (a.module) {
+      out[a.module]!.adapters.push(a.name);
+    }
   }
   return out;
 }
 
-export async function main(argv: string[], deps: MainDeps = {}): Promise<number> {
+function computeCostBreakdown(
+  results: Record<string, AdapterResult<unknown>>,
+  usdToInr: number,
+): RadarTraceDossier['totalCostBreakdown'] {
+  let serper = 0, brave = 0, listenNotes = 0, pagespeed = 0, apifyUsd = 0;
+  for (const [name, r] of Object.entries(results)) {
+    const inr = r.costPaise / 100;
+    if (name.includes('apify')) apifyUsd += r.costMeta?.costUsd ?? 0;
+    else if (
+      name === 'voice.linkedin_pulse' || name.startsWith('voice.founder_') ||
+      name === 'positioning.crunchbase_snippet' || name === 'positioning.serper_news' ||
+      name === 'voice.youtube_channel'
+    ) serper += inr;
+    else if (name === 'positioning.brave_news') brave += inr;
+    else if (name === 'voice.podcast_appearances') listenNotes += inr;
+    else if (name === 'operational.pagespeed') pagespeed += inr;
+  }
+  return {
+    serper, brave, listenNotes, pagespeed, apifyUsd,
+    apifyInr: apifyUsd * usdToInr,
+  };
+}
+
+export async function main(argv: string[]): Promise<number> {
   const opts = buildOptions(argv);
   const logger = createLogger({ level: opts.verbose ? 'debug' : 'info', pretty: process.stdout.isTTY ?? false });
   const env = loadEnv(process.env);
@@ -139,51 +178,22 @@ export async function main(argv: string[], deps: MainDeps = {}): Promise<number>
     concurrency: opts.concurrency, timeoutMs: opts.timeoutMs, useCache: opts.useCache,
   });
 
-  const ctx = mapContext(opts.input, {
-    hiring:      results.hiring      ?? emptyResult('hiring'),
-    product:     results.product     ?? emptyResult('product'),
-    customer:    results.customer    ?? emptyResult('customer'),
-    operational: results.operational ?? emptyResult('operational'),
-  });
+  const usdToInr = parseFloat(env.USD_INR_RATE ?? '84.0');
+  const totalCostBreakdown = computeCostBreakdown(results, usdToInr);
 
-  let signalSummary;
-  try {
-    const loader = deps.loadRegenerateHook ?? loadRealRegenerateHook;
-    const regenerate = await loader();
-    const hooks = await generateHooks(ctx, { regenerateHook: regenerate });
-    signalSummary = {
-      topSignals: hooks.topSignals,
-      suggestedHooks: hooks.suggestedHooks,
-      totalCostUsd: hooks.totalCostUsd,
-      ...(opts.debugContext ? {
-        _debug: {
-          synthesizedContext: { lead: ctx.lead, persona: ctx.persona, signals: toStage10Signals(ctx.signals) },
-          stage10: { path: 'src/core/pipeline/regenerateHook.js', gitSha: gitShaSafe() },
-        },
-      } : {}),
-    };
-  } catch (err) {
-    logger.warn('synthesis failed', { error: (err as Error).message });
-    signalSummary = { topSignals: [], suggestedHooks: [], totalCostUsd: 0 };
-  }
-
-  const dossier: EnrichedDossier = {
+  const dossier: RadarTraceDossier = {
+    radarTraceVersion: '1.0.0',
     company: opts.input,
-    enrichedAt: new Date().toISOString(),
-    totalCostPaise: summary.totalCostPaise,
+    tracedAt: new Date().toISOString(),
+    totalCostInr: summary.totalCostInr,
+    totalCostBreakdown,
     totalDurationMs: summary.totalDurationMs,
-    modules: {
-      hiring:      results.hiring      ?? emptyResult('hiring'),
-      product:     results.product     ?? emptyResult('product'),
-      customer:    results.customer    ?? emptyResult('customer'),
-      voice:       results.voice       ?? emptyResult('voice'),
-      operational: results.operational ?? emptyResult('operational'),
-      positioning: results.positioning ?? emptyResult('positioning'),
-    },
-    signalSummary,
+    adapters: results,
+    modules: buildModulesBlock(adapters),
+    signalSummary: null,
   };
 
-  const validated = EnrichedDossierSchema.parse(dossier);
+  const validated = RadarTraceDossierSchema.parse(dossier);
   const json = JSON.stringify(validated, null, 2);
   if (opts.outPath) {
     await writeFile(opts.outPath, json, 'utf8');
@@ -194,28 +204,13 @@ export async function main(argv: string[], deps: MainDeps = {}): Promise<number>
 
   if (opts.verbose) {
     logger.info('summary', {
-      totalCostPaise: summary.totalCostPaise,
+      totalCostInr: summary.totalCostInr,
       totalDurationMs: summary.totalDurationMs,
       perAdapter: summary.perAdapter,
     });
   }
 
   return 0;
-}
-
-function emptyResult(name: string) {
-  return {
-    source: name, fetchedAt: new Date().toISOString(), status: 'empty' as const,
-    payload: null, costPaise: 0, durationMs: 0,
-  };
-}
-
-function gitShaSafe(): string {
-  try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  } catch {
-    return 'unknown';
-  }
 }
 
 // Entrypoint guard: only run when invoked directly (not when imported by tests)

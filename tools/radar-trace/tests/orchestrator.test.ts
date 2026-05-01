@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { runEnrichment } from '../src/orchestrator.js';
-import type { Adapter, AdapterContext, AdapterResult, Cache, CompanyInput, Env, Logger } from '../src/types.js';
+import type { Adapter, AdapterContext, AdapterResult, Cache, Company, Env, Logger, PartialDossier } from '../src/types.js';
 
 function silentLogger(): Logger {
   const noop = () => {};
@@ -23,13 +23,15 @@ function memoryCache(): Cache {
   };
 }
 
-const fakeInput: CompanyInput = { name: 'Acme', domain: 'acme.com' };
+const fakeInput: Company = { name: 'Acme', domain: 'acme.com' };
 const fakeEnv: Env = {};
 
 function makeAdapter(name: string, behavior: (ctx: AdapterContext) => Promise<AdapterResult<unknown>>): Adapter<unknown> {
   return {
     name,
     version: '1.0.0',
+    module: 'hiring',
+    estimatedCostInr: 0,
     estimatedCostPaise: 0,
     requiredEnv: [],
     schema: z.unknown(),
@@ -124,7 +126,7 @@ describe('runEnrichment', () => {
     const cache = memoryCache();
     const writeSpy = vi.spyOn(cache, 'write');
     const adapter: Adapter<{ jobs: number }> = {
-      name: 'hiring', version: '1.0.0', estimatedCostPaise: 0, requiredEnv: [],
+      name: 'hiring', version: '1.0.0', module: 'hiring', estimatedCostInr: 0, estimatedCostPaise: 0, requiredEnv: [],
       schema: z.object({ jobs: z.number() }),
       run: async () => ({ source: 'hiring', fetchedAt: 'x', status: 'ok', payload: { jobs: 'not-a-number' as unknown as number }, costPaise: 0, durationMs: 10 }),
     };
@@ -136,8 +138,7 @@ describe('runEnrichment', () => {
     expect(out.results.hiring!.status).toBe('partial');
     expect(out.results.hiring!.payload).toEqual({ jobs: 'not-a-number' });
     expect(out.results.hiring!.errors?.[0]).toContain('jobs');
-    // Partial results ARE cached (only 'error' status skips caching) — so flaky API responses
-    // don't keep retrying expensive calls during the same day.
+    // Partial results ARE cached (only 'error' status skips caching)
     expect(writeSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -171,7 +172,7 @@ describe('runEnrichment', () => {
     expect(out.results.hiring!.status).toBe('error');
   });
 
-  it('summary.totalCostPaise is the sum of per-adapter costPaise', async () => {
+  it('summary.totalCostInr is sum of costPaise/100 across all adapters', async () => {
     const adapters = [
       makeAdapter('hiring', async () => ({ source: 'hiring', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 100, durationMs: 5 })),
       makeAdapter('product', async () => ({ source: 'product', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 250, durationMs: 5 })),
@@ -181,6 +182,82 @@ describe('runEnrichment', () => {
       cache: memoryCache(), logger: silentLogger(),
       http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
     });
-    expect(out.summary.totalCostPaise).toBe(350);
+    // 350 paise / 100 = 3.5 INR
+    expect(out.summary.totalCostInr).toBe(3.5);
+  });
+});
+
+describe('two-wave execution', () => {
+  it('Wave 2 adapter sees Wave 1 results in its gate', async () => {
+    let observed: PartialDossier | null = null;
+    const wave1: Adapter<unknown> = makeAdapter('foo.x', async () => ({
+      source: 'foo.x', fetchedAt: 'x', status: 'ok',
+      payload: { country: 'India' }, costPaise: 0, durationMs: 1,
+    }));
+    const wave2: Adapter<unknown> = {
+      ...makeAdapter('bar.y', async () => ({ source: 'bar.y', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 0, durationMs: 1 })),
+      gate(partial) {
+        observed = partial;
+        return (partial['foo.x']?.payload as { country?: string })?.country !== 'India';
+      },
+    };
+    const out = await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters: [wave1, wave2],
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
+    });
+    expect(observed).not.toBeNull();
+    expect(observed!['foo.x']).toBeDefined();
+    expect(out.results['bar.y']!.status).toBe('empty'); // gate returned false
+    expect(out.results['bar.y']!.errors).toBeUndefined(); // intentional skip ≠ error
+  });
+
+  it('Wave 2 gate that throws is treated as false (with error message)', async () => {
+    const wave1 = makeAdapter('foo.x', async () => ({ source: 'foo.x', fetchedAt: 'x', status: 'ok', payload: null, costPaise: 0, durationMs: 1 }));
+    const wave2: Adapter<unknown> = {
+      ...makeAdapter('bar.y', async () => ({ source: 'bar.y', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 0, durationMs: 1 })),
+      gate() { throw new Error('boom'); },
+    };
+    const out = await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters: [wave1, wave2],
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
+    });
+    expect(out.results['bar.y']!.status).toBe('empty');
+    expect(out.results['bar.y']!.errors?.[0]).toContain('gate threw: boom');
+  });
+
+  it('Wave 1 adapter without gate is included in partialDossier even when errored', async () => {
+    let observed: PartialDossier | null = null;
+    const wave1Errored = makeAdapter('foo.fails', async () => { throw new Error('flaky'); });
+    const wave2: Adapter<unknown> = {
+      ...makeAdapter('bar.y', async () => ({ source: 'bar.y', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 0, durationMs: 1 })),
+      gate(partial) {
+        observed = partial;
+        return true;
+      },
+    };
+    await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters: [wave1Errored, wave2],
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
+    });
+    expect(observed!['foo.fails']?.status).toBe('error');
+    expect(observed!['foo.fails']?.payload).toBeNull();
+  });
+});
+
+describe('cost tracking', () => {
+  it('summary.totalCostInr is sum of costPaise/100 across all adapters', async () => {
+    const adapters = [
+      makeAdapter('a.x', async () => ({ source: 'a.x', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 5000, durationMs: 1 })),
+      makeAdapter('a.y', async () => ({ source: 'a.y', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 12000, durationMs: 1 })),
+    ];
+    const out = await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters,
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
+    });
+    expect(out.summary.totalCostInr).toBe(170);
   });
 });

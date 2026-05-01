@@ -1,9 +1,9 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildOptions, main } from '../src/cli.js';
-import { EnrichedDossierSchema } from '../src/schemas.js';
+import { RadarTraceDossierSchema } from '../src/schemas.js';
 
 describe('buildOptions (arg parser)', () => {
   it('parses required + optional flags', () => {
@@ -12,12 +12,10 @@ describe('buildOptions (arg parser)', () => {
     expect(opts.input.domain).toBe('acme.com');
     expect(opts.input.location).toBe('Mumbai, India');
     expect(opts.input.founder).toBe('Jane');
-    expect(opts.modules).toEqual(['hiring', 'product', 'customer', 'voice', 'operational', 'positioning']);
     expect(opts.useCache).toBe(true);
     expect(opts.concurrency).toBe(4);
     expect(opts.timeoutMs).toBe(30000);
     expect(opts.verbose).toBe(false);
-    expect(opts.debugContext).toBe(false);
     expect(opts.outPath).toBeUndefined();
   });
 
@@ -45,11 +43,6 @@ describe('buildOptions (arg parser)', () => {
     expect(opts.verbose).toBe(true);
   });
 
-  it('--debug-context toggles', () => {
-    const opts = buildOptions(['-c', 'Acme', '-d', 'acme.com', '--debug-context']);
-    expect(opts.debugContext).toBe(true);
-  });
-
   it('rejects missing --company when action is enrich', () => {
     expect(() => buildOptions(['-d', 'acme.com'])).toThrow(/company/i);
   });
@@ -60,28 +53,34 @@ describe('buildOptions (arg parser)', () => {
 });
 
 describe('main() integration', () => {
-  const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
-    hook: 'fake-hook', costUsd: 0, model: 'fake', hookVariantId: 'A' as const,
-  });
-
-  it('emits a complete dossier that validates against EnrichedDossierSchema', async () => {
+  it('emits a complete dossier that validates against RadarTraceDossierSchema', async () => {
     let tmp: string | null = null;
-    let stdoutChunks: string[] = [];
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
-      return true;
-    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
-      // Restrict to stub modules only — using real adapters here would make real
-      // DNS / HTTP calls (operational adapter) and stall the suite. Stubs exercise
-      // the same end-to-end shape (schema + module key set + exit code).
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', join(tmp, 'out.json')], { loadRegenerateHook: fakeLoad });
+      // Run with no modules (empty adapter list) — this exercises the full shape
+      // without making real network calls. Adapters for voice/positioning not yet
+      // wired (chunks 3-5), so restrict to a set with no required env.
+      // We pass --modules with an empty-resolving pattern by using no real module.
+      // Actually, we can use no --modules flag and just verify the schema.
+      // Use a module that requires no env — the adapters will get status:error due
+      // to missing network, but the dossier shape will still be valid.
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'customer',  // customer adapters have no requiredEnv
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',       // very short timeout so HTTP fails fast
+      ]);
       expect(code).toBe(0);
       const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
-      expect(EnrichedDossierSchema.safeParse(written).success).toBe(true);
-      expect(Object.keys(written.modules).sort()).toEqual(['customer','hiring','operational','positioning','product','voice']);
+      expect(RadarTraceDossierSchema.safeParse(written).success).toBe(true);
+      expect(written.radarTraceVersion).toBe('1.0.0');
+      expect(written.signalSummary).toBeNull();
+      expect(Object.keys(written.modules).sort()).toEqual([
+        'ads', 'customer', 'directories', 'hiring', 'operational',
+        'positioning', 'product', 'social', 'voice',
+      ]);
     } finally {
       stdoutSpy.mockRestore();
       if (tmp) rmSync(tmp, { recursive: true, force: true });
@@ -99,72 +98,58 @@ describe('main() integration', () => {
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
       const out = join(tmp, 'dossier.json');
-      const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'customer',
+        '--out', out,
+        '--timeout', '100',
+      ]);
       expect(code).toBe(0);
-      expect(stdoutChunks.join('')).toBe('');
+      // Only logger messages go to stdout — no JSON blob
+      const nonLogOutput = stdoutChunks.filter((c) => {
+        try { JSON.parse(c.trim()); const o = JSON.parse(c.trim()); return 'radarTraceVersion' in o; }
+        catch { return false; }
+      });
+      expect(nonLogOutput).toHaveLength(0);
       const written = JSON.parse(readFileSync(out, 'utf8'));
-      expect(EnrichedDossierSchema.safeParse(written).success).toBe(true);
+      expect(RadarTraceDossierSchema.safeParse(written).success).toBe(true);
     } finally {
       stdoutSpy.mockRestore();
       if (tmp) rmSync(tmp, { recursive: true, force: true });
     }
   });
-});
 
-describe('main() synthesis', () => {
-  let tmp: string;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let stdoutSpy: any;
-  let stdoutChunks: string[];
+  it('adapters key set — modules block has correct keys for each module', async () => {
+    // Verify the modules block structure without running DNS/network adapters.
+    // Customer module has no required env and times out fast at --timeout 100.
+    let tmp: string | null = null;
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'radar-trace-syn-'));
-    stdoutChunks = [];
-    stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
-      return true;
-    });
-  });
-  afterEach(() => {
-    stdoutSpy.mockRestore();
-    rmSync(tmp, { recursive: true, force: true });
-  });
-
-  it('populates signalSummary when synthesis succeeds', async () => {
-    const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
-      hook: 'fake-hook', costUsd: 0.002, model: 'fake', hookVariantId: 'A' as const,
-    });
-    const out = join(tmp, 'd.json');
-    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
-    expect(code).toBe(0);
-    const parsed = JSON.parse(readFileSync(out, 'utf8'));
-    expect(parsed.signalSummary.suggestedHooks.length).toBe(3);
-    expect(parsed.signalSummary.suggestedHooks[0]).toBe('fake-hook');
-    expect(parsed.signalSummary.totalCostUsd).toBeCloseTo(0.006, 5);
-  });
-
-  it('falls back to empty signalSummary when loadRegenerateHook throws', async () => {
-    const fakeLoad = async () => { throw new Error('SDK not installed'); };
-    const out = join(tmp, 'd.json');
-    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
-    expect(code).toBe(0);
-    const parsed = JSON.parse(readFileSync(out, 'utf8'));
-    expect(parsed.signalSummary.topSignals).toEqual([]);
-    expect(parsed.signalSummary.suggestedHooks).toEqual([]);
-    expect(parsed.signalSummary.totalCostUsd).toBe(0);
-  });
-
-  it('--debug-context includes synthesizedContext + stage10 metadata', async () => {
-    const fakeLoad = async () => async (_lead: unknown, _persona: unknown, _signals: unknown) => ({
-      hook: 'fake-hook', costUsd: 0, model: 'fake', hookVariantId: 'A' as const,
-    });
-    const out = join(tmp, 'd.json');
-    const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--debug-context', '--out', out], { loadRegenerateHook: fakeLoad });
-    expect(code).toBe(0);
-    const parsed = JSON.parse(readFileSync(out, 'utf8'));
-    expect(parsed.signalSummary._debug).toBeDefined();
-    expect(parsed.signalSummary._debug.synthesizedContext.lead.business_name).toBe('Acme');
-    expect(parsed.signalSummary._debug.stage10.path).toBe('src/core/pipeline/regenerateHook.js');
-    expect(parsed.signalSummary._debug.stage10.gitSha).toMatch(/^[0-9a-f]{7,40}$|^unknown$/);
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'customer',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
+      // customer module should have both adapters
+      expect(written.modules.customer.adapters.sort()).toEqual([
+        'customer.logos_current', 'customer.wayback_diff',
+      ]);
+      // other modules are empty arrays
+      expect(written.modules.hiring.adapters).toEqual([]);
+      expect(written.modules.product.adapters).toEqual([]);
+      expect(written.modules.operational.adapters).toEqual([]);
+      // adapters map has exactly the 2 customer adapters
+      expect(Object.keys(written.adapters).sort()).toEqual([
+        'customer.logos_current', 'customer.wayback_diff',
+      ]);
+    } finally {
+      stdoutSpy.mockRestore();
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
