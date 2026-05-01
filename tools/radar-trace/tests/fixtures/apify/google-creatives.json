@@ -1,0 +1,41 @@
+[
+  {
+    "advertiser_id": "AR05123456789012",
+    "advertiser_name": "Acme Corp",
+    "creative_id": "CR01234567890123",
+    "ad_type": "TEXT",
+    "ad_title": "B2B Outreach Automation",
+    "ad_description": "Close more deals with automated outreach. 5,000+ teams trust Acme. Free trial today.",
+    "destination_url": "https://acme.com/outreach",
+    "region_codes": ["IN", "US"],
+    "first_shown_date": "2024-01-10",
+    "last_shown_date": "2024-04-18",
+    "is_active": true
+  },
+  {
+    "advertiser_id": "AR05123456789012",
+    "advertiser_name": "Acme Corp",
+    "creative_id": "CR01234567890124",
+    "ad_type": "IMAGE",
+    "ad_title": "Find & Convert B2B Leads",
+    "ad_description": "AI-powered lead intelligence. See why 5,000+ companies choose Acme.",
+    "destination_url": "https://acme.com/leads?utm_source=google",
+    "region_codes": ["IN"],
+    "first_shown_date": "2024-02-20",
+    "last_shown_date": "2024-04-18",
+    "is_active": true
+  },
+  {
+    "advertiser_id": "AR05123456789012",
+    "advertiser_name": "Acme Corp",
+    "creative_id": "CR01234567890125",
+    "ad_type": "VIDEO",
+    "ad_title": null,
+    "ad_description": null,
+    "destination_url": "https://acme.com/demo",
+    "region_codes": ["IN", "US", "GB"],
+    "first_shown_date": "2024-03-05",
+    "last_shown_date": "2024-04-15",
+    "is_active": false
+  }
+]
