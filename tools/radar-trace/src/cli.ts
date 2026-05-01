@@ -47,6 +47,13 @@ import { crunchbaseUrlAdapter } from './adapters/directories/crunchbaseUrl.js';
 import { linkedinCompanyApifyAdapter } from './adapters/directories/linkedinCompanyApify.js';
 import { g2CapterraAdapter } from './adapters/directories/g2Capterra.js';
 import { glassdoorApifyAdapter } from './adapters/directories/glassdoorApify.js';
+// chunk 6 — paid Apify scrapers
+import { voiceLinkedinPostsApifyAdapter } from './adapters/voice/linkedinPostsApify.js';
+import { twitterPostsApifyAdapter } from './adapters/social/twitterPostsApify.js';
+import { instagramPostsApifyAdapter } from './adapters/social/instagramPostsApify.js';
+import { facebookPostsApifyAdapter } from './adapters/social/facebookPostsApify.js';
+import { adsMetaCreativesApifyAdapter } from './adapters/ads/metaCreativesApify.js';
+import { adsGoogleCreativesApifyAdapter } from './adapters/ads/googleCreativesApify.js';
 import type { Adapter, AdapterResult, Company, ModuleName } from './types.js';
 
 const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
@@ -86,6 +93,13 @@ const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
   // directories — chunk 5 (Wave 2: gated)
   g2CapterraAdapter as Adapter<unknown>,
   glassdoorApifyAdapter as Adapter<unknown>,
+  // chunk 6 — paid Apify scrapers (Wave 1: no gate)
+  voiceLinkedinPostsApifyAdapter as Adapter<unknown>,
+  twitterPostsApifyAdapter as Adapter<unknown>,
+  instagramPostsApifyAdapter as Adapter<unknown>,
+  facebookPostsApifyAdapter as Adapter<unknown>,
+  adsMetaCreativesApifyAdapter as Adapter<unknown>,
+  adsGoogleCreativesApifyAdapter as Adapter<unknown>,
 ];
 
 export interface CliOptions {
@@ -182,6 +196,16 @@ function buildModulesBlock(
   return out;
 }
 
+// Adapters that use BOTH Serper (URL discovery) AND Apify (scrape).
+// Their Serper spend = costPaise - apifyPaise, so we need to back it out.
+const APIFY_SERPER_ADAPTERS = new Set([
+  'voice.linkedin_posts_apify',
+  'social.twitter_posts_apify',
+  'social.instagram_posts_apify',
+  'social.facebook_posts_apify',
+  'directories.linkedin_company_apify',
+]);
+
 function computeCostBreakdown(
   results: Record<string, AdapterResult<unknown>>,
   usdToInr: number,
@@ -189,8 +213,16 @@ function computeCostBreakdown(
   let serper = 0, brave = 0, listenNotes = 0, pagespeed = 0, apifyUsd = 0;
   for (const [name, r] of Object.entries(results)) {
     const inr = r.costPaise / 100;
-    if (name.includes('apify')) apifyUsd += r.costMeta?.costUsd ?? 0;
-    else if (
+    if (name.includes('apify')) {
+      // Accumulate Apify USD spend for all *_apify adapters
+      apifyUsd += r.costMeta?.costUsd ?? 0;
+      // For adapters that also use Serper, back out the Serper portion
+      if (APIFY_SERPER_ADAPTERS.has(name)) {
+        const apifyInr = (r.costMeta?.costUsd ?? 0) * usdToInr;
+        const serperInr = inr - apifyInr;
+        if (serperInr > 0) serper += serperInr;
+      }
+    } else if (
       name === 'voice.linkedin_pulse' || name.startsWith('voice.founder_') ||
       name === 'positioning.crunchbase_snippet' || name === 'positioning.serper_news' ||
       name === 'voice.youtube_channel'
