@@ -1,0 +1,42 @@
+[
+  {
+    "postId": "123456789_987654321",
+    "text": "We just hit 10,000 followers on Facebook! Thank you for being part of our journey. To celebrate, we're giving away 3 months free to anyone who shares this post and tags a friend who needs better business tools. 🎉",
+    "time": "2024-04-05T12:00:00.000Z",
+    "likes": 378,
+    "comments": 203,
+    "shares": 156,
+    "media": [
+      {
+        "type": "photo",
+        "url": "https://scontent.fbom3-3.fna.fbcdn.net/v/fake_photo_1.jpg"
+      }
+    ],
+    "postUrl": "https://www.facebook.com/acmecorp/posts/987654321"
+  },
+  {
+    "postId": "123456789_876543210",
+    "text": "New case study: How RetailCo increased their sales by 35% using Acme's automation suite. Read the full story on our blog.",
+    "time": "2024-03-18T09:30:00.000Z",
+    "likes": 142,
+    "comments": 28,
+    "shares": 45,
+    "media": [],
+    "postUrl": "https://www.facebook.com/acmecorp/posts/876543210"
+  },
+  {
+    "postId": "123456789_765432109",
+    "text": "Live Q&A this Friday at 3PM IST! Bring your questions about scaling B2B SaaS. See you there. 📺",
+    "time": "2024-02-27T08:00:00.000Z",
+    "likes": 89,
+    "comments": 34,
+    "shares": 18,
+    "media": [
+      {
+        "type": "video",
+        "url": "https://video.fbom3-3.fna.fbcdn.net/v/fake_video.mp4"
+      }
+    ],
+    "postUrl": "https://www.facebook.com/acmecorp/posts/765432109"
+  }
+]
