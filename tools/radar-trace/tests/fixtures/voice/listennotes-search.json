@@ -1,0 +1,28 @@
+{
+  "count": 2,
+  "total": 2,
+  "results": [
+    {
+      "id": "ep1abc",
+      "title_original": "Jane Doe on Building Acme from Scratch",
+      "description_original": "Jane Doe, founder of Acme Corp, talks about how she built the company from zero to $10M ARR in 18 months. A must-listen for B2B founders.",
+      "pub_date_ms": 1714521600000,
+      "audio": "https://media.listennotes.com/ep1abc.mp3",
+      "listennotes_url": "https://www.listennotes.com/e/ep1abc/",
+      "podcast": {
+        "title_original": "SaaS Founders Podcast"
+      }
+    },
+    {
+      "id": "ep2def",
+      "title_original": "Cold Email Masterclass with Acme",
+      "description_original": "In this episode, we dive deep into cold email strategy with the team at Acme. Learn their proven outbound playbook.",
+      "pub_date_ms": 1711929600000,
+      "audio": null,
+      "listennotes_url": "https://www.listennotes.com/e/ep2def/",
+      "podcast": {
+        "title_original": "B2B Growth Show"
+      }
+    }
+  ]
+}
