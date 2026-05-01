@@ -1,0 +1,36 @@
+{
+  "name": "radar-enrich",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Strategic-signal validation prototype for Radar cold outreach",
+  "bin": {
+    "radar-enrich": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "enrich": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.30.0",
+    "cheerio": "^1.0.0",
+    "commander": "^12.0.0",
+    "p-limit": "^6.0.0",
+    "pino": "^9.0.0",
+    "pino-pretty": "^11.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
