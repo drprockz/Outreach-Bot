@@ -1,0 +1,34 @@
+[
+  {
+    "overview": {
+      "squareLogo": "https://media.glassdoor.com/sql/12345/acme-corp-squareLogo.png",
+      "name": "Acme Corp",
+      "website": "https://acme.com",
+      "type": "Company - Private",
+      "revenue": "$10 to $50 million",
+      "industry": "Software",
+      "description": "Acme Corp is a leading B2B SaaS company."
+    },
+    "ratings": {
+      "overallRating": 4.1,
+      "ceoRating": 0.82,
+      "recommendToFriend": 0.79,
+      "businessOutlook": 0.72,
+      "cultureAndValues": 4.3,
+      "careerOpportunities": 3.9,
+      "workLifeBalance": 4.0,
+      "seniorManagement": 3.8,
+      "compensation": 4.2
+    },
+    "numberOfRatings": 87,
+    "ceo": {
+      "name": "Jane Smith",
+      "title": "CEO"
+    },
+    "url": "https://www.glassdoor.com/Overview/Working-at-Acme-Corp-EI_IE12345.11,20.htm",
+    "pros": ["Great culture", "Good pay", "Remote friendly"],
+    "cons": ["Fast growth", "Process still maturing", "Long hours sometimes"],
+    "interviewExperience": "Positive",
+    "interviewDifficulty": "Average"
+  }
+]
