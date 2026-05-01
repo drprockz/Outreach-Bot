@@ -447,14 +447,17 @@ This means a Wave 2 gate can reference any Wave 1 adapter regardless of module �
 
 **Apify costs are USD-denominated** — track in USD per adapter, convert to INR at top level using a configurable rate (env: `USD_INR_RATE`, default 84.0).
 
-**Top-level fields:**
+**Top-level fields** (matches the `RadarTraceDossier` interface in §6):
 
 - `totalCostInr` — sum across all adapters
-- `totalCostBreakdown.free` — should be 0 for adapters that genuinely cost nothing
 - `totalCostBreakdown.serper` — INR sum of Serper-using adapters
 - `totalCostBreakdown.brave` — INR sum of Brave-using adapters
 - `totalCostBreakdown.listenNotes` — INR sum (likely 0 if within free tier)
+- `totalCostBreakdown.pagespeed` — INR sum (likely 0 — free tier)
 - `totalCostBreakdown.apifyUsd` — raw USD spent on Apify (for direct Apify dashboard reconciliation)
+- `totalCostBreakdown.apifyInr` — `apifyUsd × USD_INR_RATE` (so the breakdown sums to `totalCostInr`)
+
+Free adapters (Adzuna, GitHub, Wayback, crt.sh, DNS, etc.) do not contribute to any breakdown bucket — they're free, not "free-bucketed."
 
 **Per-adapter:**
 
