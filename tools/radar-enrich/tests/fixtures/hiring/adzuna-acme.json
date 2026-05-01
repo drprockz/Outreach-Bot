@@ -1,0 +1,8 @@
+{
+  "count": 3,
+  "results": [
+    { "id": "1", "title": "Senior Backend Engineer", "company": { "display_name": "Acme Corp" }, "location": { "display_name": "Mumbai" }, "created": "2026-04-15T00:00:00Z", "redirect_url": "https://example.com/job/1" },
+    { "id": "2", "title": "Account Executive", "company": { "display_name": "Acme Corp" }, "location": { "display_name": "Bengaluru" }, "created": "2026-03-10T00:00:00Z", "redirect_url": "https://example.com/job/2" },
+    { "id": "3", "title": "Director of Engineering", "company": { "display_name": "Acme Corp" }, "location": { "display_name": "Mumbai" }, "created": "2026-04-20T00:00:00Z", "redirect_url": "https://example.com/job/3" }
+  ]
+}
