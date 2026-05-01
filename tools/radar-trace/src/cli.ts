@@ -18,6 +18,7 @@ import { productGithubOrgAdapter } from './adapters/product/githubOrg.js';
 import { productGithubEventsAdapter } from './adapters/product/githubEvents.js';
 import { productGithubReleasesAdapter } from './adapters/product/githubReleases.js';
 import { productChangelogAdapter } from './adapters/product/changelog.js';
+import { productRssAdapter } from './adapters/product/rss.js';
 import { customerLogosCurrentAdapter } from './adapters/customer/logosCurrent.js';
 import { customerWaybackDiffAdapter } from './adapters/customer/waybackDiff.js';
 import { operationalTechStackAdapter } from './adapters/operational/techStack.js';
@@ -33,6 +34,7 @@ const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
   productGithubEventsAdapter as Adapter<unknown>,
   productGithubReleasesAdapter as Adapter<unknown>,
   productChangelogAdapter as Adapter<unknown>,
+  productRssAdapter as Adapter<unknown>,
   customerLogosCurrentAdapter as Adapter<unknown>,
   customerWaybackDiffAdapter as Adapter<unknown>,
   operationalTechStackAdapter as Adapter<unknown>,
