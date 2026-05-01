@@ -1,0 +1,41 @@
+[
+  {
+    "id": "7198123456789012480",
+    "text": "Excited to announce our Series A funding round! We've raised $10M to accelerate growth and expand our product offerings. Huge thanks to our investors and team for making this possible. The journey ahead is bright. #startup #funding #B2B",
+    "publishedAt": "2024-03-15T09:30:00.000Z",
+    "totalReactionCount": 342,
+    "commentsCount": 47,
+    "repostsCount": 28,
+    "postUrl": "https://www.linkedin.com/posts/johndoe_series-a-funding-ugcPost-7198123456789012480",
+    "images": ["https://media.licdn.com/dms/image/D4E22AQHK8L2Z3mXqSw/feedshare-shrink_800/0/1710491400145"],
+    "video": null,
+    "article": null
+  },
+  {
+    "id": "7195987654321098240",
+    "text": "Product update: we just shipped async collaboration — our most-requested feature. Teams can now work across time zones without losing context. Built by an amazing team in just 6 weeks. Shipping fast is our superpower.",
+    "publishedAt": "2024-02-28T11:00:00.000Z",
+    "totalReactionCount": 186,
+    "commentsCount": 23,
+    "repostsCount": 12,
+    "postUrl": "https://www.linkedin.com/posts/johndoe_product-update-async-collaboration-ugcPost-7195987654321098240",
+    "images": null,
+    "video": null,
+    "article": {
+      "title": "Async Collaboration is Here",
+      "url": "https://blog.acme.com/async-collaboration"
+    }
+  },
+  {
+    "id": "7192654321987654144",
+    "text": "We're hiring! Looking for senior engineers who care about developer experience. Remote-first, competitive comp, real ownership. Apply in comments or DM me directly.",
+    "publishedAt": "2024-01-20T08:00:00.000Z",
+    "totalReactionCount": 94,
+    "commentsCount": 31,
+    "repostsCount": 5,
+    "postUrl": "https://www.linkedin.com/posts/johndoe_hiring-remote-engineer-ugcPost-7192654321987654144",
+    "images": null,
+    "video": null,
+    "article": null
+  }
+]
