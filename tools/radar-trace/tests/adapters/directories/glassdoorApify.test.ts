@@ -27,7 +27,7 @@ function makeApifySpy(items: unknown[]): ApifyClient {
       items,
       costUsd: items.length * 0.005,
       truncated: false,
-    })),
+    })) as ApifyClient['runActor'],
   };
 }
 

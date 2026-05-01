@@ -40,7 +40,13 @@ import { positioningSerperNewsAdapter } from './adapters/positioning/serperNews.
 import { adsMetaLibraryUrlAdapter } from './adapters/ads/metaLibraryUrl.js';
 import { adsGoogleTransparencyUrlAdapter } from './adapters/ads/googleTransparencyUrl.js';
 import { socialLinksAdapter } from './adapters/social/links.js';
-// directories added in chunk 5
+// directories — chunk 5
+import { zaubacorpAdapter } from './adapters/directories/zaubacorp.js';
+import { ambitionboxAdapter } from './adapters/directories/ambitionbox.js';
+import { crunchbaseUrlAdapter } from './adapters/directories/crunchbaseUrl.js';
+import { linkedinCompanyApifyAdapter } from './adapters/directories/linkedinCompanyApify.js';
+import { g2CapterraAdapter } from './adapters/directories/g2Capterra.js';
+import { glassdoorApifyAdapter } from './adapters/directories/glassdoorApify.js';
 import type { Adapter, AdapterResult, Company, ModuleName } from './types.js';
 
 const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
@@ -72,7 +78,14 @@ const ALL_ADAPTERS: ReadonlyArray<Adapter<unknown>> = [
   adsMetaLibraryUrlAdapter as Adapter<unknown>,
   adsGoogleTransparencyUrlAdapter as Adapter<unknown>,
   socialLinksAdapter as Adapter<unknown>,
-  // directories added in chunk 5
+  // directories — chunk 5 (Wave 1: no gate)
+  zaubacorpAdapter as Adapter<unknown>,
+  ambitionboxAdapter as Adapter<unknown>,
+  crunchbaseUrlAdapter as Adapter<unknown>,
+  linkedinCompanyApifyAdapter as Adapter<unknown>,
+  // directories — chunk 5 (Wave 2: gated)
+  g2CapterraAdapter as Adapter<unknown>,
+  glassdoorApifyAdapter as Adapter<unknown>,
 ];
 
 export interface CliOptions {

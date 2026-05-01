@@ -32,7 +32,14 @@ export function createApifyClient(opts: CreateApifyClientOptions): ApifyClient {
   const http = opts.http ?? globalThis.fetch;
 
   return {
-    async runActor<T>({ actor, input, costPerResultUsd, maxResults = 100, signal, timeoutMs = 90_000 }) {
+    async runActor<T>({ actor, input, costPerResultUsd, maxResults = 100, signal, timeoutMs = 90_000 }: {
+      actor: string;
+      input: Record<string, unknown>;
+      costPerResultUsd: number;
+      maxResults?: number;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+    }) {
       // Build URL with token in query string (Apify standard auth mechanism)
       const url = `https://api.apify.com/v2/acts/${encodeURIComponent(actor)}/run-sync-get-dataset-items?token=${encodeURIComponent(opts.token)}`;
 
