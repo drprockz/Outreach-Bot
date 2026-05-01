@@ -106,6 +106,12 @@ export interface CliOptions {
   action: 'enrich' | 'clear-cache';
   input: Company;
   modules: ModuleName[];
+  /** When true, Apify adapters are excluded from the run (their slots in the dossier are status:'empty'). */
+  skipPaid: boolean;
+  /** When set, pre-flight cost (sum of estimatedCostInr across enabled adapters) must not exceed this value. */
+  maxCostInr?: number;
+  /** When set, overrides --modules and runs only the listed adapter names. */
+  adapters?: string[];
   outPath?: string;
   useCache: boolean;
   concurrency: number;
@@ -123,6 +129,9 @@ export function buildOptions(argv: string[]): CliOptions {
     .option('-f, --founder <name>', 'Founder/CEO name')
     .option('--linkedin <url>', 'Founder LinkedIn URL')
     .option('-m, --modules <list>', 'Comma-separated module list', ALL_MODULE_NAMES.join(','))
+    .option('-a, --adapters <list>', 'Override: run only these adapters (e.g. "hiring.adzuna,operational.crtsh")')
+    .option('--skip-paid', 'Skip all Apify-paid adapters (validation-cost mode; ~₹2/lead)', false)
+    .option('--max-cost-inr <n>', 'Abort run if pre-flight worst-case cost exceeds this INR threshold (assumes all gates fire)', (v) => parseFloat(v))
     .option('-o, --out <path>', 'Write JSON to file (default: stdout)')
     .option('--no-cache', 'Skip cache reads (writes still happen)')
     .option('--clear-cache', 'Wipe ./cache/ then exit')
@@ -133,7 +142,8 @@ export function buildOptions(argv: string[]): CliOptions {
   program.parse(argv, { from: 'user' });
   const o = program.opts<{
     company?: string; domain?: string; location?: string; founder?: string;
-    linkedin?: string; modules: string; out?: string; cache: boolean;
+    linkedin?: string; modules: string; adapters?: string; skipPaid: boolean;
+    maxCostInr?: number; out?: string; cache: boolean;
     clearCache?: boolean; concurrency: number; timeout: number; verbose: boolean;
   }>();
 
@@ -142,6 +152,7 @@ export function buildOptions(argv: string[]): CliOptions {
       action: 'clear-cache',
       input: { name: '', domain: '' },
       modules: [...ALL_MODULE_NAMES],
+      skipPaid: false,
       useCache: o.cache,
       concurrency: o.concurrency,
       timeoutMs: o.timeout,
@@ -151,6 +162,23 @@ export function buildOptions(argv: string[]): CliOptions {
 
   if (!o.company) throw new Error('Missing required --company');
   if (!o.domain) throw new Error('Missing required --domain');
+
+  // --adapters overrides --modules (granular > coarse)
+  let adapterNames: string[] | undefined;
+  if (o.adapters !== undefined) {
+    const names = o.adapters.split(',').map((s) => s.trim()).filter(Boolean);
+    if (names.length === 0) {
+      throw new Error('--adapters requires at least one adapter name (e.g. "hiring.adzuna,operational.crtsh")');
+    }
+    const validNames = new Set(ALL_ADAPTERS.map((a) => a.name));
+    const unknown = names.filter((n) => !validNames.has(n));
+    if (unknown.length > 0) {
+      throw new Error(
+        `Unknown adapter(s): ${unknown.join(', ')}\nValid adapter names:\n  ${[...validNames].sort().join('\n  ')}`,
+      );
+    }
+    adapterNames = names;
+  }
 
   const requested = o.modules.split(',').map((s) => s.trim()).filter(Boolean);
   for (const m of requested) {
@@ -169,6 +197,9 @@ export function buildOptions(argv: string[]): CliOptions {
       founderLinkedinUrl: o.linkedin,
     },
     modules: requested as ModuleName[],
+    adapters: adapterNames,
+    skipPaid: o.skipPaid,
+    maxCostInr: o.maxCostInr,
     outPath: o.out,
     useCache: o.cache,
     concurrency: o.concurrency,
@@ -177,9 +208,32 @@ export function buildOptions(argv: string[]): CliOptions {
   };
 }
 
-function resolveAdapters(modules: ModuleName[]): Adapter<unknown>[] {
-  const moduleSet = new Set<string>(modules);
-  return ALL_ADAPTERS.filter((a) => a.module && moduleSet.has(a.module));
+function resolveAdapters(opts: Pick<CliOptions, 'modules' | 'adapters' | 'skipPaid'>): Adapter<unknown>[] {
+  let selected: Adapter<unknown>[];
+  if (opts.adapters && opts.adapters.length > 0) {
+    // --adapters overrides --modules
+    const nameSet = new Set(opts.adapters);
+    selected = ALL_ADAPTERS.filter((a) => nameSet.has(a.name));
+  } else {
+    const moduleSet = new Set<string>(opts.modules);
+    selected = ALL_ADAPTERS.filter((a) => a.module && moduleSet.has(a.module));
+  }
+  if (opts.skipPaid) {
+    selected = selected.filter((a) => !a.name.includes('_apify'));
+  }
+  return selected;
+}
+
+/** Build the empty-result stub for a skipped/not-run adapter. */
+function makeEmptyResult(a: Adapter<unknown>): AdapterResult<unknown> {
+  return {
+    source: a.name,
+    fetchedAt: new Date().toISOString(),
+    status: 'empty',
+    payload: null,
+    costPaise: 0,
+    durationMs: 0,
+  };
 }
 
 function buildModulesBlock(
@@ -250,12 +304,52 @@ export async function main(argv: string[]): Promise<number> {
   }
 
   const http = createHttp({ timeoutMs: opts.timeoutMs });
-  const adapters = resolveAdapters(opts.modules);
+
+  // Determine which adapters will actually run vs. be skipped
+  const adaptersToRun = resolveAdapters(opts);
+
+  // Determine which adapters are skipped (present in ALL_ADAPTERS but not in the run set)
+  // When --skip-paid is set, Apify adapters are in ALL_ADAPTERS but excluded from run.
+  // When --adapters is set, only those adapters run; all others are skipped.
+  const runSet = new Set(adaptersToRun.map((a) => a.name));
+  // For modules block: track the "enabled scope" (which adapters are in scope before skip-paid)
+  const scopedAdapters = (() => {
+    if (opts.adapters && opts.adapters.length > 0) {
+      const nameSet = new Set(opts.adapters);
+      return ALL_ADAPTERS.filter((a) => nameSet.has(a.name));
+    }
+    const moduleSet = new Set<string>(opts.modules);
+    return ALL_ADAPTERS.filter((a) => a.module && moduleSet.has(a.module));
+  })();
+  const skippedAdapters = scopedAdapters.filter((a) => !runSet.has(a.name));
+
+  // Pre-flight cost check (worst-case — assumes all gates fire)
+  const preflightCost = adaptersToRun.reduce((sum, a) => sum + a.estimatedCostInr, 0);
+  if (opts.maxCostInr !== undefined && preflightCost > opts.maxCostInr) {
+    const offenders = adaptersToRun
+      .filter((a) => a.estimatedCostInr > 0)
+      .map((a) => `  ${a.name}: ₹${a.estimatedCostInr}`)
+      .join('\n');
+    process.stderr.write(
+      `error: pre-flight cost ₹${preflightCost.toFixed(2)} exceeds --max-cost-inr ₹${opts.maxCostInr}\n` +
+      `Paid adapters contributing to cost:\n${offenders}\n` +
+      `Use --skip-paid to run validation-cost mode (~₹2/lead) or raise --max-cost-inr.\n`,
+    );
+    return 1;
+  }
+  process.stderr.write(`pre-flight estimated cost (worst case): ₹${preflightCost.toFixed(2)}\n`);
 
   const { results, summary } = await runEnrichment({
-    input: opts.input, env, adapters, cache, logger, http,
+    input: opts.input, env, adapters: adaptersToRun, cache, logger, http,
     concurrency: opts.concurrency, timeoutMs: opts.timeoutMs, useCache: opts.useCache,
   });
+
+  // Merge skipped-adapter stubs into results so the dossier always has all slots
+  for (const a of skippedAdapters) {
+    results[a.name] = makeEmptyResult(a);
+  }
+
+  process.stderr.write(`actual cost: ₹${summary.totalCostInr.toFixed(2)}\n`);
 
   const usdToInr = parseFloat(env.USD_INR_RATE ?? '84.0');
   const totalCostBreakdown = computeCostBreakdown(results, usdToInr);
@@ -268,7 +362,7 @@ export async function main(argv: string[]): Promise<number> {
     totalCostBreakdown,
     totalDurationMs: summary.totalDurationMs,
     adapters: results,
-    modules: buildModulesBlock(adapters),
+    modules: buildModulesBlock(scopedAdapters),
     signalSummary: null,
   };
 

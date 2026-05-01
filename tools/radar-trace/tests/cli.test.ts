@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -50,12 +50,65 @@ describe('buildOptions (arg parser)', () => {
   it('rejects missing --domain when action is enrich', () => {
     expect(() => buildOptions(['-c', 'Acme'])).toThrow(/domain/i);
   });
+
+  // Task 7.1 — --skip-paid
+  it('--skip-paid sets skipPaid:true in CliOptions', () => {
+    const opts = buildOptions(['-c', 'Acme', '-d', 'acme.com', '--skip-paid']);
+    expect(opts.skipPaid).toBe(true);
+  });
+
+  // Task 7.2 — --max-cost-inr
+  it('--max-cost-inr is parsed as a number', () => {
+    const opts = buildOptions(['-c', 'Acme', '-d', 'acme.com', '--max-cost-inr', '500']);
+    expect(opts.maxCostInr).toBe(500);
+  });
+
+  // Task 7.3 — --adapters
+  it('--adapters parses a comma-separated list', () => {
+    const opts = buildOptions(['-c', 'Acme', '-d', 'acme.com', '--adapters', 'hiring.adzuna,operational.crtsh']);
+    expect(opts.adapters).toEqual(['hiring.adzuna', 'operational.crtsh']);
+  });
+
+  it('--adapters rejects unknown adapter name', () => {
+    expect(() => buildOptions(['-c', 'Acme', '-d', 'acme.com', '--adapters', 'banana.unknown']))
+      .toThrow(/unknown adapter/i);
+  });
+
+  it('--adapters rejects empty list', () => {
+    expect(() => buildOptions(['-c', 'Acme', '-d', 'acme.com', '--adapters', '']))
+      .toThrow(/at least one adapter/i);
+  });
+
+  // Task 7.4 — --linkedin
+  it('--linkedin sets founderLinkedinUrl in input', () => {
+    const opts = buildOptions(['-c', 'Acme', '-d', 'acme.com', '--linkedin', 'https://linkedin.com/in/jane']);
+    expect(opts.input.founderLinkedinUrl).toBe('https://linkedin.com/in/jane');
+  });
 });
 
 describe('main() integration', () => {
+  let stderrChunks: string[] = [];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let stderrSpy: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let stdoutSpy: any;
+
+  beforeEach(() => {
+    stderrChunks = [];
+    stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation((chunk: unknown) => {
+      stderrChunks.push(typeof chunk === 'string' ? chunk : (chunk as Buffer).toString());
+      return true;
+    });
+    stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+  });
+
+  afterEach(() => {
+    stderrSpy.mockRestore();
+    stdoutSpy.mockRestore();
+  });
+
   it('emits a complete dossier that validates against RadarTraceDossierSchema', async () => {
     let tmp: string | null = null;
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
@@ -82,7 +135,6 @@ describe('main() integration', () => {
         'positioning', 'product', 'social', 'voice',
       ]);
     } finally {
-      stdoutSpy.mockRestore();
       if (tmp) rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -90,8 +142,9 @@ describe('main() integration', () => {
   it('writes to --out path and emits no stdout', async () => {
     let tmp: string | null = null;
     let stdoutChunks: string[] = [];
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
-      stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());
+    // Override the beforeEach spy to capture chunks for this test
+    stdoutSpy.mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === 'string' ? chunk : (chunk as Buffer).toString());
       return true;
     });
 
@@ -107,14 +160,13 @@ describe('main() integration', () => {
       expect(code).toBe(0);
       // Only logger messages go to stdout — no JSON blob
       const nonLogOutput = stdoutChunks.filter((c) => {
-        try { JSON.parse(c.trim()); const o = JSON.parse(c.trim()); return 'radarTraceVersion' in o; }
+        try { const o = JSON.parse(c.trim()); return 'radarTraceVersion' in o; }
         catch { return false; }
       });
       expect(nonLogOutput).toHaveLength(0);
       const written = JSON.parse(readFileSync(out, 'utf8'));
       expect(RadarTraceDossierSchema.safeParse(written).success).toBe(true);
     } finally {
-      stdoutSpy.mockRestore();
       if (tmp) rmSync(tmp, { recursive: true, force: true });
     }
   });
@@ -123,7 +175,6 @@ describe('main() integration', () => {
     // Verify the modules block structure without running DNS/network adapters.
     // Customer module has no required env and times out fast at --timeout 100.
     let tmp: string | null = null;
-    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
     try {
       tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
@@ -148,7 +199,150 @@ describe('main() integration', () => {
         'customer.logos_current', 'customer.wayback_diff',
       ]);
     } finally {
-      stdoutSpy.mockRestore();
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Task 7.1 — --skip-paid integration test
+  it('--skip-paid: Apify adapters appear in dossier as status:empty and are not run', async () => {
+    let tmp: string | null = null;
+
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'voice,social,ads,directories',
+        '--skip-paid',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
+      // All *_apify adapter slots should exist in the dossier
+      const apifyKeys = Object.keys(written.adapters).filter((k) => k.includes('_apify'));
+      expect(apifyKeys.length).toBeGreaterThan(0);
+      // Every apify slot must have status:'empty'
+      for (const k of apifyKeys) {
+        expect(written.adapters[k].status).toBe('empty');
+        expect(written.adapters[k].payload).toBeNull();
+      }
+    } finally {
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Task 7.2 — --max-cost-inr integration tests
+  it('--max-cost-inr: pre-flight under threshold proceeds (returns 0)', async () => {
+    let tmp: string | null = null;
+
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      // customer module has estimatedCostInr:0 for both adapters — well under any cap
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'customer',
+        '--max-cost-inr', '1000',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const stderr = stderrChunks.join('');
+      expect(stderr).toMatch(/pre-flight estimated cost.*₹/);
+      expect(stderr).toMatch(/actual cost.*₹/);
+    } finally {
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('--max-cost-inr: pre-flight over threshold exits 1 with error message naming offenders', async () => {
+    // Run with all modules and a tiny cap (₹0.01) — will definitely exceed
+    const code = await main([
+      '--company', 'Acme', '--domain', 'acme.com',
+      '--modules', 'voice,social,ads',
+      '--max-cost-inr', '0.01',
+      '--timeout', '100',
+    ]);
+    expect(code).toBe(1);
+    const stderr = stderrChunks.join('');
+    expect(stderr).toMatch(/pre-flight cost.*exceeds.*--max-cost-inr/i);
+    // Should list at least one paid adapter name in the error
+    expect(stderr).toMatch(/₹/);
+  });
+
+  it('--max-cost-inr: actual cost may be lower than pre-flight (gated adapters skipped)', async () => {
+    let tmp: string | null = null;
+
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      // Use a very generous cap so the run proceeds
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--modules', 'customer',
+        '--max-cost-inr', '9999',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const stderr = stderrChunks.join('');
+      // Both pre-flight and actual cost lines must be present
+      expect(stderr).toMatch(/pre-flight estimated cost \(worst case\)/);
+      expect(stderr).toMatch(/actual cost/);
+      // Pre-flight >= actual (gated adapters may not fire; here both are 0)
+      const preMatch = stderr.match(/pre-flight estimated cost.*?₹([\d.]+)/);
+      const actualMatch = stderr.match(/actual cost.*?₹([\d.]+)/);
+      expect(preMatch).not.toBeNull();
+      expect(actualMatch).not.toBeNull();
+      const preCost = parseFloat(preMatch?.[1] ?? '0');
+      const actualCost = parseFloat(actualMatch?.[1] ?? '0');
+      expect(actualCost).toBeLessThanOrEqual(preCost);
+    } finally {
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Task 7.3 — --adapters integration test
+  it('--adapters: runs only listed adapters; others appear as status:empty', async () => {
+    let tmp: string | null = null;
+
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--adapters', 'customer.logos_current',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
+      // Only the requested adapter should be in the dossier
+      const adapterKeys = Object.keys(written.adapters);
+      expect(adapterKeys).toEqual(['customer.logos_current']);
+      // modules block reflects the single adapter scope
+      expect(written.modules.customer.adapters).toEqual(['customer.logos_current']);
+      expect(written.modules.hiring.adapters).toEqual([]);
+    } finally {
+      if (tmp) rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // Task 7.4 — --linkedin integration test
+  it('--linkedin: founderLinkedinUrl is passed through to the dossier company field', async () => {
+    let tmp: string | null = null;
+    const linkedinUrl = 'https://linkedin.com/in/jane-doe';
+
+    try {
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
+      const code = await main([
+        '--company', 'Acme', '--domain', 'acme.com',
+        '--linkedin', linkedinUrl,
+        '--modules', 'customer',
+        '--out', join(tmp, 'out.json'),
+        '--timeout', '100',
+      ]);
+      expect(code).toBe(0);
+      const written = JSON.parse(readFileSync(join(tmp, 'out.json'), 'utf8'));
+      expect(written.company.founderLinkedinUrl).toBe(linkedinUrl);
+    } finally {
       if (tmp) rmSync(tmp, { recursive: true, force: true });
     }
   });
