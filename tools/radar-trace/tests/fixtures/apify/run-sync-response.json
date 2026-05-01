@@ -1,0 +1,22 @@
+[
+  {
+    "name": "Acme Corp",
+    "industry": "Software Development",
+    "description": "Building the future of B2B software.",
+    "employeeCount": "51-200 employees",
+    "headquarters": "San Francisco, CA",
+    "founded": 2018,
+    "specialties": ["SaaS", "B2B", "Enterprise"],
+    "followerCount": 3400
+  },
+  {
+    "name": "Acme Corp (duplicate)",
+    "industry": "Software Development",
+    "description": "Another row returned by actor.",
+    "employeeCount": "51-200 employees",
+    "headquarters": "San Francisco, CA",
+    "founded": 2018,
+    "specialties": [],
+    "followerCount": 3400
+  }
+]
