@@ -68,8 +68,12 @@ export const customerAdapter: Adapter<CustomerPayload> = {
           .catch(() => null);
         if (oldHtml) {
           const oldLogos = extractLogos(oldHtml);
-          addedLogosLast90d = currentLogos.filter((l) => !oldLogos.includes(l));
-          removedLogosLast90d = oldLogos.filter((l) => !currentLogos!.includes(l));
+          // Case-insensitive diff so "Acme" (current alt) and "acme" (old filename
+          // stem) don't surface as a spurious add/remove pair.
+          const oldLower = new Set(oldLogos.map((l) => l.toLowerCase()));
+          const currentLower = new Set(currentLogos.map((l) => l.toLowerCase()));
+          addedLogosLast90d = currentLogos.filter((l) => !oldLower.has(l.toLowerCase()));
+          removedLogosLast90d = oldLogos.filter((l) => !currentLower.has(l.toLowerCase()));
         }
       }
     }
