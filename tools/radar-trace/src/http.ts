@@ -7,7 +7,7 @@ export interface HttpOptions {
   userAgent?: string;
 }
 
-const DEFAULT_UA = 'radar-enrich/0.1 (+https://radar.simpleinc.cloud)';
+const DEFAULT_UA = 'radar-trace/0.1 (+https://radar.simpleinc.cloud)';
 
 /**
  * Returns a fetch-compatible function with timeout, single retry on 5xx, and a

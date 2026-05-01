@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createFileCache, hashCompanyInput, todayStamp } from '../src/cache.js';
@@ -8,7 +8,7 @@ import type { AdapterResult, CompanyInput } from '../src/types.js';
 let dir: string;
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'radar-enrich-cache-'));
+  dir = mkdtempSync(join(tmpdir(), 'radar-trace-cache-'));
 });
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
@@ -91,6 +91,22 @@ describe('createFileCache', () => {
     await cache.write(sampleKey, errored);
     const got = await cache.read(sampleKey);
     expect(got).toEqual(errored);
+  });
+
+  it('respects per-call ttlMs override (returns null if mtime older than TTL)', async () => {
+    const cache = createFileCache(dir);
+    await cache.write(sampleKey, sampleResult);
+    // Manually backdate the file's mtime by 2 hours
+    const filename = `${sampleKey.adapterName}-${sampleKey.inputHash}-${sampleKey.adapterVersion}-${sampleKey.date}.json`;
+    const path = join(dir, filename);
+    const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+    utimesSync(path, twoHoursAgo, twoHoursAgo);
+    // Without ttlMs (or default 24h), still hits
+    expect(await cache.read(sampleKey)).toEqual(sampleResult);
+    // With ttlMs=1h, miss
+    expect(await cache.read(sampleKey, 60 * 60 * 1000)).toBeNull();
+    // With ttlMs=3h, hit
+    expect(await cache.read(sampleKey, 3 * 60 * 60 * 1000)).toEqual(sampleResult);
   });
 });
 

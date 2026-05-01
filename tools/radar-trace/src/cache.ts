@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, readdir, unlink, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AdapterResult, Cache, CacheKey, CompanyInput } from './types.js';
@@ -34,9 +34,13 @@ function fileNameFor(key: CacheKey): string {
 
 export function createFileCache(dir: string): Cache {
   return {
-    async read<T>(key: CacheKey): Promise<AdapterResult<T> | null> {
+    async read<T>(key: CacheKey, ttlMs?: number): Promise<AdapterResult<T> | null> {
       const path = join(dir, fileNameFor(key));
       try {
+        if (ttlMs !== undefined) {
+          const stats = await stat(path);
+          if (Date.now() - stats.mtimeMs > ttlMs) return null;
+        }
         const raw = await readFile(path, 'utf8');
         return JSON.parse(raw) as AdapterResult<T>;
       } catch (err) {

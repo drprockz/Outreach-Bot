@@ -1,11 +1,11 @@
 {
-  "name": "radar-enrich",
+  "name": "radar-trace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Strategic-signal validation prototype for Radar cold outreach",
+  "description": "Structured digital-footprint collection for Radar (Phase 1A — data only)",
   "bin": {
-    "radar-enrich": "./dist/cli.js"
+    "radar-trace": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",

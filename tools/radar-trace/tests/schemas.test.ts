@@ -4,6 +4,9 @@ import {
   EnrichedDossierSchema,
   SignalSummarySchema,
   CompanyInputSchema,
+  CompanySchema,
+  RadarTraceDossierSchema,
+  ALL_MODULE_NAMES,
 } from '../src/schemas.js';
 
 describe('CompanyInputSchema', () => {
@@ -90,6 +93,75 @@ describe('SignalSummarySchema', () => {
       },
     });
     expect(r.success).toBe(true);
+  });
+});
+
+describe('CompanySchema', () => {
+  it('parses minimal valid input', () => {
+    expect(CompanySchema.safeParse({ name: 'Acme', domain: 'acme.com' }).success).toBe(true);
+  });
+  it('rejects empty name', () => {
+    expect(CompanySchema.safeParse({ name: '', domain: 'acme.com' }).success).toBe(false);
+  });
+  it('accepts founderLinkedinUrl', () => {
+    expect(CompanySchema.safeParse({
+      name: 'Acme', domain: 'acme.com', founderLinkedinUrl: 'https://linkedin.com/in/jane',
+    }).success).toBe(true);
+  });
+});
+
+describe('ALL_MODULE_NAMES', () => {
+  it('contains all 9 modules', () => {
+    expect(ALL_MODULE_NAMES).toEqual([
+      'hiring', 'product', 'customer', 'voice', 'operational',
+      'positioning', 'social', 'ads', 'directories',
+    ]);
+  });
+});
+
+describe('RadarTraceDossierSchema', () => {
+  const minimalAdapter = {
+    source: 'x.y', fetchedAt: '2026-05-01T00:00:00.000Z',
+    status: 'empty', payload: null, costPaise: 0, durationMs: 0,
+  };
+  const minimalDossier = {
+    radarTraceVersion: '1.0.0',
+    company: { name: 'Acme', domain: 'acme.com' },
+    tracedAt: '2026-05-01T00:00:00.000Z',
+    totalCostInr: 0,
+    totalCostBreakdown: {
+      serper: 0, brave: 0, listenNotes: 0, pagespeed: 0, apifyUsd: 0, apifyInr: 0,
+    },
+    totalDurationMs: 0,
+    adapters: { 'x.y': minimalAdapter },
+    modules: {
+      hiring: { adapters: [] }, product: { adapters: [] },
+      customer: { adapters: [] }, voice: { adapters: [] },
+      operational: { adapters: [] }, positioning: { adapters: [] },
+      social: { adapters: [] }, ads: { adapters: [] },
+      directories: { adapters: [] },
+    },
+    signalSummary: null,
+  };
+
+  it('parses a minimal dossier', () => {
+    expect(RadarTraceDossierSchema.safeParse(minimalDossier).success).toBe(true);
+  });
+
+  it('rejects dossier missing radarTraceVersion', () => {
+    const { radarTraceVersion: _v, ...rest } = minimalDossier;
+    expect(RadarTraceDossierSchema.safeParse(rest).success).toBe(false);
+  });
+
+  it('rejects dossier missing one of the nine modules', () => {
+    const { modules: _m, ...rest } = minimalDossier;
+    const broken = { ...rest, modules: { ...minimalDossier.modules, ads: undefined } };
+    expect(RadarTraceDossierSchema.safeParse(broken).success).toBe(false);
+  });
+
+  it('signalSummary may be null (Phase 1A) or an object (Phase 2 forward-compat)', () => {
+    expect(RadarTraceDossierSchema.safeParse({ ...minimalDossier, signalSummary: null }).success).toBe(true);
+    expect(RadarTraceDossierSchema.safeParse({ ...minimalDossier, signalSummary: {} }).success).toBe(true);
   });
 });
 

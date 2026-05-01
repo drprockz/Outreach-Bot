@@ -43,7 +43,7 @@ export interface MainDeps {
 export function buildOptions(argv: string[]): CliOptions {
   const program = new Command()
     .exitOverride()
-    .name('radar-enrich')
+    .name('radar-trace')
     .option('-c, --company <name>', 'Company name')
     .option('-d, --domain <domain>', 'Primary domain (e.g. acme.com)')
     .option('-l, --location <location>', '"City, Country"')

@@ -23,7 +23,7 @@ describe('createHttp', () => {
     });
     const http = createHttp({ underlying: underlying as unknown as typeof fetch, timeoutMs: 5000 });
     await http('https://example.com');
-    expect(seen[0]!.get('user-agent')).toMatch(/radar-enrich/i);
+    expect(seen[0]!.get('user-agent')).toMatch(/radar-trace/i);
   });
 
   it('retries once on a 5xx response', async () => {

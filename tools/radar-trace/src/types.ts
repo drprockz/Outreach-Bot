@@ -16,8 +16,8 @@ export interface Logger {
 }
 
 export interface Cache {
-  /** Returns cached AdapterResult if a fresh entry exists for today, else null. */
-  read<T>(key: CacheKey): Promise<AdapterResult<T> | null>;
+  /** Returns cached AdapterResult if a fresh entry exists for today, else null. Accepts optional TTL override. */
+  read<T>(key: CacheKey, ttlMs?: number): Promise<AdapterResult<T> | null>;
   /** Writes the AdapterResult under the key. Idempotent (overwrites). */
   write<T>(key: CacheKey, value: AdapterResult<T>): Promise<void>;
   /** Deletes every cache file. Used by --clear-cache. */
@@ -51,6 +51,10 @@ export interface Env {
   BRAVE_API_KEY?: string;
   LISTEN_NOTES_KEY?: string;
   ANTHROPIC_DISABLED?: string;  // honored by reused Stage 10 code
+  PAGESPEED_API_KEY?: string;
+  APIFY_TOKEN?: string;
+  USD_INR_RATE?: string;
+  GEMINI_API_KEY?: string;
 }
 
 export type AdapterStatus = 'ok' | 'partial' | 'empty' | 'error';
@@ -63,6 +67,11 @@ export interface AdapterResult<T> {
   errors?: string[];
   costPaise: number;        // visibility only; no enforcement
   durationMs: number;
+  /** Optional extra cost detail — used by Apify adapters for USD reconciliation. */
+  costMeta?: {
+    apifyResults?: number;
+    costUsd?: number;
+  };
 }
 
 export interface Adapter<TPayload> {
@@ -72,4 +81,39 @@ export interface Adapter<TPayload> {
   readonly requiredEnv: readonly (keyof Env)[];
   readonly schema: z.ZodType<TPayload>;
   run(ctx: AdapterContext): Promise<AdapterResult<TPayload>>;
+
+  /** Logical module this adapter belongs to. (Optional during Chunk 1; required after Chunk 2.) */
+  readonly module?: ModuleName;
+
+  /** Estimated INR cost per run. Optional during Chunk 1; required after Chunk 2. */
+  readonly estimatedCostInr?: number;
+
+  /** Optional per-adapter TTL override; default 24h. */
+  readonly cacheTtlMs?: number;
+
+  /**
+   * Optional gate. If returns false, adapter is skipped (status:'empty', cost:0).
+   * Receives Wave 1 partial dossier. Throws caught and treated as `false`.
+   */
+  gate?(partial: PartialDossier): boolean;
 }
+
+/** Logical groupings — adapters declare which one they belong to. */
+export type ModuleName =
+  | 'hiring' | 'product' | 'customer' | 'voice' | 'operational'
+  | 'positioning' | 'social' | 'ads' | 'directories';
+
+/**
+ * New input shape — adds founderLinkedinUrl. Alias of CompanyInput for backward
+ * compatibility during the Chunk 1 → Chunk 2 transition. Chunk 2 removes CompanyInput.
+ */
+export interface Company extends CompanyInput {
+  founderLinkedinUrl?: string;
+}
+
+/**
+ * Read-only snapshot of Wave 1 results for use by Wave 2 gate predicates.
+ * Every Wave 1 adapter is present, including ones with status:'error' (payload null)
+ * or status:'empty'. Gate predicates MUST defensively handle null payloads.
+ */
+export type PartialDossier = Readonly<Record<string, AdapterResult<unknown>>>;

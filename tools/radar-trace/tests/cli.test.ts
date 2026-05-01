@@ -73,7 +73,7 @@ describe('main() integration', () => {
     });
 
     try {
-      tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-int-'));
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
       // Restrict to stub modules only — using real adapters here would make real
       // DNS / HTTP calls (operational adapter) and stall the suite. Stubs exercise
       // the same end-to-end shape (schema + module key set + exit code).
@@ -97,7 +97,7 @@ describe('main() integration', () => {
     });
 
     try {
-      tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-int-'));
+      tmp = mkdtempSync(join(tmpdir(), 'radar-trace-int-'));
       const out = join(tmp, 'dossier.json');
       const code = await main(['--company', 'Acme', '--domain', 'acme.com', '--modules', 'voice,positioning', '--out', out], { loadRegenerateHook: fakeLoad });
       expect(code).toBe(0);
@@ -118,7 +118,7 @@ describe('main() synthesis', () => {
   let stdoutChunks: string[];
 
   beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), 'radar-enrich-syn-'));
+    tmp = mkdtempSync(join(tmpdir(), 'radar-trace-syn-'));
     stdoutChunks = [];
     stdoutSpy = vi.spyOn(process.stdout, 'write').mockImplementation((chunk) => {
       stdoutChunks.push(typeof chunk === 'string' ? chunk : chunk.toString());

@@ -10,6 +10,10 @@ const EnvSchema = z.object({
   BRAVE_API_KEY: z.string().min(1).optional(),
   LISTEN_NOTES_KEY: z.string().min(1).optional(),
   ANTHROPIC_DISABLED: z.string().min(1).optional(),
+  PAGESPEED_API_KEY: z.string().min(1).optional(),
+  APIFY_TOKEN: z.string().min(1).optional(),
+  USD_INR_RATE: z.string().min(1).optional(),
+  GEMINI_API_KEY: z.string().min(1).optional(),
 });
 
 export const ENV_REGISTRATION_URLS: Record<keyof Env, string> = {
@@ -21,6 +25,10 @@ export const ENV_REGISTRATION_URLS: Record<keyof Env, string> = {
   BRAVE_API_KEY: 'https://api.search.brave.com/',
   LISTEN_NOTES_KEY: 'https://www.listennotes.com/api/',
   ANTHROPIC_DISABLED: '(internal flag — not registered)',
+  PAGESPEED_API_KEY: 'https://developers.google.com/speed/docs/insights/v5/get-started',
+  APIFY_TOKEN: 'https://apify.com/',
+  USD_INR_RATE: '(rate used internally)',
+  GEMINI_API_KEY: 'https://aistudio.google.com/',
 };
 
 /**

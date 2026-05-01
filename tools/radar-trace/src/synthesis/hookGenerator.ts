@@ -70,9 +70,9 @@ export async function generateHooks(
  * (Anthropic SDK, etc.) — tests inject a fake `regenerateHook` directly.
  *
  * Path note: Node ESM dynamic import() resolves relative to THIS module's URL
- * (not process.cwd()). From tools/radar-enrich/src/synthesis/hookGenerator.ts
+ * (not process.cwd()). From tools/radar-trace/src/synthesis/hookGenerator.ts
  * the relative path to src/core/pipeline/regenerateHook.js is 4 levels up:
- *   synthesis → src → radar-enrich → tools → repo-root
+ *   synthesis → src → radar-trace → tools → repo-root
  */
 export async function loadRealRegenerateHook(): Promise<RegenerateHookFn> {
   const mod = await import('../../../../src/core/pipeline/regenerateHook.js');
