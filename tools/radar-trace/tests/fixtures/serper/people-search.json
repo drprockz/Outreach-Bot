@@ -1,0 +1,17 @@
+{
+  "searchParameters": { "q": "site:linkedin.com/in/ \"Jane Doe\" \"Acme\"", "type": "search", "engine": "google" },
+  "organic": [
+    {
+      "title": "Jane Doe - Founder & CEO at Acme - LinkedIn",
+      "link": "https://www.linkedin.com/in/janedoe/",
+      "snippet": "Jane Doe is the founder of Acme...",
+      "position": 1
+    },
+    {
+      "title": "Jane Doe | Acme Corp",
+      "link": "https://acme.com/about",
+      "snippet": "Founded Acme in 2020...",
+      "position": 2
+    }
+  ]
+}
