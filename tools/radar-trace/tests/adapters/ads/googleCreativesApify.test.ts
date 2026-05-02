@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeAdsGoogleCreativesApifyAdapter } from '../../../src/adapters/ads/googleCreativesApify.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { ApifyClient } from '../../../src/clients/apify.js';
 
 const googleCreativesFixture = JSON.parse(
@@ -18,7 +19,7 @@ function makeCtx(overrides: Partial<AdapterContext> = {}): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: { APIFY_TOKEN: 'fake-token' },
     signal: new AbortController().signal,
-    ...overrides,
+      anchors: EMPTY_ANCHORS,    ...overrides,
   };
 }
 

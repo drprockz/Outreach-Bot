@@ -85,7 +85,7 @@ export function makeInstagramPostsApifyAdapter(deps: {
   return {
     name: 'social.instagram_posts_apify',
     module: 'social',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 100,
     requiredEnv: ['APIFY_TOKEN', 'SERPER_API_KEY'],
     cacheTtlMs: 6 * 60 * 60 * 1000,
@@ -94,18 +94,32 @@ export function makeInstagramPostsApifyAdapter(deps: {
     async run(ctx: AdapterContext): Promise<AdapterResult<InstagramPostsApifyPayload>> {
       const t0 = Date.now();
       let totalCostPaise = 0;
+      let verificationMethod: 'anchor' | 'none' = 'none';
+      let verificationConfidence = 0;
+      let verificationReason = '';
 
       try {
-        const serper = deps.serper(ctx.env);
         const apify = deps.apify(ctx.env);
 
-        // Step 1: Discover Instagram profile URL via Serper
-        const q = `site:instagram.com "${ctx.input.name}"`;
-        const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
-        totalCostPaise += serperCost;
-
-        const instagramUrl =
-          organic.map((r) => r.link).find((link) => INSTAGRAM_PROFILE_RE.test(link)) ?? null;
+        // Anchor-first.
+        let instagramUrl: string | null = null;
+        if (ctx.anchors.instagramUrl && INSTAGRAM_PROFILE_RE.test(ctx.anchors.instagramUrl)) {
+          instagramUrl = ctx.anchors.instagramUrl;
+          verificationMethod = 'anchor';
+          verificationConfidence = 1;
+          verificationReason = 'instagramUrl from company website';
+        } else {
+          const serper = deps.serper(ctx.env);
+          const q = `site:instagram.com "${ctx.input.name}"`;
+          const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
+          totalCostPaise += serperCost;
+          instagramUrl =
+            organic.map((r) => r.link).find((link) => INSTAGRAM_PROFILE_RE.test(link)) ?? null;
+          if (instagramUrl) {
+            verificationConfidence = 0.4;
+            verificationReason = 'serper name search (unverified)';
+          }
+        }
 
         if (!instagramUrl) {
           return {
@@ -115,6 +129,7 @@ export function makeInstagramPostsApifyAdapter(deps: {
             payload: null,
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
@@ -150,6 +165,11 @@ export function makeInstagramPostsApifyAdapter(deps: {
           costMeta: {
             apifyResults: items.length,
             costUsd,
+          },
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
           },
         };
       } catch (err) {

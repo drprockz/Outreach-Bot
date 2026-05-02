@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { makeOperationalDnsAdapter, operationalDnsAdapter } from '../../../src/adapters/operational/dns.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 function ctxWith(http: typeof fetch): AdapterContext {
   const noop = () => {};
@@ -11,6 +12,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

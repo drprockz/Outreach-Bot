@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { zaubacorpAdapter, parseToflerPage } from '../../../src/adapters/directories/zaubacorp.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const fullHtml = readFileSync(
   join(__dirname, '../../fixtures/directories/zaubacorp-tofler.html'),
@@ -18,7 +19,7 @@ function makeCtx(overrides: Partial<AdapterContext> = {}): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: {},
     signal: new AbortController().signal,
-    ...overrides,
+      anchors: EMPTY_ANCHORS,    ...overrides,
   };
 }
 

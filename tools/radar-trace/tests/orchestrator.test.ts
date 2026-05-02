@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { runEnrichment } from '../src/orchestrator.js';
 import type { Adapter, AdapterContext, AdapterResult, Cache, Company, Env, Logger, PartialDossier } from '../src/types.js';
+import { EMPTY_ANCHORS } from '../src/types.js';
 
 function silentLogger(): Logger {
   const noop = () => {};
@@ -258,5 +259,46 @@ describe('cost tracking', () => {
       http: globalThis.fetch, concurrency: 2, timeoutMs: 5000, useCache: true,
     });
     expect(out.summary.totalCostInr).toBe(170);
+  });
+});
+
+describe('anchor injection', () => {
+  it('passes the anchors argument to every adapter context', async () => {
+    const seen: Array<unknown> = [];
+    const adapter = makeAdapter('a.x', async (ctx) => {
+      seen.push(ctx.anchors);
+      return { source: 'a.x', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 0, durationMs: 1 };
+    });
+    const customAnchors = {
+      linkedinCompanyUrl: 'https://www.linkedin.com/company/acme/',
+      twitterUrl: null, youtubeChannelUrl: null, githubOrgUrl: null,
+      crunchbaseUrl: null, instagramUrl: null, facebookUrl: null,
+      founders: [], companyDescription: null, primaryProductOrService: null,
+      industryOneLiner: null, pagesFetched: ['https://acme.com/'],
+      discoveredVia: 'regex' as const, costPaise: 0, errors: [],
+    };
+    await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters: [adapter],
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 1, timeoutMs: 5000, useCache: true,
+      anchors: customAnchors,
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toEqual(customAnchors);
+  });
+
+  it('defaults to EMPTY_ANCHORS when anchors are not provided', async () => {
+    const seen: Array<unknown> = [];
+    const adapter = makeAdapter('a.x', async (ctx) => {
+      seen.push(ctx.anchors);
+      return { source: 'a.x', fetchedAt: 'x', status: 'ok', payload: {}, costPaise: 0, durationMs: 1 };
+    });
+    await runEnrichment({
+      input: fakeInput, env: fakeEnv, adapters: [adapter],
+      cache: memoryCache(), logger: silentLogger(),
+      http: globalThis.fetch, concurrency: 1, timeoutMs: 5000, useCache: true,
+    });
+    expect(seen).toHaveLength(1);
+    expect((seen[0] as { discoveredVia: string }).discoveredVia).toBe('none');
   });
 });

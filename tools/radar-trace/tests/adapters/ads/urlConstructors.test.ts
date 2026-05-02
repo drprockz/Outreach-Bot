@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { adsMetaLibraryUrlAdapter } from '../../../src/adapters/ads/metaLibraryUrl.js';
 import { adsGoogleTransparencyUrlAdapter } from '../../../src/adapters/ads/googleTransparencyUrl.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 function makeCtx(name: string, domain: string): AdapterContext {
   const noop = () => {};
@@ -12,6 +13,7 @@ function makeCtx(name: string, domain: string): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(name, domain).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

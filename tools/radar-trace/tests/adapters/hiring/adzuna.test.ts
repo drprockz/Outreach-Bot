@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hiringAdzunaAdapter } from '../../../src/adapters/hiring/adzuna.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 beforeAll(() => { vi.useFakeTimers({ now: new Date('2026-05-01T12:00:00Z') }); });
 afterAll(() => { vi.useRealTimers(); });
@@ -20,6 +21,7 @@ function ctxWith(http: typeof fetch, env = { ADZUNA_APP_ID: 'a', ADZUNA_APP_KEY:
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http, env).logger },
     env,
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

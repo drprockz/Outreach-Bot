@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ambitionboxAdapter, parseAmbitionBoxPage } from '../../../src/adapters/directories/ambitionbox.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const fullHtml = readFileSync(
   join(__dirname, '../../fixtures/directories/ambitionbox-acme.html'),
@@ -18,6 +19,7 @@ function makeCtx(httpFn?: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

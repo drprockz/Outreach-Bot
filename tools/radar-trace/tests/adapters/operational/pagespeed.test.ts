@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { operationalPagespeedAdapter } from '../../../src/adapters/operational/pagespeed.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const psiFixture = JSON.parse(readFileSync(join(__dirname, '../../fixtures/operational/pagespeed-response.json'), 'utf8'));
 
@@ -15,6 +16,7 @@ function ctxWith(http: typeof fetch, env: Record<string, string> = {}): AdapterC
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http, env).logger },
     env,
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

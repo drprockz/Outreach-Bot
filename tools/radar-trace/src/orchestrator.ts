@@ -1,8 +1,9 @@
 import pLimit from 'p-limit';
 import { hashCompanyInput, todayStamp } from './cache.js';
 import { assertRequiredEnv } from './env.js';
+import { EMPTY_ANCHORS } from './types.js';
 import type {
-  Adapter, AdapterContext, AdapterResult, Cache, Company, Env, Logger, PartialDossier,
+  Adapter, AdapterContext, AdapterResult, Cache, CanonicalAnchors, Company, Env, Logger, PartialDossier,
 } from './types.js';
 
 export interface RunOptions {
@@ -15,6 +16,12 @@ export interface RunOptions {
   concurrency: number;
   timeoutMs: number;
   useCache: boolean;
+  /**
+   * Pre-discovered canonical anchors (Wave 0 output). When omitted, defaults
+   * to EMPTY_ANCHORS so adapters' anchor-first paths fall through to their
+   * existing search behavior — useful for tests that don't care about anchors.
+   */
+  anchors?: CanonicalAnchors;
 }
 
 export interface RunOutput {
@@ -166,6 +173,7 @@ async function runOneAdapter(
     logger: log,
     env: opts.env,
     signal: timeoutCtrl.signal,
+    anchors: opts.anchors ?? EMPTY_ANCHORS,
   };
 
   log.info('start');

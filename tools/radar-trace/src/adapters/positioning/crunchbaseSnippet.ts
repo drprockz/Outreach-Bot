@@ -19,13 +19,35 @@ export function makePositioningCrunchbaseSnippetAdapter(
   return {
     name: 'positioning.crunchbase_snippet',
     module: 'positioning',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 0.03,
     requiredEnv: ['SERPER_API_KEY'],
     schema: PositioningCrunchbaseSnippetPayloadSchema,
     async run(ctx: AdapterContext): Promise<AdapterResult<PositioningCrunchbaseSnippetPayload>> {
       const t0 = Date.now();
       try {
+        // Anchor-first: if the company website links to its Crunchbase page,
+        // skip the Serper search — without this gate, "Simple Inc" returned
+        // "Pure and Simple, Inc." (estate sale planning) as the top hit.
+        if (ctx.anchors.crunchbaseUrl) {
+          return {
+            source: 'positioning.crunchbase_snippet',
+            fetchedAt: new Date().toISOString(),
+            status: 'ok',
+            payload: {
+              crunchbaseUrl: ctx.anchors.crunchbaseUrl,
+              // Snippet/funding hint are populated only via the Serper SERP
+              // path. Anchor mode prefers correctness over richness — use
+              // the dedicated Crunchbase API/scraper to enrich if needed.
+              snippet: null,
+              fundingHint: null,
+            },
+            costPaise: 0,
+            durationMs: Date.now() - t0,
+            verification: { method: 'anchor', confidence: 1, reason: 'crunchbaseUrl from company website' },
+          };
+        }
+
         const serper = serperFactory(ctx.env);
         const q = `site:crunchbase.com "${ctx.input.name}"`;
         const { organic, costPaise } = await serper.search({ q, signal: ctx.signal });
@@ -39,6 +61,7 @@ export function makePositioningCrunchbaseSnippetAdapter(
             payload: { crunchbaseUrl: null, snippet: null, fundingHint: null },
             costPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
@@ -57,6 +80,9 @@ export function makePositioningCrunchbaseSnippetAdapter(
           },
           costPaise,
           durationMs: Date.now() - t0,
+          // Without an anchor we can't disambiguate by domain. Mark unverified
+          // so downstream consumers know not to trust this without a manual check.
+          verification: { method: 'none', confidence: 0.4, reason: 'serper name search (unverified)' },
         };
       } catch (err) {
         return {

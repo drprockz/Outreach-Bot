@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { makePositioningCrunchbaseSnippetAdapter } from '../../../src/adapters/positioning/crunchbaseSnippet.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 
 function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterContext {
@@ -12,6 +13,7 @@ function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterConte
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(overrides).logger },
     env: { SERPER_API_KEY: 'fake-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

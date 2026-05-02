@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { makeVoiceFounderLinkedinUrlAdapter } from '../../../src/adapters/voice/founderLinkedinUrl.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 
 function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterContext {
@@ -12,6 +13,7 @@ function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterConte
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(overrides).logger },
     env: { SERPER_API_KEY: 'fake-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 
@@ -27,7 +29,7 @@ describe('voiceFounderLinkedinUrlAdapter', () => {
     const adapter = makeVoiceFounderLinkedinUrlAdapter(() => makeSerperSpy([]));
     expect(adapter.name).toBe('voice.founder_linkedin_url');
     expect(adapter.module).toBe('voice');
-    expect(adapter.version).toBe('0.1.0');
+    expect(adapter.version).toBe('0.2.0');
     expect(adapter.estimatedCostInr).toBe(0.03);
     expect(adapter.requiredEnv).toContain('SERPER_API_KEY');
     expect(adapter.gate).toBeUndefined();

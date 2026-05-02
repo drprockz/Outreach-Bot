@@ -117,6 +117,7 @@ describe('RadarTraceDossierSchema', () => {
     totalCostInr: 0,
     totalCostBreakdown: {
       serper: 0, brave: 0, listenNotes: 0, pagespeed: 0, apifyUsd: 0, apifyInr: 0,
+      geminiAnchorsInr: 0, haikuVerifyInr: 0,
     },
     totalDurationMs: 0,
     adapters: { 'x.y': minimalAdapter },
@@ -128,6 +129,14 @@ describe('RadarTraceDossierSchema', () => {
       directories: { adapters: [] },
     },
     signalSummary: null,
+    anchors: {
+      linkedinCompanyUrl: null, twitterUrl: null, youtubeChannelUrl: null,
+      githubOrgUrl: null, crunchbaseUrl: null, instagramUrl: null, facebookUrl: null,
+      founders: [], companyDescription: null, primaryProductOrService: null,
+      industryOneLiner: null, pagesFetched: [], discoveredVia: 'none' as const,
+      costPaise: 0, errors: [],
+    },
+    traceMode: 'degraded' as const,
   };
 
   it('parses a minimal dossier', () => {

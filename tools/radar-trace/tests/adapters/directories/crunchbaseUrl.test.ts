@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { crunchbaseUrlAdapter, buildCrunchbaseSlug } from '../../../src/adapters/directories/crunchbaseUrl.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 function makeCtx(name: string): AdapterContext {
   const noop = () => {};
@@ -11,6 +12,7 @@ function makeCtx(name: string): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(name).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 
@@ -18,7 +20,7 @@ describe('crunchbaseUrlAdapter', () => {
   it('contract surface', () => {
     expect(crunchbaseUrlAdapter.name).toBe('directories.crunchbase_url');
     expect(crunchbaseUrlAdapter.module).toBe('directories');
-    expect(crunchbaseUrlAdapter.version).toBe('0.1.0');
+    expect(crunchbaseUrlAdapter.version).toBe('0.2.0');
     expect(crunchbaseUrlAdapter.estimatedCostInr).toBe(0);
     expect(crunchbaseUrlAdapter.requiredEnv).toHaveLength(0);
     // URL constructor adapters are free, no cacheTtlMs needed
