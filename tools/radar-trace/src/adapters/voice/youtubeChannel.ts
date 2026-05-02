@@ -80,23 +80,47 @@ export function makeVoiceYoutubeChannelAdapter(
   return {
     name: 'voice.youtube_channel',
     module: 'voice',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 0.03,
     requiredEnv: ['SERPER_API_KEY'],
     schema: VoiceYoutubeChannelPayloadSchema,
     async run(ctx: AdapterContext): Promise<AdapterResult<VoiceYoutubeChannelPayload>> {
       const t0 = Date.now();
       try {
-        const serper = serperFactory(ctx.env);
-        const q = `site:youtube.com "${ctx.input.name}" channel`;
-        const { organic, costPaise } = await serper.search({ q, signal: ctx.signal });
+        // Anchor-first: if the company website links to its YouTube channel,
+        // bypass the name search entirely. The original failure mode here was
+        // a Japanese home builder ("株式会社シンプル") matching a search for
+        // "Simple Inc" because the channel was titled `SIMPLE Inc.`.
+        let channelUrl: string | null = null;
+        let costPaise = 0;
+        let verificationMethod: 'anchor' | 'none' = 'none';
+        let verificationConfidence = 0;
+        let verificationReason = '';
+        if (
+          ctx.anchors.youtubeChannelUrl &&
+          (YOUTUBE_CHANNEL_ID_RE.test(ctx.anchors.youtubeChannelUrl) ||
+            YOUTUBE_HANDLE_RE.test(ctx.anchors.youtubeChannelUrl))
+        ) {
+          channelUrl = ctx.anchors.youtubeChannelUrl;
+          verificationMethod = 'anchor';
+          verificationConfidence = 1;
+          verificationReason = 'youtubeChannelUrl from company website';
+        } else {
+          const serper = serperFactory(ctx.env);
+          const q = `site:youtube.com "${ctx.input.name}" channel`;
+          const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
+          costPaise = serperCost;
+          const channelHit = organic.find((r) =>
+            YOUTUBE_CHANNEL_ID_RE.test(r.link) || YOUTUBE_HANDLE_RE.test(r.link),
+          );
+          channelUrl = channelHit?.link ?? null;
+          if (channelUrl) {
+            verificationConfidence = 0.4;
+            verificationReason = 'serper name search (unverified)';
+          }
+        }
 
-        // Find first YouTube channel or handle URL
-        const channelHit = organic.find((r) =>
-          YOUTUBE_CHANNEL_ID_RE.test(r.link) || YOUTUBE_HANDLE_RE.test(r.link),
-        );
-
-        if (!channelHit) {
+        if (!channelUrl) {
           return {
             source: 'voice.youtube_channel',
             fetchedAt: new Date().toISOString(),
@@ -104,10 +128,10 @@ export function makeVoiceYoutubeChannelAdapter(
             payload: { channelUrl: null, channelId: null, recentVideos: [] },
             costPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
-        const channelUrl = channelHit.link;
         let channelId = extractChannelIdFromUrl(channelUrl);
 
         // If @handle URL, need to fetch page to get channel ID
@@ -127,6 +151,11 @@ export function makeVoiceYoutubeChannelAdapter(
           payload: { channelUrl, channelId, recentVideos },
           costPaise,
           durationMs: Date.now() - t0,
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
+          },
         };
       } catch (err) {
         return {

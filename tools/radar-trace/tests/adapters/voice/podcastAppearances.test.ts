@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeVoicePodcastAppearancesAdapter } from '../../../src/adapters/voice/podcastAppearances.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const listenNotesFixture = JSON.parse(
   readFileSync(join(__dirname, '../../fixtures/voice/listennotes-search.json'), 'utf8'),
@@ -17,6 +18,7 @@ function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterConte
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(overrides).logger },
     env: { LISTEN_NOTES_KEY: 'fake-ln-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 
@@ -25,7 +27,7 @@ describe('voicePodcastAppearancesAdapter', () => {
     const adapter = makeVoicePodcastAppearancesAdapter();
     expect(adapter.name).toBe('voice.podcast_appearances');
     expect(adapter.module).toBe('voice');
-    expect(adapter.estimatedCostInr).toBe(0);
+    expect(adapter.estimatedCostInr).toBe(0.5);
     expect(adapter.requiredEnv).toContain('LISTEN_NOTES_KEY');
     expect(adapter.gate).toBeUndefined();
   });

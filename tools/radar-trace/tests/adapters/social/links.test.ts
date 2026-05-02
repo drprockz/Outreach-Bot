@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { socialLinksAdapter, extractSocialLinks } from '../../../src/adapters/social/links.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const homepageFixture = readFileSync(
   join(__dirname, '../../fixtures/social/homepage-with-social.html'),
@@ -18,6 +19,7 @@ function makeCtx(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(http).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

@@ -7,6 +7,8 @@ import { createFileCache } from './cache.js';
 import { createHttp } from './http.js';
 import { createLogger } from './logger.js';
 import { loadEnv } from './env.js';
+import { discoverAnchors } from './lib/anchors.js';
+import { EMPTY_ANCHORS } from './types.js';
 import {
   RadarTraceDossierSchema,
   ALL_MODULE_NAMES,
@@ -263,31 +265,41 @@ const APIFY_SERPER_ADAPTERS = new Set([
 function computeCostBreakdown(
   results: Record<string, AdapterResult<unknown>>,
   usdToInr: number,
+  anchorsCostInr: number,
 ): RadarTraceDossier['totalCostBreakdown'] {
   let serper = 0, brave = 0, listenNotes = 0, pagespeed = 0, apifyUsd = 0;
+  let haikuVerifyUsd = 0;
   for (const [name, r] of Object.entries(results)) {
     const inr = r.costPaise / 100;
+    // Verification (Haiku) cost is tracked separately on result.verification.costUsd.
+    // Subtract it from each adapter's per-bucket attribution so we don't double-count.
+    const verifyUsd = r.verification?.costUsd ?? 0;
+    haikuVerifyUsd += verifyUsd;
+    const verifyInr = verifyUsd * usdToInr;
+    const inrSansVerify = Math.max(0, inr - verifyInr);
     if (name.includes('apify')) {
       // Accumulate Apify USD spend for all *_apify adapters
       apifyUsd += r.costMeta?.costUsd ?? 0;
       // For adapters that also use Serper, back out the Serper portion
       if (APIFY_SERPER_ADAPTERS.has(name)) {
         const apifyInr = (r.costMeta?.costUsd ?? 0) * usdToInr;
-        const serperInr = inr - apifyInr;
+        const serperInr = inrSansVerify - apifyInr;
         if (serperInr > 0) serper += serperInr;
       }
     } else if (
       name === 'voice.linkedin_pulse' || name.startsWith('voice.founder_') ||
       name === 'positioning.crunchbase_snippet' || name === 'positioning.serper_news' ||
       name === 'voice.youtube_channel'
-    ) serper += inr;
-    else if (name === 'positioning.brave_news') brave += inr;
-    else if (name === 'voice.podcast_appearances') listenNotes += inr;
-    else if (name === 'operational.pagespeed') pagespeed += inr;
+    ) serper += inrSansVerify;
+    else if (name === 'positioning.brave_news') brave += inrSansVerify;
+    else if (name === 'voice.podcast_appearances') listenNotes += inrSansVerify;
+    else if (name === 'operational.pagespeed') pagespeed += inrSansVerify;
   }
   return {
     serper, brave, listenNotes, pagespeed, apifyUsd,
     apifyInr: apifyUsd * usdToInr,
+    geminiAnchorsInr: anchorsCostInr,
+    haikuVerifyInr: haikuVerifyUsd * usdToInr,
   };
 }
 
@@ -339,9 +351,36 @@ export async function main(argv: string[]): Promise<number> {
   }
   process.stderr.write(`pre-flight estimated cost (worst case): ₹${preflightCost.toFixed(2)}\n`);
 
+  // Wave 0 — anchor discovery. Always runs; degrades silently if Gemini is
+  // unavailable. Adapters read these via ctx.anchors and prefer them over
+  // name-based search when present.
+  let anchors = EMPTY_ANCHORS;
+  try {
+    anchors = await discoverAnchors({
+      domain: opts.input.domain,
+      companyName: opts.input.name,
+      env,
+      http,
+    });
+    process.stderr.write(
+      `anchors: discoveredVia=${anchors.discoveredVia} ` +
+        `linkedin=${anchors.linkedinCompanyUrl ? 'Y' : 'N'} ` +
+        `github=${anchors.githubOrgUrl ? 'Y' : 'N'} ` +
+        `youtube=${anchors.youtubeChannelUrl ? 'Y' : 'N'} ` +
+        `crunchbase=${anchors.crunchbaseUrl ? 'Y' : 'N'} ` +
+        `founders=${anchors.founders.length}\n`,
+    );
+  } catch (err) {
+    logger.warn('anchor discovery failed', { error: (err as Error).message });
+  }
+
+  const traceMode: RadarTraceDossier['traceMode'] =
+    env.GEMINI_API_KEY && env.ANTHROPIC_API_KEY ? 'verified' : 'degraded';
+
   const { results, summary } = await runEnrichment({
     input: opts.input, env, adapters: adaptersToRun, cache, logger, http,
     concurrency: opts.concurrency, timeoutMs: opts.timeoutMs, useCache: opts.useCache,
+    anchors,
   });
 
   // Merge skipped-adapter stubs into results so the dossier always has all slots
@@ -352,18 +391,21 @@ export async function main(argv: string[]): Promise<number> {
   process.stderr.write(`actual cost: ₹${summary.totalCostInr.toFixed(2)}\n`);
 
   const usdToInr = parseFloat(env.USD_INR_RATE ?? '84.0');
-  const totalCostBreakdown = computeCostBreakdown(results, usdToInr);
+  const anchorsInr = anchors.costPaise / 100;
+  const totalCostBreakdown = computeCostBreakdown(results, usdToInr, anchorsInr);
 
   const dossier: RadarTraceDossier = {
     radarTraceVersion: '1.0.0',
     company: opts.input,
     tracedAt: new Date().toISOString(),
-    totalCostInr: summary.totalCostInr,
+    totalCostInr: summary.totalCostInr + anchorsInr,
     totalCostBreakdown,
     totalDurationMs: summary.totalDurationMs,
     adapters: results,
     modules: buildModulesBlock(scopedAdapters),
     signalSummary: null,
+    anchors,
+    traceMode,
   };
 
   const validated = RadarTraceDossierSchema.parse(dossier);

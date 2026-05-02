@@ -41,7 +41,73 @@ export interface AdapterContext {
   logger: Logger;
   env: Env;
   signal: AbortSignal;      // from orchestrator's per-adapter timeout
+  /**
+   * Canonical anchors discovered from the company's own website (Wave 0).
+   * Populated by the orchestrator before any adapter runs. Adapters that can be
+   * grounded by a domain-owned URL should prefer the anchor over a name search.
+   * Always present (never undefined) — uses EMPTY_ANCHORS when discovery yields nothing.
+   */
+  anchors: CanonicalAnchors;
 }
+
+/**
+ * Founder identified on the company's site (about/team/contact pages).
+ * `linkedinUrl` is only set if the founder's LinkedIn profile was self-linked
+ * from the website — never inferred from a name search. Avoids the "founder
+ * named John Smith → first John Smith on LinkedIn" disambiguation failure.
+ */
+export interface AnchorFounder {
+  name: string;
+  title: string | null;
+  linkedinUrl: string | null;
+}
+
+/**
+ * Canonical entity anchors. Each URL was either present in the website HTML
+ * (regex-extracted from <a href>) or confirmed by an LLM read of the homepage
+ * + about/team pages. The provenance is tracked in `discoveredVia` for
+ * observability — `gemini` means LLM, `regex` means deterministic extraction
+ * only, `mixed` means both contributed, `none` means we couldn't ground at all.
+ */
+export interface CanonicalAnchors {
+  linkedinCompanyUrl: string | null;
+  twitterUrl: string | null;
+  youtubeChannelUrl: string | null;
+  githubOrgUrl: string | null;
+  crunchbaseUrl: string | null;
+  instagramUrl: string | null;
+  facebookUrl: string | null;
+  founders: AnchorFounder[];
+  companyDescription: string | null;
+  primaryProductOrService: string | null;
+  industryOneLiner: string | null;
+  /** Pages successfully fetched during discovery — debugging aid. */
+  pagesFetched: string[];
+  /** How each field was sourced. */
+  discoveredVia: 'gemini' | 'regex' | 'mixed' | 'none';
+  /** Discovery cost in paise (Gemini call, ₹0 on free tier). */
+  costPaise: number;
+  /** Errors encountered during discovery — non-fatal. */
+  errors: string[];
+}
+
+export const EMPTY_ANCHORS: CanonicalAnchors = {
+  linkedinCompanyUrl: null,
+  twitterUrl: null,
+  youtubeChannelUrl: null,
+  githubOrgUrl: null,
+  crunchbaseUrl: null,
+  instagramUrl: null,
+  facebookUrl: null,
+  founders: [],
+  companyDescription: null,
+  primaryProductOrService: null,
+  industryOneLiner: null,
+  pagesFetched: [],
+  discoveredVia: 'none',
+  costPaise: 0,
+  errors: [],
+};
 
 /** Every keyed env var the prototype recognizes. Adapters declare which ones they require. */
 export interface Env {
@@ -74,6 +140,27 @@ export interface AdapterResult<T> {
     apifyResults?: number;
     costUsd?: number;
   };
+  /** How this result was grounded to the target entity. Absent on adapters that don't need disambiguation (whois, dns, crtsh, etc.). */
+  verification?: AdapterVerification;
+}
+
+/**
+ * Provenance of a name-disambiguated result.
+ * - `anchor` — the result came from a domain-owned URL (highest confidence).
+ * - `llm`    — the result came from a name search and an LLM verified the match.
+ * - `none`   — the result is anchor-or-input-derived and didn't need verification
+ *              (e.g. an explicit `--linkedin <url>` shortcut).
+ */
+export interface AdapterVerification {
+  method: 'anchor' | 'llm' | 'none';
+  /** 0..1. 1.0 for `anchor`. LLM scores are clamped into this range. */
+  confidence: number;
+  /** Free-text reason from the LLM, or anchor source description. */
+  reason?: string;
+  /** USD cost incurred during verification (LLM only). */
+  costUsd?: number;
+  /** How many name-search candidates were rejected by the verifier. */
+  droppedCandidates?: number;
 }
 
 export interface Adapter<TPayload> {

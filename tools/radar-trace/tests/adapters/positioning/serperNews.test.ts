@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePositioningSerperNewsAdapter } from '../../../src/adapters/positioning/serperNews.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 
 const serperNewsFixture = JSON.parse(
@@ -18,6 +19,7 @@ function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterConte
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(overrides).logger },
     env: { SERPER_API_KEY: 'fake-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 
@@ -33,7 +35,7 @@ describe('positioningSerperNewsAdapter', () => {
     const adapter = makePositioningSerperNewsAdapter(() => makeSerperSpy([]));
     expect(adapter.name).toBe('positioning.serper_news');
     expect(adapter.module).toBe('positioning');
-    expect(adapter.estimatedCostInr).toBe(0.03);
+    expect(adapter.estimatedCostInr).toBe(0.5);
     expect(adapter.requiredEnv).toContain('SERPER_API_KEY');
     expect(adapter.gate).toBeUndefined();
   });

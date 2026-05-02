@@ -90,7 +90,7 @@ export function makeTwitterPostsApifyAdapter(deps: {
   return {
     name: 'social.twitter_posts_apify',
     module: 'social',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 100,
     requiredEnv: ['APIFY_TOKEN', 'SERPER_API_KEY'],
     cacheTtlMs: 6 * 60 * 60 * 1000,
@@ -99,18 +99,35 @@ export function makeTwitterPostsApifyAdapter(deps: {
     async run(ctx: AdapterContext): Promise<AdapterResult<TwitterPostsApifyPayload>> {
       const t0 = Date.now();
       let totalCostPaise = 0;
+      let verificationMethod: 'anchor' | 'none' = 'none';
+      let verificationConfidence = 0;
+      let verificationReason = '';
 
       try {
-        const serper = deps.serper(ctx.env);
         const apify = deps.apify(ctx.env);
 
-        // Step 1: Discover Twitter/X profile URL via Serper
-        const q = `site:twitter.com OR site:x.com "${ctx.input.name}"`;
-        const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
-        totalCostPaise += serperCost;
-
-        const twitterUrl =
-          organic.map((r) => r.link).find((link) => TWITTER_HANDLE_RE.test(link)) ?? null;
+        // Anchor-first: Twitter is one of the platforms with the worst handle
+        // collisions for short company names. We require the URL to come from
+        // the company website unless no anchor exists, in which case we accept
+        // a Serper match but flag it as unverified.
+        let twitterUrl: string | null = null;
+        if (ctx.anchors.twitterUrl && TWITTER_HANDLE_RE.test(ctx.anchors.twitterUrl)) {
+          twitterUrl = ctx.anchors.twitterUrl;
+          verificationMethod = 'anchor';
+          verificationConfidence = 1;
+          verificationReason = 'twitterUrl from company website';
+        } else {
+          const serper = deps.serper(ctx.env);
+          const q = `site:twitter.com OR site:x.com "${ctx.input.name}"`;
+          const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
+          totalCostPaise += serperCost;
+          twitterUrl =
+            organic.map((r) => r.link).find((link) => TWITTER_HANDLE_RE.test(link)) ?? null;
+          if (twitterUrl) {
+            verificationConfidence = 0.4;
+            verificationReason = 'serper name search (unverified)';
+          }
+        }
 
         if (!twitterUrl) {
           return {
@@ -120,6 +137,7 @@ export function makeTwitterPostsApifyAdapter(deps: {
             payload: null,
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
@@ -155,6 +173,11 @@ export function makeTwitterPostsApifyAdapter(deps: {
           costMeta: {
             apifyResults: items.length,
             costUsd,
+          },
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
           },
         };
       } catch (err) {

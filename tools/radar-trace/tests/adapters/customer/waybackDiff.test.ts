@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { customerWaybackDiffAdapter } from '../../../src/adapters/customer/waybackDiff.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const currentHtml = readFileSync(join(__dirname, '../../fixtures/customer/customers-current.html'), 'utf8');
 const oldHtml = readFileSync(join(__dirname, '../../fixtures/customer/customers-old.html'), 'utf8');
@@ -17,6 +18,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

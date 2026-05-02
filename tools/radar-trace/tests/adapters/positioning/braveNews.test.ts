@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makePositioningBraveNewsAdapter } from '../../../src/adapters/positioning/braveNews.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { BraveClient } from '../../../src/clients/brave.js';
 
 const braveFixture = JSON.parse(
@@ -18,6 +19,7 @@ function makeCtx(overrides: Partial<AdapterContext['input']> = {}): AdapterConte
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(overrides).logger },
     env: { BRAVE_API_KEY: 'fake-brave-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 
@@ -32,7 +34,7 @@ describe('positioningBraveNewsAdapter', () => {
     const adapter = makePositioningBraveNewsAdapter(() => makeBraveSpy([]));
     expect(adapter.name).toBe('positioning.brave_news');
     expect(adapter.module).toBe('positioning');
-    expect(adapter.estimatedCostInr).toBe(0.50);
+    expect(adapter.estimatedCostInr).toBe(1.0);
     expect(adapter.requiredEnv).toContain('BRAVE_API_KEY');
     expect(adapter.gate).toBeUndefined();
   });

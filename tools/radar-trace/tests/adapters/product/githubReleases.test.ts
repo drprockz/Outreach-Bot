@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { productGithubReleasesAdapter } from '../../../src/adapters/product/githubReleases.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 // Pin date so isWithinDays (recentNewRepos) assertions stay valid
 beforeAll(() => { vi.useFakeTimers({ now: new Date('2026-05-01T12:00:00Z') }); });
@@ -20,6 +21,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: { GITHUB_TOKEN: 'fake' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

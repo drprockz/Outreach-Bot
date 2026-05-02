@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeVoiceLinkedinPostsApifyAdapter } from '../../../src/adapters/voice/linkedinPostsApify.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 import type { ApifyClient } from '../../../src/clients/apify.js';
 
@@ -19,7 +20,7 @@ function makeCtx(overrides: Partial<AdapterContext> = {}): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: { SERPER_API_KEY: 'fake-key', APIFY_TOKEN: 'fake-token' },
     signal: new AbortController().signal,
-    ...overrides,
+      anchors: EMPTY_ANCHORS,    ...overrides,
   };
 }
 
@@ -50,7 +51,7 @@ describe('voiceLinkedinPostsApifyAdapter', () => {
     });
     expect(adapter.name).toBe('voice.linkedin_posts_apify');
     expect(adapter.module).toBe('voice');
-    expect(adapter.version).toBe('0.1.0');
+    expect(adapter.version).toBe('0.2.0');
     expect(adapter.estimatedCostInr).toBe(100);
     expect(adapter.requiredEnv).toContain('APIFY_TOKEN');
     expect(adapter.requiredEnv).toContain('SERPER_API_KEY');
@@ -114,8 +115,63 @@ describe('voiceLinkedinPostsApifyAdapter', () => {
     const result = await adapter.run(makeCtx());
     expect(result.status).toBe('empty');
     expect(result.payload).toBeNull();
-    expect(result.errors).toContain('no founder URL');
+    expect(result.errors).toEqual(expect.arrayContaining([expect.stringContaining('no founder URL')]));
     // Apify should NOT have been called
+    expect(apifySpy.runActor).not.toHaveBeenCalled();
+  });
+
+  it('uses anchor founder linkedinUrl when no CLI flag is set — no Serper call', async () => {
+    // Regression for the original "Satya Nadella for Simple Inc" failure: when
+    // we couldn't find a founder URL from CLI flags, we'd Serper-search by
+    // company name and pick whichever profile happened to use the company name
+    // in their handle. The fix is to require either an explicit founder name
+    // or an anchor founder URL; never search by company name alone.
+    const serperSpy = makeSerperSpy([]);
+    const apifySpy = makeApifySpy(linkedinPostsFixture);
+    const adapter = makeVoiceLinkedinPostsApifyAdapter({
+      serper: () => serperSpy,
+      apify: () => apifySpy,
+    });
+
+    const ctx = makeCtx({
+      input: { name: 'Acme Corp', domain: 'acme.com' },
+      anchors: {
+        ...EMPTY_ANCHORS,
+        founders: [
+          { name: 'Jane Doe', title: 'Founder', linkedinUrl: 'https://www.linkedin.com/in/jane-doe/' },
+        ],
+      },
+    });
+
+    const result = await adapter.run(ctx);
+    expect(result.status).toBe('ok');
+    expect(result.payload!.founderLinkedinUrl).toBe('https://www.linkedin.com/in/jane-doe/');
+    expect(result.verification?.method).toBe('anchor');
+    expect(serperSpy.search).not.toHaveBeenCalled();
+  });
+
+  it('refuses to search Serper by company name alone when no founder is known', async () => {
+    // The exact original regression: company name "Simple Inc" with no
+    // founder set, no anchor, no --linkedin. The OLD adapter would Serper-
+    // search `site:linkedin.com/in/ "Simple Inc"` and pick whatever profile
+    // happened to use "Simple Inc" in its handle. The NEW adapter refuses.
+    const serperSpy = makeSerperSpy([
+      { title: 'simple-inc-382529124', link: 'https://www.linkedin.com/in/simple-inc-382529124/', snippet: '' },
+    ]);
+    const apifySpy = makeApifySpy(linkedinPostsFixture);
+    const adapter = makeVoiceLinkedinPostsApifyAdapter({
+      serper: () => serperSpy,
+      apify: () => apifySpy,
+    });
+
+    const ctx = makeCtx({
+      input: { name: 'Simple Inc', domain: 'simpleinc.in' },
+      // No founder, no founderLinkedinUrl, no anchor.
+    });
+
+    const result = await adapter.run(ctx);
+    expect(result.status).toBe('empty');
+    expect(serperSpy.search).not.toHaveBeenCalled();
     expect(apifySpy.runActor).not.toHaveBeenCalled();
   });
 

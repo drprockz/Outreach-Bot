@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { makeVoiceYoutubeChannelAdapter } from '../../../src/adapters/voice/youtubeChannel.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 
 const SAMPLE_RSS = `<?xml version="1.0" encoding="UTF-8"?>
@@ -45,6 +46,7 @@ function makeCtx(
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx(httpRoutes, overrides).logger },
     env: { SERPER_API_KEY: 'fake-key' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

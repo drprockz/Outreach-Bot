@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeLinkedinCompanyApifyAdapter } from '../../../src/adapters/directories/linkedinCompanyApify.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 import type { ApifyClient } from '../../../src/clients/apify.js';
 
@@ -19,7 +20,7 @@ function makeCtx(overrides: Partial<AdapterContext> = {}): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: { SERPER_API_KEY: 'fake-key', APIFY_TOKEN: 'fake-token' },
     signal: new AbortController().signal,
-    ...overrides,
+      anchors: EMPTY_ANCHORS,    ...overrides,
   };
 }
 
@@ -50,7 +51,7 @@ describe('linkedinCompanyApifyAdapter', () => {
     });
     expect(adapter.name).toBe('directories.linkedin_company_apify');
     expect(adapter.module).toBe('directories');
-    expect(adapter.version).toBe('0.1.0');
+    expect(adapter.version).toBe('0.2.0');
     expect(adapter.estimatedCostInr).toBe(50);
     expect(adapter.requiredEnv).toContain('SERPER_API_KEY');
     expect(adapter.requiredEnv).toContain('APIFY_TOKEN');
@@ -123,5 +124,31 @@ describe('linkedinCompanyApifyAdapter', () => {
     expect(result.costMeta?.apifyResults).toBe(1);
     // Total costPaise = Serper (3) + Apify (1 result × 0.005 × 84 × 100 = 42)
     expect(result.costPaise).toBe(3 + Math.round(0.005 * 84 * 100));
+  });
+
+  it('uses the LinkedIn company anchor and skips the Serper search', async () => {
+    const serperSpy = makeSerperSpy([
+      // Even if Serper would return a wrong company, the anchor must win.
+      { title: 'Wrong Corp | LinkedIn', link: 'https://www.linkedin.com/company/wrong-corp/', snippet: '' },
+    ]);
+    const apifySpy = makeApifySpy(linkedinFixture);
+    const adapter = makeLinkedinCompanyApifyAdapter({
+      serper: () => serperSpy,
+      apify: () => apifySpy,
+    });
+
+    const ctx = makeCtx({
+      anchors: {
+        ...EMPTY_ANCHORS,
+        linkedinCompanyUrl: 'https://www.linkedin.com/company/acme-corp/',
+      },
+    });
+
+    const result = await adapter.run(ctx);
+    expect(result.status).toBe('ok');
+    expect(result.payload!.linkedinCompanyUrl).toBe('https://www.linkedin.com/company/acme-corp/');
+    expect(result.verification?.method).toBe('anchor');
+    expect(serperSpy.search).not.toHaveBeenCalled();
+    expect(apifySpy.runActor).toHaveBeenCalledTimes(1);
   });
 });

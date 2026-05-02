@@ -93,7 +93,7 @@ export function makeFacebookPostsApifyAdapter(deps: {
   return {
     name: 'social.facebook_posts_apify',
     module: 'social',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 100,
     requiredEnv: ['APIFY_TOKEN', 'SERPER_API_KEY'],
     cacheTtlMs: 6 * 60 * 60 * 1000,
@@ -102,18 +102,32 @@ export function makeFacebookPostsApifyAdapter(deps: {
     async run(ctx: AdapterContext): Promise<AdapterResult<FacebookPostsApifyPayload>> {
       const t0 = Date.now();
       let totalCostPaise = 0;
+      let verificationMethod: 'anchor' | 'none' = 'none';
+      let verificationConfidence = 0;
+      let verificationReason = '';
 
       try {
-        const serper = deps.serper(ctx.env);
         const apify = deps.apify(ctx.env);
 
-        // Step 1: Discover Facebook page URL via Serper
-        const q = `site:facebook.com "${ctx.input.name}"`;
-        const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
-        totalCostPaise += serperCost;
-
-        const facebookUrl =
-          organic.map((r) => r.link).find((link) => FACEBOOK_PAGE_RE.test(link)) ?? null;
+        // Anchor-first.
+        let facebookUrl: string | null = null;
+        if (ctx.anchors.facebookUrl && FACEBOOK_PAGE_RE.test(ctx.anchors.facebookUrl)) {
+          facebookUrl = ctx.anchors.facebookUrl;
+          verificationMethod = 'anchor';
+          verificationConfidence = 1;
+          verificationReason = 'facebookUrl from company website';
+        } else {
+          const serper = deps.serper(ctx.env);
+          const q = `site:facebook.com "${ctx.input.name}"`;
+          const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
+          totalCostPaise += serperCost;
+          facebookUrl =
+            organic.map((r) => r.link).find((link) => FACEBOOK_PAGE_RE.test(link)) ?? null;
+          if (facebookUrl) {
+            verificationConfidence = 0.4;
+            verificationReason = 'serper name search (unverified)';
+          }
+        }
 
         if (!facebookUrl) {
           return {
@@ -123,6 +137,7 @@ export function makeFacebookPostsApifyAdapter(deps: {
             payload: null,
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
@@ -155,6 +170,11 @@ export function makeFacebookPostsApifyAdapter(deps: {
           costMeta: {
             apifyResults: items.length,
             costUsd,
+          },
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
           },
         };
       } catch (err) {

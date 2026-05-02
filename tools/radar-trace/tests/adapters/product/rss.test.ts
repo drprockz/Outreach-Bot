@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { productRssAdapter } from '../../../src/adapters/product/rss.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const homepageHtml = readFileSync(join(__dirname, '../../fixtures/product/rss-with-link.html'), 'utf8');
 const feedXml = readFileSync(join(__dirname, '../../fixtures/product/rss-feed.xml'), 'utf8');
@@ -16,6 +17,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

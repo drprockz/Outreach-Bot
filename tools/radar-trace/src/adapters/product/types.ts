@@ -44,7 +44,9 @@ export function isWithinDays(iso: string, days: number): boolean {
 /** Shared GitHub org search — inlined per-adapter to avoid Wave 2 dependency.
  * Decision: each adapter that needs the org calls this independently.
  * GitHub search is cheap and rate-limit-tolerant. The redundancy is acceptable
- * for Phase 1A; the orchestrator's Wave 1 parallelism runs them concurrently. */
+ * for Phase 1A; the orchestrator's Wave 1 parallelism runs them concurrently.
+ * NOTE: prefer `githubOrgFromUrl(ctx.anchors.githubOrgUrl)` first — this is the
+ * unverified name-search fallback. */
 export async function findGithubOrg(ctx: { input: { name: string }; http: typeof fetch; env: { GITHUB_TOKEN?: string }; signal: AbortSignal }): Promise<string | null> {
   const q = encodeURIComponent(`${ctx.input.name} type:org`);
   const res = await ctx.http(`https://api.github.com/search/users?q=${q}`, {
@@ -55,6 +57,33 @@ export async function findGithubOrg(ctx: { input: { name: string }; http: typeof
   const json = await res.json() as { items?: Array<{ login: string; type: string }> };
   const org = (json.items ?? []).find((i) => i.type === 'Organization');
   return org?.login ?? null;
+}
+
+const GH_ORG_PATH_RE = /^https:\/\/github\.com\/([^/?#]+)\/?$/i;
+
+/** Extract the org slug from a github.com/<org> URL. Returns null for repos, gists, anything else. */
+export function githubOrgFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  const m = GH_ORG_PATH_RE.exec(url);
+  return m?.[1] ?? null;
+}
+
+/** Verify that a GitHub login is actually an org account (not a user) before trusting an anchor. */
+export async function isGithubOrg(
+  ctx: { http: typeof fetch; env: { GITHUB_TOKEN?: string }; signal: AbortSignal },
+  login: string,
+): Promise<boolean> {
+  try {
+    const res = await ctx.http(`https://api.github.com/users/${encodeURIComponent(login)}`, {
+      headers: { authorization: `token ${ctx.env.GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
+      signal: ctx.signal,
+    });
+    if (!res.ok) return false;
+    const j = await res.json() as { type?: string };
+    return j.type === 'Organization';
+  } catch {
+    return false;
+  }
 }
 
 export async function fetchRepos(ctx: { http: typeof fetch; env: { GITHUB_TOKEN?: string }; signal: AbortSignal }, org: string): Promise<Repo[]> {

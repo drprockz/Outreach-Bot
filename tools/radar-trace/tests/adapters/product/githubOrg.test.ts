@@ -1,12 +1,13 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { productGithubOrgAdapter } from '../../../src/adapters/product/githubOrg.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const orgsFixture = JSON.parse(readFileSync(join(__dirname, '../../fixtures/product/github-orgs.json'), 'utf8'));
 
-function ctxWith(http: typeof fetch): AdapterContext {
+function ctxWith(http: typeof fetch, anchorOverride?: Partial<AdapterContext['anchors']>): AdapterContext {
   const noop = () => {};
   return {
     input: { name: 'Acme', domain: 'acme.com' },
@@ -15,6 +16,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: { GITHUB_TOKEN: 'fake' },
     signal: new AbortController().signal,
+    anchors: { ...EMPTY_ANCHORS, ...(anchorOverride ?? {}) },
   };
 }
 
@@ -62,5 +64,33 @@ describe('productGithubOrgAdapter', () => {
     const result = await productGithubOrgAdapter.run(ctxWith(http));
     expect(result.status).toBe('error');
     expect(result.errors?.[0]).toContain('github');
+  });
+
+  it('uses the GitHub org anchor and SKIPS the name search', async () => {
+    // Regression for the original "databento for Simple Inc" failure mode.
+    // The mocked search would return some org named "evilcorp"; the adapter
+    // must ignore it and use the anchor URL instead.
+    const searchSpy = vi.fn(() => new Response(JSON.stringify({
+      items: [{ login: 'evilcorp', type: 'Organization' }],
+    }), { status: 200 }));
+    const http = fakeFetch({ '/search/users': searchSpy });
+    const result = await productGithubOrgAdapter.run(
+      ctxWith(http, { githubOrgUrl: 'https://github.com/acme' }),
+    );
+    expect(result.status).toBe('ok');
+    expect(result.payload!.org).toBe('acme');
+    expect(result.verification?.method).toBe('anchor');
+    expect(result.verification?.confidence).toBe(1);
+    expect(searchSpy).not.toHaveBeenCalled();
+  });
+
+  it('marks name-search results as unverified when no anchor is set', async () => {
+    const http = fakeFetch({
+      '/search/users': () => new Response(JSON.stringify(orgsFixture), { status: 200 }),
+    });
+    const result = await productGithubOrgAdapter.run(ctxWith(http));
+    expect(result.status).toBe('ok');
+    expect(result.verification?.method).toBe('none');
+    expect(result.verification?.confidence).toBeLessThan(1);
   });
 });

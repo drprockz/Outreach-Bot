@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import type { Adapter, AdapterContext, AdapterResult } from '../../types.js';
-import { ReleaseSchema, findGithubOrg, fetchEvents, isWithinDays } from './types.js';
+import { ReleaseSchema, findGithubOrg, githubOrgFromUrl, fetchEvents, isWithinDays } from './types.js';
 
 export const ProductGithubEventsPayloadSchema = z.object({
   commitVelocity30d: z.number().int().nonnegative(),
@@ -27,7 +27,8 @@ export const productGithubEventsAdapter: Adapter<ProductGithubEventsPayload> = {
   async run(ctx: AdapterContext): Promise<AdapterResult<ProductGithubEventsPayload>> {
     const t0 = Date.now();
     try {
-      const org = await findGithubOrg(ctx);
+      // Anchor-first: prefer the GitHub org URL self-linked from the company website.
+      const org = githubOrgFromUrl(ctx.anchors.githubOrgUrl) ?? await findGithubOrg(ctx);
       if (!org) {
         return {
           source: 'product.github_events',

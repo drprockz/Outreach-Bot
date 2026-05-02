@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { productSitemapAdapter } from '../../../src/adapters/product/sitemap.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 const sitemapXml = readFileSync(join(__dirname, '../../fixtures/product/sitemap.xml'), 'utf8');
 
@@ -15,6 +16,7 @@ function ctxWith(http: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => ctxWith(http).logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

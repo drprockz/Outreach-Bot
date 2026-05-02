@@ -21,14 +21,14 @@ export function makeVoiceFounderLinkedinUrlAdapter(
   return {
     name: 'voice.founder_linkedin_url',
     module: 'voice',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 0.03,
     requiredEnv: ['SERPER_API_KEY'],
     schema: VoiceFounderLinkedinUrlPayloadSchema,
     async run(ctx: AdapterContext): Promise<AdapterResult<VoiceFounderLinkedinUrlPayload>> {
       const t0 = Date.now();
 
-      // If already provided, short-circuit — no Serper call
+      // 1. Explicit CLI shortcut — operator-provided, treated as gospel.
       if (ctx.input.founderLinkedinUrl) {
         return {
           source: 'voice.founder_linkedin_url',
@@ -37,6 +37,24 @@ export function makeVoiceFounderLinkedinUrlAdapter(
           payload: { url: ctx.input.founderLinkedinUrl, candidates: [] },
           costPaise: 0,
           durationMs: Date.now() - t0,
+          verification: { method: 'none', confidence: 1, reason: '--linkedin CLI flag' },
+        };
+      }
+
+      // 2. Anchor — when /about or /team self-links a founder profile, that's
+      // the only way to disambiguate among LinkedIn profiles for common names.
+      const anchorFounderUrl = ctx.anchors.founders.find(
+        (f) => f.linkedinUrl && LINKEDIN_IN_RE.test(f.linkedinUrl),
+      )?.linkedinUrl ?? null;
+      if (anchorFounderUrl) {
+        return {
+          source: 'voice.founder_linkedin_url',
+          fetchedAt: new Date().toISOString(),
+          status: 'ok',
+          payload: { url: anchorFounderUrl, candidates: [] },
+          costPaise: 0,
+          durationMs: Date.now() - t0,
+          verification: { method: 'anchor', confidence: 1, reason: 'founder linkedinUrl from company website' },
         };
       }
 
@@ -48,6 +66,7 @@ export function makeVoiceFounderLinkedinUrlAdapter(
           payload: { url: null, candidates: [] },
           costPaise: 0,
           durationMs: Date.now() - t0,
+          verification: { method: 'none', confidence: 0, reason: 'no founder provided' },
         };
       }
 
@@ -70,6 +89,11 @@ export function makeVoiceFounderLinkedinUrlAdapter(
           payload: { url: match?.link ?? null, candidates },
           costPaise,
           durationMs: Date.now() - t0,
+          verification: {
+            method: 'none',
+            confidence: match ? 0.5 : 0,
+            reason: match ? 'serper name+company search (unverified)' : 'no candidates',
+          },
         };
       } catch (err) {
         return {

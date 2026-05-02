@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeGlassdoorApifyAdapter } from '../../../src/adapters/directories/glassdoorApify.js';
 import type { AdapterContext, PartialDossier, AdapterResult } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { ApifyClient } from '../../../src/clients/apify.js';
 
 const glassdoorFixture = JSON.parse(
@@ -18,6 +19,7 @@ function makeCtx(): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: { APIFY_TOKEN: 'fake-token' },
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

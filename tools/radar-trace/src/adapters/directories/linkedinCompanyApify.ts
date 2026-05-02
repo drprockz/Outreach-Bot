@@ -80,8 +80,10 @@ export function makeLinkedinCompanyApifyAdapter(deps: {
   return {
     name: 'directories.linkedin_company_apify',
     module: 'directories',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 50,
+    // Serper is only needed when no anchor is present; declared required so
+    // unanchored runs still fail fast on missing env. APIFY_TOKEN is always required.
     requiredEnv: ['SERPER_API_KEY', 'APIFY_TOKEN'],
     cacheTtlMs: 7 * 86_400_000,
     schema: LinkedinCompanyApifyPayloadSchema,
@@ -89,19 +91,41 @@ export function makeLinkedinCompanyApifyAdapter(deps: {
     async run(ctx: AdapterContext): Promise<AdapterResult<LinkedinCompanyApifyPayload>> {
       const t0 = Date.now();
       let totalCostPaise = 0;
+      let verificationMethod: 'anchor' | 'llm' | 'none' = 'none';
+      let verificationConfidence = 0;
+      let verificationReason = '';
 
       try {
-        const serper = deps.serper(ctx.env);
         const apify = deps.apify(ctx.env);
 
-        // Step 1: Discover LinkedIn company URL via Serper
-        const q = `site:linkedin.com/company/ "${ctx.input.name}"`;
-        const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
-        totalCostPaise += serperCost;
-
-        const linkedinUrl = organic
-          .map((r) => r.link)
-          .find((link) => LINKEDIN_COMPANY_RE.test(link));
+        // Step 1: Resolve the LinkedIn company URL.
+        // Anchor-first — if the company website already links to its LinkedIn
+        // company page, we trust that URL absolutely (it was self-published).
+        // This skips the Serper search and avoids the failure mode where
+        // "Acme Inc" search returns the LinkedIn page for some other Acme.
+        let linkedinUrl: string | null = null;
+        if (ctx.anchors.linkedinCompanyUrl && LINKEDIN_COMPANY_RE.test(ctx.anchors.linkedinCompanyUrl)) {
+          linkedinUrl = ctx.anchors.linkedinCompanyUrl;
+          verificationMethod = 'anchor';
+          verificationConfidence = 1;
+          verificationReason = 'linkedinCompanyUrl from company website';
+        } else {
+          // Fall back to Serper name search. The result is left unverified —
+          // a richer fix would hit the verifier here, but this code path is
+          // exercised mostly for companies whose marketing site doesn't link
+          // their LinkedIn page (uncommon for B2B SaaS targets).
+          const serper = deps.serper(ctx.env);
+          const q = `site:linkedin.com/company/ "${ctx.input.name}"`;
+          const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
+          totalCostPaise += serperCost;
+          linkedinUrl = organic
+            .map((r) => r.link)
+            .find((link) => LINKEDIN_COMPANY_RE.test(link)) ?? null;
+          if (linkedinUrl) {
+            verificationConfidence = 0.4;
+            verificationReason = 'serper name search (unverified)';
+          }
+        }
 
         if (!linkedinUrl) {
           return {
@@ -111,6 +135,7 @@ export function makeLinkedinCompanyApifyAdapter(deps: {
             payload: null,
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
+            verification: { method: 'none', confidence: 0, reason: 'no candidates' },
           };
         }
 
@@ -136,6 +161,11 @@ export function makeLinkedinCompanyApifyAdapter(deps: {
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
             costMeta: { apifyResults: 0, costUsd },
+            verification: {
+              method: verificationMethod,
+              confidence: verificationConfidence,
+              reason: verificationReason || 'apify returned 0 rows',
+            },
           };
         }
 
@@ -153,6 +183,11 @@ export function makeLinkedinCompanyApifyAdapter(deps: {
             costUsd,
           },
           ...(truncated && { errors: ['apify result truncated at maxResults'] }),
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
+          },
         };
       } catch (err) {
         return {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeTwitterPostsApifyAdapter } from '../../../src/adapters/social/twitterPostsApify.js';
 import type { AdapterContext } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 import type { SerperClient } from '../../../src/clients/serper.js';
 import type { ApifyClient } from '../../../src/clients/apify.js';
 
@@ -19,7 +20,7 @@ function makeCtx(overrides: Partial<AdapterContext> = {}): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: { SERPER_API_KEY: 'fake-key', APIFY_TOKEN: 'fake-token' },
     signal: new AbortController().signal,
-    ...overrides,
+      anchors: EMPTY_ANCHORS,    ...overrides,
   };
 }
 
@@ -50,7 +51,7 @@ describe('twitterPostsApifyAdapter', () => {
     });
     expect(adapter.name).toBe('social.twitter_posts_apify');
     expect(adapter.module).toBe('social');
-    expect(adapter.version).toBe('0.1.0');
+    expect(adapter.version).toBe('0.2.0');
     expect(adapter.estimatedCostInr).toBe(100);
     expect(adapter.requiredEnv).toContain('APIFY_TOKEN');
     expect(adapter.requiredEnv).toContain('SERPER_API_KEY');

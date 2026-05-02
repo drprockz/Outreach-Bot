@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { g2CapterraAdapter, parseG2SearchPage, parseCapterraSearchPage } from '../../../src/adapters/directories/g2Capterra.js';
 import type { AdapterContext, PartialDossier, AdapterResult } from '../../../src/types.js';
+import { EMPTY_ANCHORS } from '../../../src/types.js';
 
 function makeCtx(httpFn?: typeof fetch): AdapterContext {
   const noop = () => {};
@@ -11,6 +12,7 @@ function makeCtx(httpFn?: typeof fetch): AdapterContext {
     logger: { debug: noop, info: noop, warn: noop, error: noop, child: () => makeCtx().logger },
     env: {},
     signal: new AbortController().signal,
+      anchors: EMPTY_ANCHORS,
   };
 }
 

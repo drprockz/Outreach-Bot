@@ -99,7 +99,7 @@ export function makeVoiceLinkedinPostsApifyAdapter(deps: {
   return {
     name: 'voice.linkedin_posts_apify',
     module: 'voice',
-    version: '0.1.0',
+    version: '0.2.0',
     estimatedCostInr: 100,
     requiredEnv: ['APIFY_TOKEN', 'SERPER_API_KEY'],
     cacheTtlMs: 6 * 60 * 60 * 1000,
@@ -108,23 +108,55 @@ export function makeVoiceLinkedinPostsApifyAdapter(deps: {
     async run(ctx: AdapterContext): Promise<AdapterResult<VoiceLinkedinPostsApifyPayload>> {
       const t0 = Date.now();
       let totalCostPaise = 0;
+      let verificationMethod: 'anchor' | 'none' = 'none';
+      let verificationConfidence = 0;
+      let verificationReason = '';
 
       try {
         const apify = deps.apify(ctx.env);
 
-        // Step 1: Discover or use provided LinkedIn profile URL
+        // Step 1: Resolve the LinkedIn profile URL.
+        //  a) Explicit CLI flag — highest precedence.
+        //  b) Founder URL from the company website (anchor) — verified by
+        //     virtue of being self-published on the target's domain.
+        //  c) Serper name search — last resort. The original Satya-Nadella-
+        //     for-Simple-Inc failure happened here: Serper resolved
+        //     `site:linkedin.com/in/ "Simple Inc"` to a generic profile that
+        //     happened to use "Simple Inc" as a handle. We now require either
+        //     `--founder` to be set OR an anchor founder URL — never search
+        //     by company name alone.
         let profileUrl: string | null = ctx.input.founderLinkedinUrl ?? null;
+        if (profileUrl) {
+          verificationMethod = 'none';
+          verificationConfidence = 1;
+          verificationReason = '--linkedin CLI flag';
+        }
 
         if (!profileUrl) {
-          // Need Serper to find the founder's LinkedIn profile URL
+          const anchorUrl = ctx.anchors.founders.find(
+            (f) => f.linkedinUrl && LINKEDIN_PROFILE_RE.test(f.linkedinUrl),
+          )?.linkedinUrl ?? null;
+          if (anchorUrl) {
+            profileUrl = anchorUrl;
+            verificationMethod = 'anchor';
+            verificationConfidence = 1;
+            verificationReason = 'founder linkedinUrl from company website';
+          }
+        }
+
+        if (!profileUrl && ctx.input.founder) {
+          // Only run a name search when a founder name is explicitly provided —
+          // refuses to search by company name alone (the Satya Nadella regression).
           const serper = deps.serper(ctx.env);
-          const founder = ctx.input.founder ?? ctx.input.name;
-          const q = `site:linkedin.com/in/ "${founder}"`;
+          const q = `site:linkedin.com/in/ "${ctx.input.founder}" "${ctx.input.name}"`;
           const { organic, costPaise: serperCost } = await serper.search({ q, signal: ctx.signal });
           totalCostPaise += serperCost;
-
           profileUrl =
             organic.map((r) => r.link).find((link) => LINKEDIN_PROFILE_RE.test(link)) ?? null;
+          if (profileUrl) {
+            verificationConfidence = 0.5;
+            verificationReason = 'serper founder+company search (unverified)';
+          }
         }
 
         if (!profileUrl) {
@@ -135,7 +167,8 @@ export function makeVoiceLinkedinPostsApifyAdapter(deps: {
             payload: null,
             costPaise: totalCostPaise,
             durationMs: Date.now() - t0,
-            errors: ['no founder URL'],
+            errors: ['no founder URL — provide --linkedin, --founder, or anchor a founder via website /about'],
+            verification: { method: 'none', confidence: 0, reason: 'no founder URL' },
           };
         }
 
@@ -168,6 +201,11 @@ export function makeVoiceLinkedinPostsApifyAdapter(deps: {
           costMeta: {
             apifyResults: items.length,
             costUsd,
+          },
+          verification: {
+            method: verificationMethod,
+            confidence: verificationConfidence,
+            reason: verificationReason,
           },
         };
       } catch (err) {

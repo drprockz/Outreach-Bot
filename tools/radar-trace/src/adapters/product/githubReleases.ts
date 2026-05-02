@@ -7,7 +7,7 @@
  */
 import { z } from 'zod';
 import type { Adapter, AdapterContext, AdapterResult } from '../../types.js';
-import { RepoSchema, findGithubOrg, fetchRepos, isWithinDays } from './types.js';
+import { RepoSchema, findGithubOrg, githubOrgFromUrl, fetchRepos, isWithinDays } from './types.js';
 
 export const ProductGithubReleasesPayloadSchema = z.object({
   recentNewRepos: z.array(RepoSchema),
@@ -27,7 +27,8 @@ export const productGithubReleasesAdapter: Adapter<ProductGithubReleasesPayload>
   async run(ctx: AdapterContext): Promise<AdapterResult<ProductGithubReleasesPayload>> {
     const t0 = Date.now();
     try {
-      const org = await findGithubOrg(ctx);
+      // Anchor-first: prefer the GitHub org URL self-linked from the company website.
+      const org = githubOrgFromUrl(ctx.anchors.githubOrgUrl) ?? await findGithubOrg(ctx);
       if (!org) {
         return {
           source: 'product.github_releases',
