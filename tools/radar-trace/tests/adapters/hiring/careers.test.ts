@@ -66,4 +66,53 @@ describe('hiringCareersAdapter', () => {
     expect(result.status).toBe('empty');
     expect(result.payload?.jobs).toEqual([]);
   });
+
+  it('excludes all-caps single-word nav items (e.g. PRODUCT, CUSTOMERS) from job list', async () => {
+    // Mobcast-style: nav bar contains keyword-matching all-caps items, no real job listings
+    const navTrapHtml = `<!doctype html>
+<html><body>
+<nav>
+  <a href="/product">PRODUCT</a>
+  <a href="/customers">CUSTOMERS</a>
+  <a href="/careers">CAREERS</a>
+  <a href="/about">ABOUT</a>
+</nav>
+<main>
+  <h2>Join our team</h2>
+  <p>No positions open right now. Check back soon!</p>
+</main>
+</body></html>`;
+    const http = fakeFetch({
+      'acme.com/careers': () => new Response(navTrapHtml, { status: 200, headers: { 'content-type': 'text/html' } }),
+    });
+    const result = await hiringCareersAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+    expect(result.payload!.jobs).toEqual([]);
+  });
+
+  it('includes real multi-word job titles while excluding nav items on the same page', async () => {
+    const mixedHtml = `<!doctype html>
+<html><body>
+<nav>
+  <a href="/product">PRODUCT</a>
+  <a href="/customers">CUSTOMERS</a>
+</nav>
+<main>
+  <div class="openings">
+    <h3>Software Engineer</h3>
+    <h3>Product Manager</h3>
+  </div>
+</main>
+</body></html>`;
+    const http = fakeFetch({
+      'acme.com/careers': () => new Response(mixedHtml, { status: 200, headers: { 'content-type': 'text/html' } }),
+    });
+    const result = await hiringCareersAdapter.run(ctxWith(http));
+    expect(result.status).toBe('ok');
+    const titles = result.payload!.jobs.map((j) => j.title);
+    expect(titles).toContain('Software Engineer');
+    expect(titles).toContain('Product Manager');
+    expect(titles).not.toContain('PRODUCT');
+    expect(titles).not.toContain('CUSTOMERS');
+  });
 });

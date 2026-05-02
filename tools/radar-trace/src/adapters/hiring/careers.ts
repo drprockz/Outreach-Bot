@@ -30,7 +30,9 @@ export const hiringCareersAdapter: Adapter<HiringCareersPayload> = {
       const titles: string[] = [];
       $('h1, h2, h3, h4, a').each((_, el) => {
         const text = $(el).text().trim();
-        if (text && text.length < 120 && /(engineer|developer|manager|director|designer|sales|marketing|recruit|hr|legal|finance|product|customer|operations)/i.test(text)) {
+        // Reject all-caps single-word nav labels like "PRODUCT", "CUSTOMERS", "CAREERS(current)"
+        const isNavItem = !text.includes(' ') && /^[A-Z]{2,}(\([^)]*\))?$/.test(text);
+        if (text && text.length < 120 && !isNavItem && /(engineer|developer|manager|director|designer|sales|marketing|recruit|hr|legal|finance|product|customer|operations)/i.test(text)) {
           titles.push(text);
         }
       });
