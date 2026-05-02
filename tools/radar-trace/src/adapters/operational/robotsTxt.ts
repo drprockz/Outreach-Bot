@@ -113,6 +113,21 @@ export const operationalRobotsTxtAdapter: Adapter<OperationalRobotsTxtPayload> =
       }
 
       const fullText = await res.text();
+      // Reject HTML served for unknown paths (e.g. index.php catch-all).
+      // A real robots.txt must contain at least one of the standard directives.
+      const looksLikeRobots = fullText.includes('User-agent:') ||
+        fullText.includes('Disallow:') ||
+        fullText.includes('Sitemap:');
+      if (!looksLikeRobots) {
+        return {
+          source: 'operational.robots_txt',
+          fetchedAt: new Date().toISOString(),
+          status: 'empty',
+          payload: { raw: '', userAgents: [], disallows: [], stackHints: [], hasSitemap: false },
+          costPaise: 0,
+          durationMs: Date.now() - t0,
+        };
+      }
       const raw = fullText.slice(0, MAX_RAW_BYTES);
       const { userAgents, disallows, hasSitemap } = parseRobotsTxt(raw);
       const stackHints = detectStackHints(disallows);

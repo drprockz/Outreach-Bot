@@ -64,4 +64,21 @@ describe('operationalRobotsTxtAdapter', () => {
     expect(result.payload!.stackHints).toEqual([]);
     expect(result.payload!.hasSitemap).toBe(false);
   });
+
+  it('returns empty when /robots.txt returns homepage HTML instead of robots directives', async () => {
+    // Mobcast-style: site routes /robots.txt → 200 with homepage HTML
+    const homepageHtml = `<!doctype html>
+<html><head><title>Mobcast - Home</title></head>
+<body><h1>Get heard. Everywhere.</h1></body>
+</html>`;
+    const http = fakeFetch({
+      '/robots.txt': () => new Response(homepageHtml, { status: 200, headers: { 'content-type': 'text/html' } }),
+    });
+    const result = await operationalRobotsTxtAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+    expect(result.payload!.raw).toBe('');
+    expect(result.payload!.userAgents).toEqual([]);
+    expect(result.payload!.disallows).toEqual([]);
+    expect(result.payload!.hasSitemap).toBe(false);
+  });
 });
