@@ -155,9 +155,10 @@ async function runOneAdapter(
     return { name: adapter.name, result, cached: false };
   }
 
-  // 3. Run with timeout + try/catch isolation
+  // 3. Run with timeout + try/catch isolation (per-adapter override wins over global)
+  const effectiveTimeout = adapter.timeoutMs ?? opts.timeoutMs;
   const timeoutCtrl = new AbortController();
-  const timer = setTimeout(() => timeoutCtrl.abort(new Error(`timeout after ${opts.timeoutMs}ms`)), opts.timeoutMs);
+  const timer = setTimeout(() => timeoutCtrl.abort(new Error(`timeout after ${effectiveTimeout}ms`)), effectiveTimeout);
   const ctx: AdapterContext = {
     input: opts.input,
     http: opts.http,

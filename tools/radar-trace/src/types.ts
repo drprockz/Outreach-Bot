@@ -90,6 +90,9 @@ export interface Adapter<TPayload> {
   /** Optional per-adapter TTL override; default 24h. */
   readonly cacheTtlMs?: number;
 
+  /** Optional per-adapter timeout override in ms; default is the CLI --timeout (30 000). */
+  readonly timeoutMs?: number;
+
   /**
    * Optional gate. If returns false, adapter is skipped (status:'empty', cost:0).
    * Receives Wave 1 partial dossier. Throws caught and treated as `false`.

@@ -32,6 +32,8 @@ export const operationalCrtshAdapter: Adapter<OperationalCrtshPayload> = {
   version: '0.1.0',
   estimatedCostInr: 0,
   requiredEnv: [],
+  // crt.sh is slow from India (25–50s typical); override global 30s default
+  timeoutMs: 60_000,
   schema: OperationalCrtshPayloadSchema,
   async run(ctx: AdapterContext): Promise<AdapterResult<OperationalCrtshPayload>> {
     const t0 = Date.now();

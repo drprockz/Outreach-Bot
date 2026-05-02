@@ -36,6 +36,8 @@ describe('operationalCrtshAdapter', () => {
     expect(operationalCrtshAdapter.requiredEnv).toEqual([]);
     expect(operationalCrtshAdapter.estimatedCostInr).toBe(0);
     expect(operationalCrtshAdapter.gate).toBeUndefined();
+    // crt.sh is slow from India — needs 60s timeout, not the global 30s default
+    expect(operationalCrtshAdapter.timeoutMs).toBe(60_000);
   });
 
   it('returns subdomains and notable subdomains from crt.sh', async () => {
