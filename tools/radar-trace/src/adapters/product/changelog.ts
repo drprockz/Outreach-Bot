@@ -11,14 +11,30 @@ export const ProductChangelogPayloadSchema = z.object({
 
 export type ProductChangelogPayload = z.infer<typeof ProductChangelogPayloadSchema>;
 
+/** Cheap content fingerprint: collapse whitespace, take first 500 chars. */
+function contentFingerprint(html: string): string {
+  return html.replace(/\s+/g, '').slice(0, 500);
+}
+
 async function fetchChangelog(ctx: AdapterContext): Promise<ChangelogEntry[]> {
   const candidates = ['/changelog', '/blog', '/release-notes', '/whats-new'];
+
+  // Fetch homepage fingerprint once so we can detect sites that serve
+  // the homepage for any unknown path (e.g. index.php catch-all routes).
+  let homeprintFp: string | null = null;
+  try {
+    const homeRes = await ctx.http(toHttpsUrl(ctx.input.domain, '/'), { signal: ctx.signal });
+    if (homeRes.ok) homeprintFp = contentFingerprint(await homeRes.text());
+  } catch { /* ignore — fingerprint stays null */ }
+
   for (const path of candidates) {
     try {
       const url = toHttpsUrl(ctx.input.domain, path);
       const res = await ctx.http(url, { signal: ctx.signal });
       if (!res.ok) continue;
       const html = await res.text();
+      // Skip if content matches homepage — site is routing unknown paths to index.php
+      if (homeprintFp !== null && contentFingerprint(html) === homeprintFp) continue;
       const $ = cheerio.load(html);
       const entries: ChangelogEntry[] = [];
       $('article, .post, .entry, h2, h3').each((_, el) => {

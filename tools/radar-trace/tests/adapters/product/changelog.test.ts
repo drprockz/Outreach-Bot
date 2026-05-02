@@ -62,4 +62,27 @@ describe('productChangelogAdapter', () => {
     expect(result.payload!.entries).toEqual([]);
     expect(result.payload!.discoveredAt).toBeNull();
   });
+
+  it('returns empty when all candidate paths serve the homepage (index.php fallthrough)', async () => {
+    // Mobcast-style: site routes unknown paths back to homepage with 200.
+    // The homepage hero text ("Get heard. Everywhere.") gets scraped as changelog entries.
+    const homepageHtml = `<!doctype html>
+<html><head><title>Mobcast - Home</title></head>
+<body>
+<h2>Get heard. Everywhere.</h2>
+<h2>Trusted by 500+ brands</h2>
+<p>The leading podcast distribution platform.</p>
+</body></html>`;
+    const http = fakeFetch({
+      '/': () => new Response(homepageHtml, { status: 200 }),
+      '/changelog': () => new Response(homepageHtml, { status: 200 }),
+      '/blog': () => new Response(homepageHtml, { status: 200 }),
+      '/release-notes': () => new Response(homepageHtml, { status: 200 }),
+      '/whats-new': () => new Response(homepageHtml, { status: 200 }),
+    });
+    const result = await productChangelogAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+    expect(result.payload!.entries).toEqual([]);
+    expect(result.payload!.discoveredAt).toBeNull();
+  });
 });
