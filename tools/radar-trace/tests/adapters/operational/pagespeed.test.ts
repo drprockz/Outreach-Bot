@@ -85,4 +85,17 @@ describe('operationalPagespeedAdapter', () => {
     expect(result.status).toBe('error');
     expect(result.errors?.[0]).toContain('pagespeed');
   });
+
+  it('returns empty (not error) on 429 rate limit and includes helpful message', async () => {
+    // Without PAGESPEED_API_KEY, Google rate-limits aggressively.
+    // This is a configuration gap, not a system failure.
+    const http = fakeFetch({
+      'pagespeedonline': () => new Response('Too Many Requests', { status: 429 }),
+    });
+    const result = await operationalPagespeedAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+    expect(result.payload).toBeNull();
+    expect(result.errors?.[0]).toMatch(/rate limited/i);
+    expect(result.errors?.[0]).toMatch(/PAGESPEED_API_KEY/);
+  });
 });

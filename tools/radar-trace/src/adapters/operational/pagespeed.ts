@@ -57,6 +57,18 @@ export const operationalPagespeedAdapter: Adapter<OperationalPagespeedPayload> =
 
       const res = await ctx.http(apiUrl, { signal: ctx.signal });
       if (!res.ok) {
+        // 429 is a configuration gap (free-tier quota), not a system failure.
+        if (res.status === 429) {
+          return {
+            source: 'operational.pagespeed',
+            fetchedAt: new Date().toISOString(),
+            status: 'empty',
+            payload: null,
+            errors: [`pagespeed: rate limited — set PAGESPEED_API_KEY for higher quota`],
+            costPaise: 0,
+            durationMs: Date.now() - t0,
+          };
+        }
         return {
           source: 'operational.pagespeed',
           fetchedAt: new Date().toISOString(),
