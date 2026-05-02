@@ -70,4 +70,34 @@ describe('hiringAdzunaAdapter', () => {
     expect(result.status).toBe('empty');
     expect(result.payload?.jobs).toEqual([]);
   });
+
+  it('falls back to what= keyword search when company= returns 400', async () => {
+    // Adzuna rejects short/unusual company names with 400 on the company= param.
+    // The adapter should retry with what=<name> and return the results.
+    let callCount = 0;
+    const http: typeof fetch = (async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      callCount++;
+      if (u.includes('company=')) {
+        return new Response(JSON.stringify({ error: 'invalid company parameter' }), { status: 400 });
+      }
+      if (u.includes('what=')) {
+        return new Response(JSON.stringify(adzunaFixture), { status: 200 });
+      }
+      return new Response('not found', { status: 404 });
+    }) as typeof fetch;
+
+    const result = await hiringAdzunaAdapter.run(ctxWith(http));
+    expect(result.status).toBe('ok');
+    expect(result.payload!.jobs.length).toBe(3);
+    expect(callCount).toBe(2); // first call company=, second call what=
+  });
+
+  it('returns empty (not error) when both company= and what= return 400', async () => {
+    const http: typeof fetch = (async () =>
+      new Response(JSON.stringify({ error: 'bad request' }), { status: 400 })
+    ) as typeof fetch;
+    const result = await hiringAdzunaAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+  });
 });
