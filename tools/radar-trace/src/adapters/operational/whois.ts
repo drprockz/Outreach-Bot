@@ -86,10 +86,13 @@ export const operationalWhoisAdapter: Adapter<OperationalWhoisPayload> = {
       const res = await ctx.http(url, { signal: ctx.signal });
 
       if (!res.ok) {
+        // 404 means rdap.org has no record for this TLD (common for .in, .co, etc.).
+        // That is a known coverage gap, not a system failure.
+        const status = res.status === 404 ? 'empty' : 'error';
         return {
           source: 'operational.whois',
           fetchedAt: new Date().toISOString(),
-          status: 'error',
+          status,
           payload: null,
           errors: [`whois: rdap http ${res.status}`],
           costPaise: 0,

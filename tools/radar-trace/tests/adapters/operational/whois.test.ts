@@ -59,9 +59,21 @@ describe('operationalWhoisAdapter', () => {
     expect(p.nameservers).toContain('ns2.cloudflare.com');
   });
 
-  it('returns error on 404', async () => {
+  it('returns empty (not error) when RDAP returns 404 — ccTLD coverage gap', async () => {
+    // .in / .co / many ccTLDs have no RDAP record at rdap.org; 404 is expected and
+    // not a system failure. Callers should see status:'empty', not 'error'.
     const http = fakeFetch({
       'rdap.org': () => new Response('not found', { status: 404 }),
+    });
+    const result = await operationalWhoisAdapter.run(ctxWith(http));
+    expect(result.status).toBe('empty');
+    expect(result.payload).toBeNull();
+    expect(result.errors?.[0]).toContain('whois');
+  });
+
+  it('returns error on non-404 HTTP failures (e.g. 500)', async () => {
+    const http = fakeFetch({
+      'rdap.org': () => new Response('internal error', { status: 500 }),
     });
     const result = await operationalWhoisAdapter.run(ctxWith(http));
     expect(result.status).toBe('error');
